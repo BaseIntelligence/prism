@@ -7,6 +7,7 @@ dependencies = [
   "aiosqlite>=0.20",
   "fastapi>=0.115",
   "httpx>=0.27",
+  "platform-network @ file:///droid/platform-v10",
   "pydantic>=2.8",
   "pydantic-settings>=2.4",
   "PyYAML>=6.0",
@@ -34,6 +35,9 @@ prism-worker = "prism_challenge.worker:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/prism_challenge"]
+
+[tool.hatch.metadata]
+allow-direct-references = true
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

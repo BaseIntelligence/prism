@@ -53,6 +53,40 @@ def test_build_run_command_has_security_flags(tmp_path: Path) -> None:
     ]
 
 
+def test_platform_v10_resource_security_fields_are_preserved(tmp_path: Path) -> None:
+    limits = DockerLimits(
+        tmpfs=("/tmp:rw,noexec,nosuid,size=1g", "/run:rw,noexec,nosuid,size=64m"),
+        cap_drop=("ALL", "NET_RAW"),
+        security_opt=("no-new-privileges", "seccomp=unconfined"),
+    )
+    spec = DockerRunSpec(
+        image="ghcr.io/platformnetwork/prism-evaluator:latest",
+        command=("true",),
+        mounts=(DockerMount(tmp_path, "/workspace"),),
+        limits=limits,
+    )
+
+    cmd = DockerExecutor(
+        challenge="prism", allowed_images=("ghcr.io/platformnetwork/",)
+    ).build_run_command(spec, "prism-job-task")
+
+    assert limits.tmpfs == (
+        "/tmp:rw,noexec,nosuid,size=1g",
+        "/run:rw,noexec,nosuid,size=64m",
+    )
+    assert limits.cap_drop == ("ALL", "NET_RAW")
+    assert limits.security_opt == ("no-new-privileges", "seccomp=unconfined")
+    assert cmd.count("--tmpfs") == 2
+    assert "/tmp:rw,noexec,nosuid,size=1g" in cmd
+    assert "/run:rw,noexec,nosuid,size=64m" in cmd
+    assert cmd.count("--cap-drop") == 2
+    assert "ALL" in cmd
+    assert "NET_RAW" in cmd
+    assert cmd.count("--security-opt") == 2
+    assert "no-new-privileges" in cmd
+    assert "seccomp=unconfined" in cmd
+
+
 def test_reserved_labels_cannot_be_overridden(tmp_path: Path) -> None:
     spec = DockerRunSpec(
         image="ghcr.io/platformnetwork/prism-evaluator:latest",
