@@ -141,6 +141,23 @@ def test_readme_documents_custom_nas_submission_scope() -> None:
         assert phrase not in readme
 
 
+def test_submission_docs_clarify_custom_training_boundaries() -> None:
+    submissions_doc = read_doc("docs/submissions.md")
+    miner_doc = read_doc("docs/miner/README.md")
+    combined = f"{submissions_doc}\n{miner_doc}"
+
+    for expected in (
+        "It does not fix the miner architecture search space",
+        "build_model(ctx)` can return any valid `torch.nn.Module`",
+        "configure_optimizer` gives full optimizer and LR control",
+        "fallback optimizer may apply safe evaluator defaults/caps",
+        "train_step` can implement a fully custom update step",
+        "training_for_arch` submission cannot silently change architecture family",
+        "Submitted metrics are not free-form claims",
+    ):
+        assert expected in combined
+
+
 
 def test_public_docs_do_not_claim_architecture_ownership_transfer() -> None:
     public_docs = [

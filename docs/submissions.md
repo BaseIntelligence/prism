@@ -2,6 +2,8 @@
 
 PRISM accepts Python submissions as a single `.py` file or as a multi-file `.zip` project. ZIP projects are preferred because they let miners mark which files belong to architecture discovery and which files belong to training or inference improvements.
 
+PRISM fixes the FineWeb-Edu dataset and evaluation protocol. It does not fix the miner architecture search space beyond the Python contract, sandbox, and resource limits. `build_model(ctx)` can return any valid `torch.nn.Module` that fits those limits.
+
 PRISM runs two competitions from the same submission surface:
 
 1. Architecture discovery, for the first useful architecture family and later canonical architecture versions.
@@ -42,7 +44,7 @@ training:
   entrypoint: src/train.py
 ```
 
-The architecture code must match the target architecture family. A training-only submission cannot silently change the model family.
+The architecture code must match the target architecture family. A `training_for_arch` submission cannot silently change architecture family or smuggle in a new model family under a training claim.
 
 ## Required Python Contract
 
@@ -55,6 +57,8 @@ def build_model(ctx):
 def get_recipe(ctx):
     return TrainingRecipe(learning_rate=3e-4, batch_size=2)
 ```
+
+`build_model(ctx)` must return a `torch.nn.Module`. The module can use any valid PyTorch structure, layer mix, or parameterization that stays inside the resource limits. `get_recipe(ctx)` declares recipe metadata and defaults, such as learning rate, batch size, optimizer name, scheduler name, and weight decay.
 
 `ctx` is a `PrismContext` with fields such as:
 
@@ -93,11 +97,15 @@ def train_step(model, batch, optimizer, ctx):
 | `compute_loss` | Custom loss, auxiliary losses, regularization. | Training owner |
 | `train_step` | Fully custom update step. | Training owner |
 
+Use `configure_optimizer` when you need complete optimizer and LR control, including parameter groups, custom optimizer classes, scheduler setup, clipping wrappers, or learning rates outside evaluator defaults. If `configure_optimizer` is absent, the fallback optimizer may apply safe evaluator defaults/caps, including learning-rate caps, while still reading recipe metadata where allowed.
+
+Use `train_step` when the default `zero_grad`, `loss.backward`, gradient clipping, and `optimizer.step` loop is not enough. `train_step` can implement a fully custom update step, as long as it returns a valid loss tensor and stays within the sandbox and resource limits.
+
 If both `inference_logits` and `infer` exist, `inference_logits` takes precedence.
 
 ## Artifact Manifest
 
-Official and smoke evaluators write `prism_run_manifest.v1.json`. The manifest is the scoring contract for artifacts and metrics, not a free-form log.
+Official and smoke evaluators write `prism_run_manifest.v1.json`. The manifest is the scoring contract for artifacts and metrics, not a free-form log. Submitted metrics are not free-form claims. They must be derived from artifacts, evaluator logs, and manifest fields that validators can check.
 
 Required artifact references include:
 
