@@ -118,6 +118,29 @@ def test_docs_include_scientific_references_for_scoring_scaling_and_security() -
         assert expected in security_doc
 
 
+def test_readme_documents_custom_nas_submission_scope() -> None:
+    readme = read_doc("README.md")
+
+    for expected in (
+        "never-before-seen architecture families",
+        "configure_optimizer",
+        "fallback evaluator paths may apply safe defaults or caps",
+        "prism_run_manifest.v1.json",
+        "FineWeb-Edu",
+        "evidence-gated metric and anti-cheat review",
+    ):
+        assert expected in readme
+
+    forbidden = (
+        ".omo",
+        "Prometheus",
+        "Metis",
+        "workflow artifacts",
+    )
+    for phrase in forbidden:
+        assert phrase not in readme
+
+
 
 def test_public_docs_do_not_claim_architecture_ownership_transfer() -> None:
     public_docs = [

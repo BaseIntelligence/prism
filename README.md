@@ -38,11 +38,23 @@ scaling-law signals.
 
 ## What PRISM Rewards
 
-- **Architecture discovery**: first discovery of a meaningful architecture family earns architecture ownership.
+- **Architecture discovery**: first discovery of a meaningful architecture family, including a never-before-seen family, earns architecture ownership.
 - **Training and inference improvement**: later miners can improve optimizer setup, inference logits, loss computation, or train-step code for an existing architecture and earn training ownership.
-- **Robust improvements**: dynamic thresholds and noise checks prevent tiny random metric changes from stealing rewards.
+- **Noise-resistant improvements**: dynamic thresholds and noise checks prevent tiny random metric changes from stealing rewards.
 - **Scaling-aware signals**: PRISM emphasizes smooth loss curves, stable gradients, activation stability, and consistent improvements across model size, depth, sequence length, and batch scaling.
 - **Secure execution**: submitted code is reviewed statically and by optional LLM policy checks, then executed only inside isolated containers through the Platform Docker broker.
+
+---
+
+## Submission Scope
+
+PRISM fixes the dataset and evaluation protocol, not the architecture search space. Miners may submit never-before-seen architecture families through the `build_model(ctx)` contract, while PRISM compares them under shared scoring and scaling rules.
+
+Training code is also first-class. Miners can customize optimizer, loss, inference, and train-step behavior with hooks such as `configure_optimizer`, `compute_loss`, `inference_logits`, and `train_step`. Full optimizer and LR control belongs in `configure_optimizer`; fallback evaluator paths may apply safe defaults or caps when a submission relies only on recipe fields.
+
+Official proxy and full-scale evaluation modes use FineWeb-Edu dataset contracts. Metric claims must be backed by `prism_run_manifest.v1.json` artifacts, including dataset fingerprints, score eligibility flags, loss comparability metadata, diagnostics, benchmark metadata, and artifact references. Manifest validation is deterministic, but PRISM does not claim to recompute every submitted metric from raw artifacts.
+
+For the scientific scoring basis, see [Scoring and rewards](docs/scoring.md) and [Scaling evaluation](docs/scaling.md). For evidence-gated metric and anti-cheat review, see the [Security model](docs/security.md). LLM policy review can flag and explain risk, but rejection requires concrete evidence under that policy.
 
 ---
 
