@@ -156,7 +156,7 @@ Request:
 }
 ```
 
-Allowed architecture actions are `new`, `existing`, `transfer`, and `reject`. Allowed training actions are `new`, `existing`, `transfer`, `reject`, and `none`.
+Allowed architecture actions are `new`, `existing`, and `reject`; architecture ownership is first-discovery immutable, so operator resolution must not move the architecture `owner_hotkey`. Allowed training actions are `new`, `existing`, `transfer`, `reject`, and `none`, where `transfer` is reserved for training current-best ownership.
 
 ## Validator Assignment Routes
 

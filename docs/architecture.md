@@ -29,7 +29,7 @@ flowchart LR
 | Worker | Claims pending submissions, reviews code, dispatches evaluation, finalizes scores |
 | Component parser | Reads `prism.yaml`, separates architecture and training files, computes fingerprints |
 | Semantic signatures | Records hook metadata, call graphs, summaries, and Mermaid sketches for attribution |
-| Component agent | Compares submissions against known families and variants, then decides new/existing/transfer/hold/reject |
+| Component agent | Compares submissions against known families and variants, then decides new/existing/variant/hold/reject outcomes |
 | Container evaluator | Writes the project into a temporary workspace and runs it in an isolated container |
 | Weights module | Converts architecture/training ownership into Platform-compatible hotkey weights |
 
@@ -77,7 +77,7 @@ PRISM stores state in SQLite. Important tables include:
 - `ownership_events`
 - `evaluation_assignments`
 
-`component_signatures` preserves deterministic and semantic views of each project. `component_agent_reviews` stores the ownership decision, confidence, and candidate match. `component_review_holds` keeps low-confidence attribution cases out of rewards until an operator resolves them. `ownership_events` records accepted ownership changes and transfers.
+`component_signatures` preserves deterministic and semantic views of each project. `component_agent_reviews` stores the attribution decision, confidence, and candidate match. `component_review_holds` keeps low-confidence attribution cases out of rewards until an operator resolves them. `ownership_events` records accepted architecture metadata updates and training current-best changes; architecture first-discovery ownership remains immutable.
 
 ## Semantic Attribution Flow
 
@@ -89,17 +89,17 @@ After GPU evaluation, PRISM builds architecture and training signatures from the
 - architecture/training summaries;
 - optional Mermaid sketches for review.
 
-The component agent compares those signatures against existing architecture families and training variants. It can classify the submission as a new contribution, an existing duplicate, a major transfer-worthy improvement, a rejection, or a hold for manual review.
+The component agent compares those signatures against existing architecture families and training variants. It can classify architecture work as new, matching, variant-linked, rejected, or held for manual review. Training work may become the current-best variant for its target architecture when policy thresholds are met.
 
 ```mermaid
 flowchart LR
     Eval[GPU Metrics] --> Sig[Semantic Signature]
     Sig --> Candidates[Candidate Families and Variants]
     Candidates --> Agent[Component Agent]
-    Agent -->|new/existing/transfer| Ownership[Ownership Update]
+    Agent -->|new/existing/variant| Attribution[Immutable Architecture Owner or Variant Link]
     Agent -->|hold| Hold[Review Hold]
     Agent -->|reject| Reject[Rejected Submission]
-    Ownership --> Weights[get_weights]
+    Attribution --> Weights[get_weights]
 ```
 
 ## Master and Validator Modes
