@@ -10,6 +10,15 @@ import aiosqlite
 from .db import Database, dumps, loads
 from .evaluator.component_agents import ComponentOwnershipDecision
 from .evaluator.component_signatures import ComponentSemanticSignature
+from .evaluator.schemas import (
+    ARCHITECTURE_GRAPH_FILENAME,
+    ARCHITECTURE_METADATA_FILENAME,
+    ARCHITECTURE_METADATA_SCHEMA_VERSION,
+    RUN_MANIFEST_FILENAME,
+    ArchitectureGraph,
+    ArchitectureMetadata,
+    DeterministicEvidence,
+)
 from .models import (
     EvaluationAssignmentResponse,
     EvaluationAssignmentStatus,
@@ -18,6 +27,9 @@ from .models import (
     SubmissionStatus,
     SubmissionStatusResponse,
 )
+from .runtime_config import RuntimePolicy, resolve_runtime_policy
+
+ARCHITECTURE_MERMAID_FILENAME = "architecture.mmd"
 
 
 def now_iso() -> str:
@@ -173,6 +185,34 @@ class PrismRepository:
             out.append(item)
         return out
 
+    async def source_similarity_candidates(
+        self, *, exclude_submission_id: str | None = None
+    ) -> list[dict[str, Any]]:
+        query = (
+            "SELECT ss.*, cs.architecture_id, cs.architecture_graph, "
+            "af.canonical_graph_hash AS architecture_graph_hash "
+            "FROM submission_sources ss "
+            "LEFT JOIN component_signatures cs ON cs.submission_id=ss.submission_id "
+            "LEFT JOIN architecture_families af ON af.id=cs.architecture_id"
+        )
+        params: tuple[str, ...] = ()
+        if exclude_submission_id:
+            query += " WHERE ss.submission_id != ?"
+            params = (exclude_submission_id,)
+        query += " ORDER BY ss.created_at DESC"
+        async with self.database.connect() as conn:
+            rows = await conn.execute_fetchall(query, params)
+        out = []
+        for row in rows:
+            item = dict(row)
+            item["files"] = loads(item["files"])
+            item["ast_features"] = loads(item["ast_features"])
+            item["token_shingles"] = loads(item["token_shingles"])
+            graph = loads(item.get("architecture_graph")) if item.get("architecture_graph") else {}
+            item["architecture_graph"] = graph if isinstance(graph, dict) else {}
+            out.append(item)
+        return out
+
     async def store_plagiarism_review(
         self,
         *,
@@ -201,6 +241,25 @@ class PrismRepository:
                 ),
             )
 
+    async def hold_submission_for_duplicate_review(
+        self, *, submission_id: str, reason: str, report: dict[str, Any]) -> None:
+        now = now_iso()
+        async with self.database.connect() as conn:
+            await conn.execute(
+                "UPDATE submissions SET status=?, error=?, updated_at=? WHERE id=?",
+                (SubmissionStatus.HELD.value, reason, now, submission_id),
+            )
+            await self._create_component_hold(
+                conn,
+                submission_id=submission_id,
+                reason=reason,
+                confidence=float(
+                    report.get("source_similarity") or report.get("graph_similarity") or 0.0
+                ),
+                payload={"submission_id": submission_id, "duplicate_report": report},
+                now=now,
+            )
+
     async def store_llm_review(
         self,
         *,
@@ -210,12 +269,43 @@ class PrismRepository:
         violations: list[str],
         confidence: float,
         raw: dict[str, Any],
+        mermaid: str | None = None,
+        evidence: list[dict[str, Any]] | None = None,
+        held: bool = False,
     ) -> None:
+        raw_mermaid = raw.get("mermaid") if isinstance(raw.get("mermaid"), dict) else None
+        mermaid_text = mermaid or (str(raw_mermaid.get("mermaid")) if raw_mermaid else None)
+        raw_verdict = raw.get("verdict") if isinstance(raw.get("verdict"), dict) else None
+        evidence_payload = _validate_evidence(evidence or raw.get("evidence") or [])
+        if raw_verdict is not None:
+            if mermaid_text is None:
+                raise ValueError(
+                    "llm_review_order_error: submit_mermaid required before submit_verdict"
+                )
+            await self.submit_llm_mermaid(
+                submission_id=submission_id,
+                mermaid=mermaid_text,
+                payload=cast(dict[str, Any], raw_mermaid or {"mermaid": mermaid_text}),
+            )
+            await self.submit_llm_verdict(
+                submission_id=submission_id,
+                approved=approved,
+                reason=reason,
+                violations=violations,
+                confidence=confidence,
+                raw=cast(dict[str, Any], raw_verdict),
+                evidence=evidence_payload or _validate_evidence(raw_verdict.get("evidence") or []),
+                mermaid=mermaid_text,
+                held=held,
+            )
+            return
+        final_state = "quarantined" if held else "accepted" if approved else "rejected"
+        evidence_payload = _validate_evidence(evidence_payload or raw.get("evidence") or [])
         async with self.database.connect() as conn:
             await conn.execute(
                 "INSERT OR REPLACE INTO llm_reviews("
-                "submission_id, approved, reason, violations, confidence, raw, created_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                "submission_id, approved, reason, violations, confidence, raw, mermaid, evidence, "
+                "final_state, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     submission_id,
                     int(approved),
@@ -223,8 +313,199 @@ class PrismRepository:
                     dumps(violations),
                     confidence,
                     dumps(raw),
+                    mermaid_text,
+                    dumps(evidence_payload),
+                    final_state,
+                    now_iso(),
                     now_iso(),
                 ),
+            )
+            await self._record_llm_review_event(
+                conn,
+                submission_id=submission_id,
+                state=final_state,
+                actor="system",
+                tool_name="deterministic_review",
+                payload={
+                    "approved": approved,
+                    "violations": violations,
+                    "evidence": evidence_payload,
+                },
+                reason=reason,
+                idempotency_key=f"deterministic:{final_state}",
+            )
+            if final_state == "quarantined":
+                await conn.execute(
+                    "UPDATE submissions SET status=?, error=?, updated_at=? WHERE id=?",
+                    (SubmissionStatus.HELD.value, reason, now_iso(), submission_id),
+                )
+
+    async def record_llm_review_event(
+        self,
+        *,
+        submission_id: str,
+        state: str,
+        actor: str,
+        tool_name: str,
+        payload: dict[str, Any] | None = None,
+        reason: str = "",
+        idempotency_key: str | None = None,
+    ) -> None:
+        async with self.database.connect() as conn:
+            await self._record_llm_review_event(
+                conn,
+                submission_id=submission_id,
+                state=state,
+                actor=actor,
+                tool_name=tool_name,
+                payload=payload or {},
+                reason=reason,
+                idempotency_key=idempotency_key,
+            )
+
+    async def submit_llm_mermaid(
+        self,
+        *,
+        submission_id: str,
+        mermaid: str,
+        actor: str = "llm",
+        tool_name: str = "SubmitMermaid",
+        payload: dict[str, Any] | None = None,
+        idempotency_key: str | None = None,
+    ) -> None:
+        if not mermaid.strip():
+            raise ValueError("llm_review_mermaid_empty")
+        event_payload = payload or {"mermaid": mermaid}
+        stable_key = idempotency_key or _stable_key("SubmitMermaid", event_payload)
+        async with self.database.connect() as conn:
+            verdict_rows = await conn.execute_fetchall(
+                "SELECT 1 FROM llm_review_events WHERE submission_id=? AND state=? LIMIT 1",
+                (submission_id, "verdict_submitted"),
+            )
+            if verdict_rows:
+                raise ValueError("llm_review_order_error: mermaid submitted after verdict")
+            rows = await conn.execute_fetchall(
+                "SELECT payload FROM llm_review_events WHERE submission_id=? AND tool_name=?",
+                (submission_id, "SubmitMermaid"),
+            )
+            for row in rows:
+                existing = loads(str(row["payload"]))
+                if isinstance(existing, dict) and existing.get("mermaid") == mermaid:
+                    return
+            if rows:
+                raise ValueError("llm_review_mermaid_already_submitted")
+            await self._record_llm_review_event(
+                conn,
+                submission_id=submission_id,
+                state="mermaid_submitted",
+                actor=actor,
+                tool_name=tool_name,
+                payload=event_payload,
+                reason="LLM submitted readable Mermaid review metadata",
+                idempotency_key=stable_key,
+            )
+
+    async def submit_llm_verdict(
+        self,
+        *,
+        submission_id: str,
+        approved: bool,
+        reason: str,
+        violations: list[str],
+        confidence: float,
+        raw: dict[str, Any],
+        evidence: list[dict[str, Any]] | None = None,
+        mermaid: str | None = None,
+        held: bool = False,
+        actor: str = "llm",
+        tool_name: str = "SubmitVerdict",
+        idempotency_key: str | None = None,
+    ) -> None:
+        evidence_payload = _validate_evidence(evidence or [])
+        if not approved and not evidence_payload:
+            held = True
+        final_state = "quarantined" if held else "accepted" if approved else "rejected"
+        async with self.database.connect() as conn:
+            mermaid_rows = await conn.execute_fetchall(
+                "SELECT payload FROM llm_review_events WHERE submission_id=? AND state=? "
+                "ORDER BY sequence LIMIT 1",
+                (submission_id, "mermaid_submitted"),
+            )
+            if not mermaid_rows:
+                raise ValueError(
+                    "llm_review_order_error: submit_mermaid required before submit_verdict"
+                )
+            mermaid_payload = loads(str(list(mermaid_rows)[0]["payload"]))
+            mermaid_text = mermaid or (
+                str(mermaid_payload.get("mermaid")) if isinstance(mermaid_payload, dict) else None
+            )
+            await self._record_llm_review_event(
+                conn,
+                submission_id=submission_id,
+                state="verdict_submitted",
+                actor=actor,
+                tool_name=tool_name,
+                payload={**raw, "evidence": evidence_payload},
+                reason=reason,
+                idempotency_key=idempotency_key or _stable_key("SubmitVerdict", raw),
+            )
+            now = now_iso()
+            await conn.execute(
+                "INSERT OR REPLACE INTO llm_reviews("
+                "submission_id, approved, reason, violations, confidence, raw, mermaid, evidence, "
+                "final_state, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    submission_id,
+                    int(approved),
+                    reason,
+                    dumps(violations),
+                    confidence,
+                    dumps(raw),
+                    mermaid_text,
+                    dumps(evidence_payload),
+                    final_state,
+                    now,
+                    now,
+                ),
+            )
+            await self._record_llm_review_event(
+                conn,
+                submission_id=submission_id,
+                state=final_state,
+                actor="system",
+                tool_name="llm_review_state_machine",
+                payload={"approved": approved, "held": held, "evidence": evidence_payload},
+                reason=reason,
+                idempotency_key=f"final:{final_state}:{_stable_key('reason', {'reason': reason})}",
+            )
+            if final_state == "rejected":
+                await conn.execute(
+                    "UPDATE submissions SET status=?, error=?, updated_at=? WHERE id=?",
+                    (SubmissionStatus.REJECTED.value, reason, now, submission_id),
+                )
+            elif final_state == "quarantined":
+                await conn.execute(
+                    "UPDATE submissions SET status=?, error=?, updated_at=? WHERE id=?",
+                    (SubmissionStatus.HELD.value, reason, now, submission_id),
+                )
+
+    async def quarantine_submission_for_llm_review(
+        self, *, submission_id: str, reason: str, payload: dict[str, Any]) -> None:
+        now = now_iso()
+        async with self.database.connect() as conn:
+            await conn.execute(
+                "UPDATE submissions SET status=?, error=?, updated_at=? WHERE id=?",
+                (SubmissionStatus.HELD.value, reason, now, submission_id),
+            )
+            await self._record_llm_review_event(
+                conn,
+                submission_id=submission_id,
+                state="quarantined",
+                actor="system",
+                tool_name="llm_review_quarantine",
+                payload=payload,
+                reason=reason,
+                idempotency_key="submission-status:quarantined",
             )
 
     async def leaderboard(self, epoch_id: int, limit: int = 50) -> list[dict[str, object]]:
@@ -246,6 +527,58 @@ class PrismRepository:
             )
         return [dict(row) for row in rows]
 
+    async def store_runtime_config(
+        self,
+        *,
+        config_key: str,
+        value: dict[str, Any] | list[Any] | str | int | float | bool | None,
+        updated_by: str,
+        schema_version: int = 1,
+        effective_from: str | None = None,
+        enabled: bool = True,
+    ) -> None:
+        updated_at = now_iso()
+        async with self.database.connect() as conn:
+            await conn.execute(
+                "INSERT INTO runtime_config("
+                "config_key, value_json, schema_version, updated_by, updated_at, "
+                "effective_from, enabled) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (
+                    config_key,
+                    dumps(value),
+                    schema_version,
+                    updated_by,
+                    updated_at,
+                    effective_from or updated_at,
+                    int(enabled),
+                ),
+            )
+
+    async def active_runtime_config_rows(self, *, at: str | None = None) -> list[dict[str, Any]]:
+        effective_at = at or now_iso()
+        async with self.database.connect() as conn:
+            rows = await conn.execute_fetchall(
+                "SELECT rc.* FROM runtime_config rc "
+                "JOIN ("
+                "SELECT config_key, "
+                "MAX(effective_from || '|' || updated_at || '|' || id) AS marker "
+                "FROM runtime_config WHERE enabled=1 AND effective_from <= ? GROUP BY config_key"
+                ") active ON active.config_key=rc.config_key "
+                "AND active.marker=(rc.effective_from || '|' || rc.updated_at || '|' || rc.id) "
+                "ORDER BY rc.config_key",
+                (effective_at,),
+            )
+        return [dict(row) for row in rows]
+
+    async def runtime_config(
+        self,
+        settings: Any,
+        *,
+        official: bool = True,
+    ) -> RuntimePolicy:
+        rows = await self.active_runtime_config_rows()
+        return resolve_runtime_policy(settings, rows, allow_sql_fallback=not official)
+
     async def component_weight_rows(
         self,
         *,
@@ -254,11 +587,30 @@ class PrismRepository:
     ) -> list[dict[str, object]]:
         async with self.database.connect() as conn:
             rows = await conn.execute_fetchall(
-                "SELECT owner_hotkey AS hotkey, q_arch_best * ? AS score "
-                "FROM architecture_families WHERE q_arch_best > 0 "
+                "WITH active_architectures AS ("
+                "  SELECT id, owner_hotkey, q_arch_best "
+                "  FROM architecture_families WHERE q_arch_best > 0"
+                "), architecture_total AS ("
+                "  SELECT SUM(q_arch_best) AS total_score FROM active_architectures"
+                "), current_training AS ("
+                "  SELECT architecture_id, owner_hotkey "
+                "  FROM training_variants WHERE is_current_best=1 AND q_recipe > 0"
+                ") "
+                "SELECT owner_hotkey AS hotkey, "
+                "       (? * q_arch_best / (SELECT total_score FROM architecture_total)) AS score, "
+                "       'architecture' AS component "
+                "FROM active_architectures "
                 "UNION ALL "
-                "SELECT owner_hotkey AS hotkey, q_recipe * ? AS score "
-                "FROM training_variants WHERE is_current_best=1 AND q_recipe > 0",
+                "SELECT current_training.owner_hotkey AS hotkey, "
+                "       (? * active_architectures.q_arch_best / "
+                "        (SELECT SUM(active_architectures.q_arch_best) "
+                "         FROM active_architectures "
+                "         JOIN current_training "
+                "           ON current_training.architecture_id=active_architectures.id)) "
+                "       AS score, "
+                "       'training' AS component "
+                "FROM active_architectures "
+                "JOIN current_training ON current_training.architecture_id=active_architectures.id",
                 (architecture_weight, training_weight),
             )
         return [dict(row) for row in rows]
@@ -385,6 +737,7 @@ class PrismRepository:
                     signature=semantic_signature,
                     architecture_id=ownership_decision.matched_architecture_id,
                     training_variant_id=ownership_decision.matched_training_variant_id,
+                    architecture_metadata=None,
                     now=now,
                 )
                 return {"held": True, "hold_id": hold_id, "rejected": False}
@@ -401,6 +754,13 @@ class PrismRepository:
                 signature=semantic_signature,
                 architecture_id=str(result["architecture_id"]),
                 training_variant_id=cast(str | None, result.get("training_variant_id")),
+                architecture_metadata=_architecture_metadata(
+                    payload=payload,
+                    architecture_id=str(result["architecture_id"]),
+                    architecture_version_id=str(result["architecture_version_id"]),
+                    architecture_graph_hash=str(result["architecture_graph_hash"]),
+                    owner_hotkey=hotkey,
+                ),
                 now=now,
             )
         return result
@@ -472,6 +832,13 @@ class PrismRepository:
                 signature=ComponentSemanticSignature(**cast(dict[str, Any], payload["signature"])),
                 architecture_id=str(result["architecture_id"]),
                 training_variant_id=cast(str | None, result.get("training_variant_id")),
+                architecture_metadata=_architecture_metadata(
+                    payload=payload,
+                    architecture_id=str(result["architecture_id"]),
+                    architecture_version_id=str(result["architecture_version_id"]),
+                    architecture_graph_hash=str(result["architecture_graph_hash"]),
+                    owner_hotkey=hotkey,
+                ),
                 now=now,
             )
             return result
@@ -494,7 +861,13 @@ class PrismRepository:
         decision: ComponentOwnershipDecision,
         now: str,
     ) -> dict[str, object]:
-        architecture_id, accepted_architecture, arch_points = await self._apply_architecture_result(
+        (
+            architecture_id,
+            architecture_version_id,
+            architecture_graph_hash,
+            accepted_architecture,
+            arch_points,
+        ) = await self._apply_architecture_result(
             conn=conn,
             hotkey=hotkey,
             payload=payload,
@@ -502,11 +875,13 @@ class PrismRepository:
             now=now,
         )
         training_variant_id: str | None = None
+        training_script_version_id: str | None = None
         accepted_training = False
         training_points = 0.0
         if str(payload["project_kind"]) != "architecture_only":
             (
                 training_variant_id,
+                training_script_version_id,
                 accepted_training,
                 training_points,
             ) = await self._apply_training_result(
@@ -517,6 +892,16 @@ class PrismRepository:
                 architecture_id=architecture_id,
                 now=now,
             )
+        await self._store_official_evaluated_tuple(
+            conn=conn,
+            payload=payload,
+            architecture_id=architecture_id,
+            architecture_version_id=architecture_version_id,
+            architecture_graph_hash=architecture_graph_hash,
+            training_variant_id=training_variant_id,
+            training_script_version_id=training_script_version_id,
+            now=now,
+        )
         await conn.execute(
             "INSERT OR REPLACE INTO component_scores("
             "submission_id, architecture_id, training_variant_id, project_kind, arch_points,"
@@ -538,6 +923,9 @@ class PrismRepository:
         return {
             "architecture_id": architecture_id,
             "training_variant_id": training_variant_id,
+            "architecture_version_id": architecture_version_id,
+            "architecture_graph_hash": architecture_graph_hash,
+            "training_script_version_id": training_script_version_id,
             "accepted_architecture": accepted_architecture,
             "accepted_training": accepted_training,
             "arch_points": arch_points,
@@ -554,9 +942,12 @@ class PrismRepository:
         payload: dict[str, Any],
         decision: ComponentOwnershipDecision,
         now: str,
-    ) -> tuple[str, bool, float]:
+    ) -> tuple[str, str, str, bool, float]:
         submission_id = str(payload["submission_id"])
         action = decision.architecture_action
+        q_arch = float(payload["q_arch"])
+        architecture_graph = cast(dict[str, Any], payload["signature"]["architecture_graph"])
+        architecture_graph_hash = _graph_hash(architecture_graph)
         family = await self._component_family(
             conn,
             requested_architecture_id=decision.matched_architecture_id
@@ -567,11 +958,25 @@ class PrismRepository:
         arch_points = 0.0
         if family is None or action == "new":
             architecture_id = str(uuid4())
+            architecture_version_id = await self._insert_architecture_version(
+                conn=conn,
+                architecture_id=architecture_id,
+                submission_id=submission_id,
+                hotkey=hotkey,
+                owner_hotkey=hotkey,
+                payload=payload,
+                architecture_graph_hash=architecture_graph_hash,
+                is_canonical=True,
+                is_owner_version=True,
+                now=now,
+            )
             await conn.execute(
                 "INSERT INTO architecture_families("
                 "id, family_hash, arch_fingerprint, behavior_fingerprint, owner_hotkey,"
                 "owner_submission_id, canonical_submission_id, q_arch_best, created_at,"
-                "updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "updated_at, canonical_graph_hash, canonical_graph_path, canonical_metadata_path,"
+                "canonical_mermaid_path, canonical_version_id) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     architecture_id,
                     str(payload["family_hash"]),
@@ -580,13 +985,18 @@ class PrismRepository:
                     hotkey,
                     submission_id,
                     submission_id,
-                    float(payload["q_arch"]),
+                    q_arch,
                     now,
                     now,
+                    architecture_graph_hash,
+                    _artifact_path(submission_id, ARCHITECTURE_GRAPH_FILENAME),
+                    _artifact_path(submission_id, ARCHITECTURE_METADATA_FILENAME),
+                    _artifact_path(submission_id, ARCHITECTURE_MERMAID_FILENAME),
+                    architecture_version_id,
                 ),
             )
             accepted = True
-            arch_points = float(payload["architecture_weight"]) * float(payload["q_arch"])
+            arch_points = float(payload["architecture_weight"]) * q_arch
             await self._record_ownership_event(
                 conn,
                 submission_id=submission_id,
@@ -597,42 +1007,28 @@ class PrismRepository:
                 reason=decision.reason,
                 now=now,
             )
-            return architecture_id, accepted, arch_points
+            return (
+                architecture_id,
+                architecture_version_id,
+                architecture_graph_hash,
+                accepted,
+                arch_points,
+            )
         architecture_id = str(family["id"])
         old_q = float(cast(SupportsFloat, family["q_arch_best"]))
-        q_arch = float(payload["q_arch"])
-        transfer = action == "transfer" or (
-            decision.architecture_confidence >= float(payload["transfer_confidence"])
-            and _meaningful_improvement(
-                q_arch,
-                old_q,
-                new_std=0.0,
-                old_std=0.0,
-                min_delta_abs=float(payload["architecture_transfer_delta_abs"]),
-                min_delta_rel=float(payload["architecture_transfer_delta_rel"]),
-                z_score=0.0,
-            )
+        architecture_version_id = await self._insert_architecture_version(
+            conn=conn,
+            architecture_id=architecture_id,
+            submission_id=submission_id,
+            hotkey=hotkey,
+            owner_hotkey=str(family["owner_hotkey"]),
+            payload=payload,
+            architecture_graph_hash=architecture_graph_hash,
+            is_canonical=False,
+            is_owner_version=hotkey == str(family["owner_hotkey"]),
+            now=now,
         )
-        if transfer:
-            await conn.execute(
-                "UPDATE architecture_families SET owner_hotkey=?, owner_submission_id=?, "
-                "canonical_submission_id=?, q_arch_best=?, updated_at=? WHERE id=?",
-                (hotkey, submission_id, submission_id, max(q_arch, old_q), now, architecture_id),
-            )
-            accepted = True
-            arch_points = float(payload["architecture_weight"]) * q_arch
-            await self._record_ownership_event(
-                conn,
-                submission_id=submission_id,
-                event="transferred",
-                scope="architecture",
-                architecture_id=architecture_id,
-                from_hotkey=str(family["owner_hotkey"]),
-                to_hotkey=hotkey,
-                reason=decision.reason,
-                now=now,
-            )
-        elif _meaningful_improvement(
+        if str(payload["project_kind"]) != "training_for_arch" and _meaningful_improvement(
             q_arch,
             old_q,
             new_std=0.0,
@@ -642,11 +1038,59 @@ class PrismRepository:
             z_score=0.0,
         ):
             await conn.execute(
-                "UPDATE architecture_families SET q_arch_best=?, canonical_submission_id=?, "
-                "updated_at=? WHERE id=?",
-                (q_arch, submission_id, now, architecture_id),
+                "UPDATE architecture_versions SET is_canonical=0 WHERE architecture_id=?",
+                (architecture_id,),
             )
-        return architecture_id, accepted, arch_points
+            await conn.execute(
+                "UPDATE architecture_versions SET is_canonical=1 WHERE id=?",
+                (architecture_version_id,),
+            )
+            await conn.execute(
+                "UPDATE architecture_families SET q_arch_best=?, canonical_submission_id=?, "
+                "canonical_graph_hash=?, canonical_graph_path=?, canonical_metadata_path=?, "
+                "canonical_mermaid_path=?, canonical_version_id=?, updated_at=? WHERE id=?",
+                (
+                    q_arch,
+                    submission_id,
+                    architecture_graph_hash,
+                    _artifact_path(submission_id, ARCHITECTURE_GRAPH_FILENAME),
+                    _artifact_path(submission_id, ARCHITECTURE_METADATA_FILENAME),
+                    _artifact_path(submission_id, ARCHITECTURE_MERMAID_FILENAME),
+                    architecture_version_id,
+                    now,
+                    architecture_id,
+                ),
+            )
+            await self._record_ownership_event(
+                conn,
+                submission_id=submission_id,
+                event="canonical_updated",
+                scope="architecture",
+                architecture_id=architecture_id,
+                from_hotkey=str(family["owner_hotkey"]),
+                to_hotkey=str(family["owner_hotkey"]),
+                reason=decision.reason,
+                now=now,
+            )
+        if not accepted:
+            await self._record_ownership_event(
+                conn,
+                submission_id=submission_id,
+                event="attached_variant",
+                scope="architecture",
+                architecture_id=architecture_id,
+                from_hotkey=str(family["owner_hotkey"]),
+                to_hotkey=str(family["owner_hotkey"]),
+                reason=decision.reason,
+                now=now,
+            )
+        return (
+            architecture_id,
+            architecture_version_id,
+            architecture_graph_hash,
+            accepted,
+            arch_points,
+        )
 
     async def _apply_training_result(
         self,
@@ -657,10 +1101,10 @@ class PrismRepository:
         decision: ComponentOwnershipDecision,
         architecture_id: str,
         now: str,
-    ) -> tuple[str | None, bool, float]:
+    ) -> tuple[str | None, str | None, bool, float]:
         submission_id = str(payload["submission_id"])
         if decision.training_action == "none":
-            return None, False, 0.0
+            return None, None, False, 0.0
         existing = None
         if decision.matched_training_variant_id:
             existing = await self._training_variant_by_id(
@@ -673,43 +1117,88 @@ class PrismRepository:
         current = await self._current_training_variant(conn, architecture_id)
         q_recipe = float(payload["q_recipe"])
         metric_mean = float(payload["metric_mean"])
-        metric_std = float(payload["metric_std"])
+        metric_std = max(0.0, float(payload["metric_std"]))
+        training_graph = cast(dict[str, Any], payload["signature"]["training_graph"])
+        training_graph_hash = _graph_hash(training_graph)
         accepted = False
         points = 0.0
-        if existing is not None and decision.training_action == "transfer":
-            old_mean = float(cast(SupportsFloat, existing["metric_mean"]))
-            if _meaningful_improvement(
-                metric_mean,
-                old_mean,
-                new_std=metric_std,
-                old_std=float(cast(SupportsFloat, existing["metric_std"])),
-                min_delta_abs=float(payload["training_transfer_delta_abs"]),
-                min_delta_rel=float(payload["training_transfer_delta_rel"]),
-                z_score=0.0,
-            ):
+        if existing is not None and (
+            decision.training_action == "transfer"
+            or str(existing["training_hash"]) == str(payload["training_hash"])
+        ):
+            training_variant_id = str(existing["id"])
+            training_script_version_id = await self._insert_training_script_version(
+                conn=conn,
+                architecture_id=architecture_id,
+                training_variant_id=training_variant_id,
+                submission_id=submission_id,
+                hotkey=hotkey,
+                owner_hotkey=str(existing["owner_hotkey"]),
+                payload=payload,
+                training_graph_hash=training_graph_hash,
+                is_current_best=False,
+                now=now,
+            )
+            if decision.training_action == "transfer":
+                old_mean = float(cast(SupportsFloat, existing["metric_mean"]))
+                accepted = _meaningful_improvement(
+                    metric_mean,
+                    old_mean,
+                    new_std=metric_std,
+                    old_std=float(cast(SupportsFloat, existing["metric_std"])),
+                    min_delta_abs=float(payload["training_transfer_delta_abs"]),
+                    min_delta_rel=float(payload["training_transfer_delta_rel"]),
+                    z_score=0.0,
+                )
+            if accepted:
+                await conn.execute(
+                    "UPDATE training_script_versions SET is_current_best=0 WHERE architecture_id=?",
+                    (architecture_id,),
+                )
+                await conn.execute(
+                    "UPDATE training_script_versions SET owner_hotkey=?, is_current_best=1 "
+                    "WHERE id=?",
+                    (hotkey, training_script_version_id),
+                )
                 await conn.execute(
                     "UPDATE training_variants SET owner_hotkey=?, submission_id=?, q_recipe=?, "
-                    "metric_mean=?, metric_std=?, is_current_best=1, updated_at=? WHERE id=?",
+                    "metric_mean=?, metric_std=?, is_current_best=1, current_best_version_id=?, "
+                    "training_graph_hash=?, training_metadata_path=?, "
+                    "official_run_manifest_path=?, "
+                    "updated_at=? WHERE id=?",
                     (
                         hotkey,
                         submission_id,
                         q_recipe,
                         metric_mean,
-                        max(0.0, metric_std),
+                        metric_std,
+                        training_script_version_id,
+                        training_graph_hash,
+                        _artifact_path(submission_id, "training_metadata.v1.json"),
+                        _artifact_path(submission_id, RUN_MANIFEST_FILENAME),
                         now,
-                        existing["id"],
+                        training_variant_id,
                     ),
                 )
                 await conn.execute(
                     "UPDATE training_variants SET is_current_best=0 "
                     "WHERE architecture_id=? AND id != ?",
-                    (architecture_id, existing["id"]),
+                    (architecture_id, training_variant_id),
                 )
-                accepted = True
                 points = float(payload["training_weight"]) * q_recipe
-            return str(existing["id"]), accepted, points
-        if existing is not None and str(existing["training_hash"]) == str(payload["training_hash"]):
-            return str(existing["id"]), False, 0.0
+                await self._record_ownership_event(
+                    conn,
+                    submission_id=submission_id,
+                    event="transferred",
+                    scope="training",
+                    architecture_id=architecture_id,
+                    training_variant_id=training_variant_id,
+                    from_hotkey=str(existing["owner_hotkey"]),
+                    to_hotkey=hotkey,
+                    reason=decision.reason,
+                    now=now,
+                )
+            return training_variant_id, training_script_version_id, accepted, points
         accepted = current is None or _meaningful_improvement(
             metric_mean,
             float(cast(SupportsFloat, current["metric_mean"])),
@@ -720,16 +1209,37 @@ class PrismRepository:
             z_score=float(payload["training_z_score"]),
         )
         training_variant_id = str(uuid4())
+        training_script_version_id = await self._insert_training_script_version(
+            conn=conn,
+            architecture_id=architecture_id,
+            training_variant_id=training_variant_id,
+            submission_id=submission_id,
+            hotkey=hotkey,
+            owner_hotkey=hotkey,
+            payload=payload,
+            training_graph_hash=training_graph_hash,
+            is_current_best=accepted,
+            now=now,
+        )
         if accepted:
             await conn.execute(
                 "UPDATE training_variants SET is_current_best=0 WHERE architecture_id=?",
                 (architecture_id,),
             )
+            await conn.execute(
+                "UPDATE training_script_versions SET is_current_best=0 WHERE architecture_id=?",
+                (architecture_id,),
+            )
+            await conn.execute(
+                "UPDATE training_script_versions SET is_current_best=1 WHERE id=?",
+                (training_script_version_id,),
+            )
         await conn.execute(
             "INSERT INTO training_variants("
             "id, architecture_id, training_hash, owner_hotkey, submission_id,"
-            "q_recipe, metric_mean, metric_std, is_current_best, created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "q_recipe, metric_mean, metric_std, is_current_best, created_at, updated_at,"
+            "current_best_version_id, training_graph_hash, training_metadata_path,"
+            "official_run_manifest_path) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 training_variant_id,
                 architecture_id,
@@ -738,10 +1248,14 @@ class PrismRepository:
                 submission_id,
                 q_recipe,
                 metric_mean,
-                max(0.0, metric_std),
+                metric_std,
                 int(accepted),
                 now,
                 now,
+                training_script_version_id if accepted else None,
+                training_graph_hash,
+                _artifact_path(submission_id, "training_metadata.v1.json"),
+                _artifact_path(submission_id, RUN_MANIFEST_FILENAME),
             ),
         )
         if accepted:
@@ -757,7 +1271,152 @@ class PrismRepository:
                 reason=decision.reason,
                 now=now,
             )
-        return training_variant_id, accepted, points
+        return training_variant_id, training_script_version_id, accepted, points
+
+    async def _insert_architecture_version(
+        self,
+        *,
+        conn: aiosqlite.Connection,
+        architecture_id: str,
+        submission_id: str,
+        hotkey: str,
+        owner_hotkey: str,
+        payload: dict[str, Any],
+        architecture_graph_hash: str,
+        is_canonical: bool,
+        is_owner_version: bool,
+        now: str,
+    ) -> str:
+        version_id = str(uuid4())
+        version_index = await self._next_version_index(
+            conn, "architecture_versions", architecture_id
+        )
+        await conn.execute(
+            "INSERT INTO architecture_versions("
+            "id, architecture_id, submission_id, submitter_hotkey, owner_hotkey, version_index,"
+            "family_hash, arch_fingerprint, behavior_fingerprint, canonical_graph_hash,"
+            "architecture_source_hash, canonical_graph_path, canonical_metadata_path,"
+            "derived_mermaid_path, q_arch, is_canonical, is_owner_version,"
+            "official_evaluation_config_id, official_run_manifest_path, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                version_id,
+                architecture_id,
+                submission_id,
+                hotkey,
+                owner_hotkey,
+                version_index,
+                str(payload["family_hash"]),
+                str(payload["arch_fingerprint"]),
+                str(payload["behavior_fingerprint"]),
+                architecture_graph_hash,
+                str(payload["arch_fingerprint"]),
+                _artifact_path(submission_id, ARCHITECTURE_GRAPH_FILENAME),
+                _artifact_path(submission_id, ARCHITECTURE_METADATA_FILENAME),
+                _artifact_path(submission_id, ARCHITECTURE_MERMAID_FILENAME),
+                float(payload["q_arch"]),
+                int(is_canonical),
+                int(is_owner_version),
+                _evaluation_config_id(payload),
+                _artifact_path(submission_id, RUN_MANIFEST_FILENAME),
+                now,
+            ),
+        )
+        return version_id
+
+    async def _insert_training_script_version(
+        self,
+        *,
+        conn: aiosqlite.Connection,
+        architecture_id: str,
+        training_variant_id: str,
+        submission_id: str,
+        hotkey: str,
+        owner_hotkey: str,
+        payload: dict[str, Any],
+        training_graph_hash: str,
+        is_current_best: bool,
+        now: str,
+    ) -> str:
+        version_id = str(uuid4())
+        version_index = await self._next_version_index(
+            conn, "training_script_versions", architecture_id
+        )
+        await conn.execute(
+            "INSERT INTO training_script_versions("
+            "id, architecture_id, training_variant_id, submission_id, "
+            "submitter_hotkey, owner_hotkey,"
+            "version_index, training_hash, training_graph_hash, training_metadata_path, q_recipe,"
+            "metric_mean, metric_std, is_current_best, official_evaluation_config_id,"
+            "official_run_manifest_path, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                version_id,
+                architecture_id,
+                training_variant_id,
+                submission_id,
+                hotkey,
+                owner_hotkey,
+                version_index,
+                str(payload["training_hash"]),
+                training_graph_hash,
+                _artifact_path(submission_id, "training_metadata.v1.json"),
+                float(payload["q_recipe"]),
+                float(payload["metric_mean"]),
+                max(0.0, float(payload["metric_std"])),
+                int(is_current_best),
+                _evaluation_config_id(payload),
+                _artifact_path(submission_id, RUN_MANIFEST_FILENAME),
+                now,
+            ),
+        )
+        return version_id
+
+    async def _store_official_evaluated_tuple(
+        self,
+        *,
+        conn: aiosqlite.Connection,
+        payload: dict[str, Any],
+        architecture_id: str,
+        architecture_version_id: str,
+        architecture_graph_hash: str,
+        training_variant_id: str | None,
+        training_script_version_id: str | None,
+        now: str,
+    ) -> None:
+        await conn.execute(
+            "INSERT OR REPLACE INTO official_evaluated_tuples("
+            "submission_id, architecture_id, architecture_version_id, training_variant_id,"
+            "training_script_version_id, evaluation_config_id, architecture_graph_hash,"
+            "training_hash, q_arch, q_recipe, metric_mean, metric_std, metrics, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                str(payload["submission_id"]),
+                architecture_id,
+                architecture_version_id,
+                training_variant_id,
+                training_script_version_id,
+                _evaluation_config_id(payload),
+                architecture_graph_hash,
+                str(payload["training_hash"]),
+                float(payload["q_arch"]),
+                float(payload["q_recipe"]),
+                float(payload["metric_mean"]),
+                max(0.0, float(payload["metric_std"])),
+                dumps(cast(dict[str, float], payload["metrics"])),
+                now,
+            ),
+        )
+
+    async def _next_version_index(
+        self, conn: aiosqlite.Connection, table: str, architecture_id: str
+    ) -> int:
+        rows = await conn.execute_fetchall(
+            f"SELECT COALESCE(MAX(version_index), 0) AS version_index FROM {table} "
+            "WHERE architecture_id=?",
+            (architecture_id,),
+        )
+        return int(list(rows)[0]["version_index"]) + 1
 
     async def list_architectures(self, limit: int = 50) -> list[dict[str, object]]:
         async with self.database.connect() as conn:
@@ -939,6 +1598,43 @@ class PrismRepository:
                 expired_submission_ids.append(submission_id)
         return expired_submission_ids
 
+    async def _record_llm_review_event(
+        self,
+        conn: aiosqlite.Connection,
+        *,
+        submission_id: str,
+        state: str,
+        actor: str,
+        tool_name: str,
+        payload: dict[str, Any],
+        reason: str,
+        idempotency_key: str | None,
+    ) -> None:
+        stable_key = idempotency_key or _stable_key(tool_name, payload)
+        sequence_rows = await conn.execute_fetchall(
+            "SELECT COALESCE(MAX(sequence), 0) AS sequence FROM llm_review_events "
+            "WHERE submission_id=?",
+            (submission_id,),
+        )
+        sequence = int(list(sequence_rows)[0]["sequence"]) + 1
+        await conn.execute(
+            "INSERT OR IGNORE INTO llm_review_events("
+            "id, submission_id, sequence, state, actor, tool_name, idempotency_key, payload, "
+            "reason, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                str(uuid4()),
+                submission_id,
+                sequence,
+                state,
+                actor,
+                tool_name,
+                stable_key,
+                dumps(payload),
+                reason,
+                now_iso(),
+            ),
+        )
+
     async def _submission_hotkey(self, conn: aiosqlite.Connection, submission_id: str) -> str:
         rows = await conn.execute_fetchall(
             "SELECT hotkey FROM submissions WHERE id=?", (submission_id,)
@@ -956,14 +1652,17 @@ class PrismRepository:
         signature: ComponentSemanticSignature,
         architecture_id: str | None,
         training_variant_id: str | None,
+        architecture_metadata: dict[str, Any] | None,
         now: str,
     ) -> None:
         await conn.execute(
             "INSERT OR REPLACE INTO component_signatures("
             "submission_id, architecture_id, training_variant_id, project_kind, family_hash,"
             "arch_fingerprint, behavior_fingerprint, training_hash, hook_metadata,"
-            "architecture_graph, training_graph, mermaid, architecture_summary,"
-            "training_summary, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "architecture_graph, architecture_graph_hash, architecture_graph_path,"
+            "architecture_metadata, architecture_metadata_path, training_graph, mermaid,"
+            "derived_mermaid_path, architecture_summary, training_summary, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 submission_id,
                 architecture_id,
@@ -975,8 +1674,13 @@ class PrismRepository:
                 signature.training_hash,
                 dumps(signature.hook_metadata),
                 dumps(signature.architecture_graph),
+                signature.architecture_graph_hash,
+                _artifact_path(submission_id, ARCHITECTURE_GRAPH_FILENAME),
+                dumps(architecture_metadata or {}),
+                _artifact_path(submission_id, ARCHITECTURE_METADATA_FILENAME),
                 dumps(signature.training_graph),
                 signature.mermaid,
+                _artifact_path(submission_id, ARCHITECTURE_MERMAID_FILENAME),
                 signature.architecture_summary,
                 signature.training_summary,
                 now,
@@ -1133,6 +1837,164 @@ class PrismRepository:
         )
         rows_list = list(rows)
         return rows_list[0] if rows_list else None
+
+
+def _architecture_metadata(
+    *,
+    payload: dict[str, Any],
+    architecture_id: str,
+    architecture_version_id: str,
+    architecture_graph_hash: str,
+    owner_hotkey: str,
+) -> dict[str, Any]:
+    submission_id = str(payload["submission_id"])
+    signature = cast(dict[str, Any], payload["signature"])
+    graph = ArchitectureGraph.model_validate(signature["architecture_graph"])
+    graph_hash = graph.sha256()
+    if graph_hash != architecture_graph_hash:
+        raise ValueError("canonical architecture graph hash changed during metadata build")
+    metadata = ArchitectureMetadata.model_validate(
+        {
+            "schema_version": ARCHITECTURE_METADATA_SCHEMA_VERSION,
+            "identity": {
+                "architecture_id": architecture_id,
+                "architecture_version_id": architecture_version_id,
+                "architecture_graph_hash": architecture_graph_hash,
+                "architecture_source_hash": str(payload["arch_fingerprint"]),
+                "evaluation_config_id": _evaluation_config_id(payload),
+                "owner_hotkey": owner_hotkey,
+            },
+            "graph": {
+                "canonical_artifact": ARCHITECTURE_GRAPH_FILENAME,
+                "hash": {
+                    "algorithm": "sha256",
+                    "value": architecture_graph_hash,
+                    "canonicalization": "json-sort-keys-no-whitespace",
+                },
+                "node_count": _graph_node_count(graph),
+                "edge_count": _graph_edge_count(graph),
+                "source_free_comparison_keys": [
+                    "schema_version",
+                    "modules",
+                    "classes",
+                    "functions",
+                    "imports",
+                    "calls",
+                    "parameterized_blocks",
+                    "tokenizer_constraints",
+                    "dynamic_routing",
+                    "interface",
+                ],
+            },
+            "derived_mermaid_path": _artifact_path(
+                submission_id, ARCHITECTURE_MERMAID_FILENAME
+            ),
+            "architecture_summary": str(signature["architecture_summary"]),
+            "training_summary": str(signature["training_summary"]),
+            "overview": _metadata_overview(payload, signature, graph),
+            "difficulty": _metadata_difficulty(graph),
+            "comparison": _metadata_comparison(graph, architecture_graph_hash),
+            "comparison_tags": _comparison_tags(graph),
+            "deterministic_evidence": [],
+        }
+    )
+    return metadata.model_dump(mode="json")
+
+
+def _validate_evidence(items: Any) -> list[dict[str, Any]]:
+    if not items:
+        return []
+    if not isinstance(items, list):
+        items = [items]
+    return [DeterministicEvidence.model_validate(item).model_dump(mode="json") for item in items]
+
+
+def _stable_key(tool_name: str, payload: dict[str, Any]) -> str:
+    payload_hash = sha256(dumps(payload).encode("utf-8")).hexdigest()
+    return f"{tool_name}:{payload_hash}"
+
+
+def _graph_node_count(graph: ArchitectureGraph) -> int:
+    return (
+        len(graph.modules)
+        + len(graph.classes)
+        + len(graph.functions)
+        + len(graph.parameterized_blocks)
+    )
+
+
+def _graph_edge_count(graph: ArchitectureGraph) -> int:
+    build_edges = len([name for name in graph.functions if name in {"build_model", "get_recipe"}])
+    class_edges = build_edges if graph.classes else 0
+    return class_edges + len(graph.calls)
+
+
+def _metadata_overview(
+    payload: dict[str, Any], signature: dict[str, Any], graph: ArchitectureGraph
+) -> dict[str, Any]:
+    hook_metadata = signature.get("hook_metadata")
+    hooks = hook_metadata.get("present", []) if isinstance(hook_metadata, dict) else []
+    return {
+        "project_kind": str(payload["project_kind"]),
+        "module_count": len(graph.modules),
+        "primary_classes": graph.classes[:8],
+        "required_interface": graph.interface.get("required", []),
+        "hooks": hooks,
+    }
+
+
+def _metadata_difficulty(graph: ArchitectureGraph) -> dict[str, Any]:
+    complexity = _graph_node_count(graph) + _graph_edge_count(graph)
+    tier = "low" if complexity < 16 else "medium" if complexity < 40 else "high"
+    return {
+        "tier": tier,
+        "complexity_score": complexity,
+        "parameterized_block_count": len(graph.parameterized_blocks),
+        "dynamic_routing": bool(graph.dynamic_routing.get("enabled", False)),
+    }
+
+
+def _metadata_comparison(graph: ArchitectureGraph, architecture_graph_hash: str) -> dict[str, Any]:
+    return {
+        "architecture_graph_hash": architecture_graph_hash,
+        "imports": graph.imports,
+        "calls": graph.calls[:32],
+        "parameterized_blocks": graph.parameterized_blocks[:16],
+        "interface": graph.interface,
+        "dynamic_routing": graph.dynamic_routing,
+    }
+
+
+def _comparison_tags(graph: ArchitectureGraph) -> list[str]:
+    tags: set[str] = set()
+    for block in graph.parameterized_blocks:
+        kind = str(block.get("kind", "")).lower()
+        if "embedding" in kind:
+            tags.add("embedding")
+        if "linear" in kind:
+            tags.add("linear-head")
+        if "attention" in kind:
+            tags.add("attention")
+        if "conv" in kind:
+            tags.add("convolution")
+    if graph.dynamic_routing.get("enabled"):
+        tags.add("dynamic-routing")
+    return sorted(tags)
+
+
+def _graph_hash(graph: dict[str, Any]) -> str:
+    return ArchitectureGraph.model_validate(graph).sha256()
+
+
+def _artifact_path(submission_id: str, filename: str) -> str:
+    return f"artifacts/{submission_id}/{filename}"
+
+
+def _evaluation_config_id(payload: dict[str, Any]) -> str:
+    metrics = payload.get("metrics")
+    if isinstance(metrics, dict) and metrics.get("evaluation_config_id"):
+        return str(metrics["evaluation_config_id"])
+    return "runtime-config:active"
 
 
 def _meaningful_improvement(
