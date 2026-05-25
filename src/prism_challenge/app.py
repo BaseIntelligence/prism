@@ -42,11 +42,12 @@ def create_app(app_settings: PrismSettings = settings) -> FastAPI:
     )
 
     async def get_weights_fn() -> dict[str, float]:
+        runtime_config = await repository.runtime_config(app_settings, official=True)
         return await get_weights(
             repository,
             app_settings.epoch_seconds,
-            architecture_weight=app_settings.architecture_reward_weight,
-            training_weight=app_settings.training_reward_weight,
+            architecture_weight=runtime_config.reward_pools.architecture,
+            training_weight=runtime_config.reward_pools.training,
         )
 
     app = create_challenge_app(

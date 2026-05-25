@@ -25,20 +25,28 @@ from .evaluator.components import (
     component_fingerprints,
     project_components,
 )
-from .evaluator.container import PrismContainerEvaluator
+from .evaluator.container import InfrastructureEvaluationError, PrismContainerEvaluator
 from .evaluator.interface import PrismContext
 from .evaluator.l1_syntax import validate_l1
 from .evaluator.l2_proxy import score_l2
 from .evaluator.l3_train import score_l3
 from .evaluator.l4_benchmark import score_l4
 from .evaluator.lium_client import LiumJob
+from .evaluator.modes import execution_mode_from_value, run_local_cpu_smoke
 from .evaluator.review_rules import ReviewRule, load_review_rules
 from .evaluator.sandbox import (
     SandboxViolation,
     inspect_code,
     load_submission_contract,
 )
+from .evaluator.schemas import ExecutionMode
 from .evaluator.scoring import final_score, score_recipe
+from .gpu_scheduler import (
+    GpuLease,
+    GpuLeaseScheduler,
+    lease_request_from_runtime,
+    targets_from_settings,
+)
 from .models import EvaluationAssignmentStatus, SubmissionStatus
 from .repository import PrismRepository, now_iso
 from .sdk.executors.docker import DockerExecutor, DockerLimits, DockerMount, DockerRunSpec
@@ -60,6 +68,7 @@ class StaticReviewOutcome:
     rejected: bool
     reason: str | None = None
     violations: tuple[str, ...] = ()
+    held: bool = False
 
 
 @dataclass(frozen=True)
@@ -129,6 +138,8 @@ class PrismWorker:
             )
             if review.rejected:
                 await self._reject_submission(submission_id, review.reason or "review rejected")
+                return None
+            if review.held:
                 return None
             snapshot = self._snapshot_from_submission(code, filename, metadata)
             component_review = self._component_review(snapshot)
@@ -219,6 +230,8 @@ class PrismWorker:
         if review.rejected:
             await self._reject_submission(submission_id, review.reason or "review rejected")
             return submission_id
+        if review.held:
+            return submission_id
         code = review.code
         async with self.repository.database.connect() as conn:
             try:
@@ -239,12 +252,15 @@ class PrismWorker:
                 penalty = 1.0 if l3.hard_killed else 0.0
                 if l4.scale_collapse:
                     penalty += 0.25
+                runtime_config = await self.repository.runtime_config(self.settings, official=True)
                 scored = final_score(
                     q_arch=l4.q_arch,
                     q_recipe=recipe_score,
                     anti_cheat_multiplier=anti.multiplier,
                     diversity_bonus=anti.diversity_bonus,
                     penalty=penalty,
+                    arch_weight=runtime_config.score_weights.final_architecture_weight,
+                    recipe_weight=runtime_config.score_weights.final_recipe_weight,
                 )
                 for finding in anti.findings:
                     await conn.execute(
@@ -314,6 +330,8 @@ class PrismWorker:
             )
             if review.rejected:
                 await self._reject_submission(submission_id, review.reason or "review rejected")
+                return submission_id
+            if review.held:
                 return submission_id
             snapshot = self._snapshot_from_submission(code, filename, metadata)
             component_review = self._component_review(snapshot)
@@ -394,6 +412,8 @@ class PrismWorker:
             if review.rejected:
                 await self._reject_submission(submission_id, review.reason or "review rejected")
                 return submission_id
+            if review.held:
+                return submission_id
             snapshot = self._snapshot_from_submission(code, filename, metadata)
             component_review = self._component_review(snapshot)
             code = review.code
@@ -415,7 +435,50 @@ class PrismWorker:
             previous,
             allowed_import_roots=self._local_import_roots(snapshot),
         )
-        evaluator = PrismContainerEvaluator(settings=self.settings, ctx=self.ctx)
+        runtime_config = await self.repository.runtime_config(self.settings, official=True)
+        try:
+            execution_mode = execution_mode_from_value(metadata.get("execution_mode"))
+        except ValueError as exc:
+            await self._reject_submission(submission_id, str(exc))
+            return submission_id
+        if execution_mode is ExecutionMode.LOCAL_CPU_SMOKE:
+            return await self._process_local_cpu_smoke_mode(
+                submission_id=submission_id,
+                code=code,
+                code_hash=code_hash,
+                arch_hash=arch_hash,
+                anti_multiplier=anti.multiplier,
+                diversity_bonus=anti.diversity_bonus,
+            )
+        score_eligible = metadata.get("score_eligible")
+        scheduler = GpuLeaseScheduler(
+            self.repository.database, targets_from_settings(self.settings, runtime_config)
+        )
+        lease = await scheduler.enqueue_or_allocate(
+            lease_request_from_runtime(
+                submission_id=submission_id,
+                job_id=None,
+                runtime_policy=runtime_config,
+                mode=execution_mode.value,
+                score_eligible=bool(score_eligible) if score_eligible is not None else None,
+            )
+        )
+        if not lease.active:
+            async with self.repository.database.connect() as conn:
+                await conn.execute(
+                    "UPDATE submissions SET status=?, error=?, updated_at=? WHERE id=?",
+                    (SubmissionStatus.PENDING.value, lease.reason, now_iso(), submission_id),
+                )
+            return submission_id
+        effective_settings = self.settings.model_copy(
+            update={
+                "platform_eval_gpu_count": lease.gpu_count,
+                "platform_eval_gpu_type": runtime_config.gpu_policy.gpu_type,
+                "platform_eval_gpu_server": lease.target_server,
+                "platform_eval_gpu_device_ids": lease.device_ids,
+            }
+        )
+        evaluator = PrismContainerEvaluator(settings=effective_settings, ctx=self.ctx)
         try:
             result = await asyncio.to_thread(
                 evaluator.evaluate,
@@ -426,12 +489,17 @@ class PrismWorker:
                 backend=self.execution_backend,
                 files=snapshot.files,
                 entrypoint=component_review.components.entrypoint,
+                gpu_lease=lease,
+                execution_mode=execution_mode,
             )
             await self._record_container_job(
                 submission_id=submission_id,
                 status="completed",
                 container_name=result.container_name,
                 metrics=result.metrics,
+                lease=lease,
+                artifact_output_path=result.artifact_output_path,
+                run_manifest_path=result.run_manifest_path,
             )
             await self._finalize_remote_result(
                 submission_id=submission_id,
@@ -442,6 +510,22 @@ class PrismWorker:
                 component_review=component_review,
             )
             return submission_id
+        except InfrastructureEvaluationError as exc:
+            await self._record_container_job(
+                submission_id=submission_id,
+                status="infra_failed",
+                container_name=None,
+                metrics={},
+                error=str(exc),
+                lease=lease,
+                infra_retryable=True,
+            )
+            async with self.repository.database.connect() as conn:
+                await conn.execute(
+                    "UPDATE submissions SET status=?, error=?, updated_at=? WHERE id=?",
+                    (SubmissionStatus.PENDING.value, str(exc), now_iso(), submission_id),
+                )
+            return submission_id
         except Exception as exc:
             await self._record_container_job(
                 submission_id=submission_id,
@@ -449,6 +533,62 @@ class PrismWorker:
                 container_name=None,
                 metrics={},
                 error=str(exc),
+                lease=lease,
+            )
+            await self._fail_submission(submission_id, str(exc))
+            return submission_id
+        finally:
+            await scheduler.release_for_submission(submission_id, "container job finished")
+
+    async def _process_local_cpu_smoke_mode(
+        self,
+        *,
+        submission_id: str,
+        code: str,
+        code_hash: str,
+        arch_hash: str,
+        anti_multiplier: float,
+        diversity_bonus: float,
+    ) -> str:
+        artifact_output = Path("/tmp/prism-local-cpu-smoke") / submission_id
+        try:
+            result = await asyncio.to_thread(
+                run_local_cpu_smoke,
+                submission_id=submission_id,
+                code=code,
+                code_hash=code_hash,
+                arch_hash=arch_hash,
+                ctx=self.ctx,
+                artifact_output_path=artifact_output,
+            )
+            metrics = {
+                **result.metrics,
+                "anti_cheat_multiplier": anti_multiplier,
+                "diversity_bonus": diversity_bonus,
+            }
+            await self._record_container_job(
+                submission_id=submission_id,
+                status="completed",
+                container_name="local_cpu_smoke",
+                metrics=metrics,
+                artifact_output_path=result.artifact_output_path,
+                run_manifest_path=result.run_manifest_path,
+            )
+            async with self.repository.database.connect() as conn:
+                await conn.execute(
+                    "UPDATE submissions SET status=?, arch_hash=?, updated_at=? WHERE id=?",
+                    (SubmissionStatus.COMPLETED.value, arch_hash, now_iso(), submission_id),
+                )
+            return submission_id
+        except Exception as exc:
+            await self._record_container_job(
+                submission_id=submission_id,
+                status="failed",
+                container_name="local_cpu_smoke",
+                metrics={},
+                error=str(exc),
+                artifact_output_path=str(artifact_output),
+                run_manifest_path=str(artifact_output / "prism_run_manifest.v1.json"),
             )
             await self._fail_submission(submission_id, str(exc))
             return submission_id
@@ -457,11 +597,24 @@ class PrismWorker:
         self, snapshot: source_similarity.SourceSnapshot, primary_code: str
     ):
         local_imports = self._local_import_roots(snapshot)
-        report = inspect_code(primary_code, allowed_import_roots=local_imports)
+        primary_file = next(
+            (file for file in snapshot.python_files if file.content == primary_code),
+            None,
+        )
+        report = inspect_code(
+            primary_code,
+            allowed_import_roots=local_imports,
+            artifact_path=primary_file.path if primary_file else "model.py",
+        )
         for file in snapshot.python_files:
             if file.content == primary_code:
                 continue
-            inspect_code(file.content, require_contract=False, allowed_import_roots=local_imports)
+            inspect_code(
+                file.content,
+                require_contract=False,
+                allowed_import_roots=local_imports,
+                artifact_path=file.path,
+            )
         return report
 
     def _local_import_roots(self, snapshot: source_similarity.SourceSnapshot) -> set[str]:
@@ -583,12 +736,44 @@ class PrismWorker:
     ) -> StaticReviewOutcome:
         try:
             snapshot = self._snapshot_from_submission(code, filename, metadata)
+            await self.repository.record_llm_review_event(
+                submission_id=submission_id,
+                state="received",
+                actor="system",
+                tool_name="submission_receiver",
+                payload={"filename": filename, "code_hash": code_hash},
+                reason="submission received for LLM review flow",
+                idempotency_key="state:received",
+            )
             component_review = self._component_review(snapshot)
             code_for_eval = self._entrypoint_code(snapshot, component_review.components.entrypoint)
         except Exception as exc:
             return StaticReviewOutcome("", True, str(exc))
         if not code_for_eval.strip():
             return StaticReviewOutcome(code_for_eval, True, "submission contains no Python source")
+        await self.repository.record_llm_review_event(
+            submission_id=submission_id,
+            state="static_validation_passed",
+            actor="system",
+            tool_name="static_validator",
+            payload={"entrypoint": component_review.components.entrypoint},
+            reason="submission passed static review preconditions",
+            idempotency_key="state:static_validation_passed",
+        )
+        await self.repository.record_llm_review_event(
+            submission_id=submission_id,
+            state="architecture_analyzed",
+            actor="system",
+            tool_name="architecture_analyzer",
+            payload={
+                "family_hash": component_review.fingerprints.family_hash,
+                "architecture_graph_hash": (
+                    component_review.semantic_signature.architecture_graph_hash
+                ),
+            },
+            reason="architecture graph analyzed for review context",
+            idempotency_key="state:architecture_analyzed",
+        )
         await self.repository.store_source_snapshot(
             submission_id=submission_id,
             hotkey=hotkey,
@@ -611,58 +796,56 @@ class PrismWorker:
             violations=safety.violations,
             confidence=safety.confidence,
             raw=safety.raw,
+            mermaid=safety.mermaid,
+            evidence=safety.evidence,
+            held=safety.held,
         )
+        if safety.held:
+            return StaticReviewOutcome(code_for_eval, False, safety.reason, held=True)
         if not safety.approved:
             return StaticReviewOutcome(code_for_eval, True, safety.reason, tuple(safety.violations))
         if not self.settings.plagiarism_enabled:
             return StaticReviewOutcome(code_for_eval, False)
-        history = await self.repository.source_snapshots(exclude_submission_id=submission_id)
-        candidates = source_similarity.rank_similar(
-            snapshot,
-            history,
-            top_k=self.settings.plagiarism_top_k,
-            min_similarity=self.settings.plagiarism_min_similarity,
+        runtime_config = await self.repository.runtime_config(self.settings, official=True)
+        history = await self.repository.source_similarity_candidates(
+            exclude_submission_id=submission_id
         )
-        if not candidates:
-            return StaticReviewOutcome(code_for_eval, False)
-        candidate = candidates[0]
-        runner = (
-            self._pair_sandbox_runner(submission_id)
-            if self.settings.plagiarism_sandbox_enabled
-            else None
-        )
-        report = await asyncio.to_thread(
-            source_similarity.run_pair_sandbox,
-            snapshot,
-            candidate.snapshot,
-            runner=runner,
-        )
-        plagiarism = await asyncio.to_thread(
-            llm_review.review_plagiarism,
-            current_code=code_for_eval,
-            candidate_code=candidate.snapshot.combined_python(),
-            comparison_report={"candidate": candidate.summary(), **report},
-            config=llm_config,
-            rules=rules,
-        )
-        copied = (
-            candidate.score >= self.settings.plagiarism_static_reject_threshold or plagiarism.copied
-        )
-        violations = plagiarism.violations if copied else []
-        if copied and not violations:
-            violations = ["plagiarism_similarity"]
-        reason = plagiarism.reason if plagiarism.copied else "static similarity review"
-        await self.repository.store_plagiarism_review(
+        duplicate = source_similarity.classify_duplicate(
             submission_id=submission_id,
-            candidate_submission_id=candidate.submission_id,
-            similarity=candidate.score,
-            verdict=copied,
-            reason=reason,
-            violations=violations,
-            report={"candidate": candidate.summary(), **report, "llm": plagiarism.raw},
+            code_hash=code_hash,
+            snapshot=snapshot,
+            architecture_graph=component_review.semantic_signature.architecture_graph,
+            rows=history,
+            thresholds=runtime_config.duplicate_thresholds.model_dump(),
+            top_k=self.settings.plagiarism_top_k,
         )
-        if copied:
-            return StaticReviewOutcome(code_for_eval, True, reason, tuple(violations))
+        if duplicate.candidate is not None:
+            violations = ["duplicate_similarity"] if duplicate.rejected else []
+            await self.repository.store_plagiarism_review(
+                submission_id=submission_id,
+                candidate_submission_id=duplicate.candidate.submission_id,
+                similarity=float(duplicate.report["source_similarity"]),
+                verdict=duplicate.rejected,
+                reason=duplicate.reason,
+                violations=violations,
+                report=duplicate.report,
+            )
+            if duplicate.rejected:
+                return StaticReviewOutcome(
+                    code_for_eval,
+                    True,
+                    reason=duplicate.reason,
+                    violations=tuple(violations),
+                )
+            if duplicate.held:
+                await self.repository.hold_submission_for_duplicate_review(
+                    submission_id=submission_id,
+                    reason=duplicate.reason,
+                    report=duplicate.report,
+                )
+                return StaticReviewOutcome(code_for_eval, False, duplicate.reason, held=True)
+            return StaticReviewOutcome(code_for_eval, False)
+
         return StaticReviewOutcome(code_for_eval, False)
 
     async def _reject_submission(self, submission_id: str, reason: str) -> None:
@@ -775,11 +958,19 @@ class PrismWorker:
         container_name: str | None,
         metrics: dict[str, float],
         error: str | None = None,
+        lease: GpuLease | None = None,
+        artifact_output_path: str | None = None,
+        run_manifest_path: str | None = None,
+        infra_retryable: bool = False,
     ) -> None:
         async with self.repository.database.connect() as conn:
             await conn.execute(
-                "INSERT INTO eval_jobs(id, submission_id, level, status, external_job_id, metrics, "
-                "error, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO eval_jobs("
+                "id, submission_id, level, status, external_job_id, metrics, error, created_at, "
+                "updated_at, gpu_lease_id, target_id, target_server, gpu_device_ids, "
+                "requested_gpu_count, actual_gpu_count, gpu_mode, gpu_tier, "
+                "artifact_output_path, run_manifest_path, infra_retryable) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     str(uuid4()),
                     submission_id,
@@ -790,6 +981,17 @@ class PrismWorker:
                     error,
                     now_iso(),
                     now_iso(),
+                    lease.id if lease else None,
+                    lease.target_id if lease else None,
+                    lease.target_server if lease else None,
+                    dumps(list(lease.device_ids)) if lease else dumps([]),
+                    lease.requested_gpu_count if lease else 0,
+                    lease.gpu_count if lease else 0,
+                    lease.mode if lease else "",
+                    lease.tier if lease else "",
+                    artifact_output_path,
+                    run_manifest_path,
+                    int(infra_retryable),
                 ),
             )
 
@@ -805,12 +1007,15 @@ class PrismWorker:
     ) -> None:
         q_arch = max(0.0, min(1.0, float(metrics.get("q_arch", 0.0))))
         q_recipe = max(0.0, min(1.0, float(metrics.get("q_recipe", 0.5))))
+        runtime_config = await self.repository.runtime_config(self.settings, official=True)
         scored = final_score(
             q_arch=q_arch,
             q_recipe=q_recipe,
             anti_cheat_multiplier=anti_multiplier,
             diversity_bonus=diversity_bonus,
             penalty=float(metrics.get("penalty", 0.0)),
+            arch_weight=runtime_config.score_weights.final_architecture_weight,
+            recipe_weight=runtime_config.score_weights.final_recipe_weight,
         )
         async with self.repository.database.connect() as conn:
             await conn.execute(
@@ -859,8 +1064,8 @@ class PrismWorker:
                 q_recipe=q_recipe,
                 metric_mean=metric_mean,
                 metric_std=metric_std,
-                architecture_weight=self.settings.architecture_reward_weight,
-                training_weight=self.settings.training_reward_weight,
+                architecture_weight=runtime_config.reward_pools.architecture,
+                training_weight=runtime_config.reward_pools.training,
                 architecture_delta_abs=self.settings.architecture_improvement_min_delta_abs,
                 architecture_delta_rel=self.settings.architecture_improvement_min_delta_rel,
                 training_delta_abs=self.settings.training_improvement_min_delta_abs,

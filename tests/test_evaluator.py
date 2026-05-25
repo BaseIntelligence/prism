@@ -100,12 +100,19 @@ def test_prism_chutes_tool_call_review(monkeypatch):
 
         def bind_tools(self, tools, strict=False):
             assert strict is True
-            assert list(tools[0].model_fields)[:2] == ["reason", "verdict"]
+            assert [tool.__name__ for tool in tools] == ["SubmitMermaid", "SubmitVerdict"]
             return self
 
         def invoke(self, _messages):
             return SimpleNamespace(
                 tool_calls=[
+                    {
+                        "name": "SubmitMermaid",
+                        "args": {
+                            "mermaid": "flowchart LR\n  A[Model] --> B[Logits]",
+                            "notes": "valid architecture summary",
+                        },
+                    },
                     {
                         "name": "SubmitVerdict",
                         "args": {
