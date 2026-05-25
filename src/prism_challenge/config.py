@@ -166,8 +166,12 @@ class PrismSettings(ChallengeSettings):
     platform_eval_memory_swap: str | None = "8g"
     platform_eval_pids_limit: int = 512
     platform_eval_read_only: bool = True
+    platform_eval_max_gpu_count: int = Field(default=8, ge=1, le=8)
     platform_eval_gpu_count: int = 1
     platform_eval_gpu_type: str | None = None
+    platform_gpu_targets: str | None = None
+    platform_eval_gpu_server: str | None = None
+    platform_eval_gpu_device_ids: tuple[str, ...] = ()
     platform_eval_task: str = "architecture"
     validator_hotkeys: tuple[str, ...] = ()
     validator_assignment_timeout_seconds: int = 900

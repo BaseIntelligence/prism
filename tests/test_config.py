@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+from pathlib import Path
+
+import yaml
+
 from prism_challenge.config import PrismSettings
 
 
@@ -66,3 +70,26 @@ def test_internal_token_requires_secret() -> None:
         assert "PRISM_SHARED_TOKEN" in str(exc)
     else:
         raise AssertionError("internal_token should require a configured secret")
+
+
+
+def test_example_config_parses_with_nas_defaults() -> None:
+    payload = yaml.safe_load(Path("config.example.yaml").read_text(encoding="utf-8"))
+
+    settings = PrismSettings(**payload)
+
+    assert settings.slug == "prism"
+    assert settings.execution_backend == "platform_gpu"
+    assert settings.public_submissions_enabled is True
+    assert settings.arch_weight == 0.7
+    assert settings.recipe_weight == 0.3
+    assert settings.platform_eval_max_gpu_count == 8
+    assert settings.platform_eval_gpu_count == 1
+    assert settings.docker_enabled is False
+    assert settings.docker_backend == "cli"
+    assert settings.shared_token is None
+    assert settings.chutes_api_key is None
+    assert settings.docker_broker_token is None
+    assert "shared_token" not in payload
+    assert "chutes_api_key" not in payload
+    assert "docker_broker_token" not in payload
