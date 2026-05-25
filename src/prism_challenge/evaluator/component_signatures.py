@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 import ast
-import hashlib
 import re
 from dataclasses import dataclass
 from typing import Any
 
 from .components import PrismComponentFingerprints, PrismProjectComponents
+from .schemas import ArchitectureGraph
 from .source_similarity import SourceFile
 
 HOOK_NAMES = (
@@ -24,6 +24,7 @@ class ComponentSemanticSignature:
     family_hash: str
     arch_fingerprint: str
     behavior_fingerprint: str
+    architecture_graph_hash: str
     training_hash: str
     hook_metadata: dict[str, Any]
     architecture_graph: dict[str, Any]
@@ -38,6 +39,7 @@ class ComponentSemanticSignature:
             "family_hash": self.family_hash,
             "arch_fingerprint": self.arch_fingerprint,
             "behavior_fingerprint": self.behavior_fingerprint,
+            "architecture_graph_hash": self.architecture_graph_hash,
             "training_hash": self.training_hash,
             "hook_metadata": self.hook_metadata,
             "architecture_graph": self.architecture_graph,
@@ -60,6 +62,7 @@ def build_semantic_signature(
         family_hash=fingerprints.family_hash,
         arch_fingerprint=fingerprints.arch_fingerprint,
         behavior_fingerprint=_graph_hash(architecture_graph),
+        architecture_graph_hash=_graph_hash(architecture_graph),
         training_hash=fingerprints.training_hash,
         hook_metadata=hook_metadata,
         architecture_graph=architecture_graph,
@@ -84,6 +87,8 @@ def _graph_for_files(files: tuple[SourceFile, ...]) -> dict[str, Any]:
     imports: set[str] = set()
     calls: set[str] = set()
     modules: set[str] = set()
+    parameterized_blocks: list[dict[str, Any]] = []
+    interface: dict[str, Any] = {"required": [], "optional_hooks": []}
     for file in files:
         if not file.path.endswith(".py"):
             continue
@@ -95,8 +100,13 @@ def _graph_for_files(files: tuple[SourceFile, ...]) -> dict[str, Any]:
         for node in ast.walk(tree):
             if isinstance(node, ast.ClassDef):
                 classes.add(_normalized_symbol(node.name))
+                parameterized_blocks.extend(_class_parameterized_blocks(node))
             elif isinstance(node, ast.FunctionDef):
                 functions.add(node.name)
+                if node.name in {"build_model", "get_recipe"}:
+                    interface["required"].append(node.name)
+                elif node.name in HOOK_NAMES:
+                    interface["optional_hooks"].append(node.name)
             elif isinstance(node, ast.Import):
                 for alias in node.names:
                     imports.add(alias.name.split(".", 1)[0])
@@ -106,13 +116,52 @@ def _graph_for_files(files: tuple[SourceFile, ...]) -> dict[str, Any]:
                 name = _node_name(node.func)
                 if name:
                     calls.add(_normalized_call(name))
-    return {
-        "modules": sorted(modules),
-        "classes": sorted(classes),
-        "functions": sorted(functions),
-        "imports": sorted(imports),
-        "calls": sorted(calls),
-    }
+    graph = ArchitectureGraph(
+        modules=sorted(modules),
+        classes=sorted(classes),
+        functions=sorted(functions),
+        imports=sorted(imports),
+        calls=sorted(calls),
+        parameterized_blocks=sorted(parameterized_blocks, key=lambda item: item["name"]),
+        tokenizer_constraints={"source": "submission_contract"},
+        dynamic_routing={"enabled": _has_dynamic_routing(calls)},
+        interface={
+            "required": sorted(set(interface["required"])),
+            "optional_hooks": sorted(set(interface["optional_hooks"])),
+        },
+    )
+    return graph.model_dump()
+
+
+def _class_parameterized_blocks(node: ast.ClassDef) -> list[dict[str, Any]]:
+    blocks: list[dict[str, Any]] = []
+    for child in ast.walk(node):
+        if not isinstance(child, ast.Assign):
+            continue
+        call = child.value
+        if not isinstance(call, ast.Call):
+            continue
+        call_name = _node_name(call.func)
+        if not call_name or not any(
+            token in call_name
+            for token in ("Embedding", "Linear", "Conv", "Attention", "LayerNorm")
+        ):
+            continue
+        target = ".".join(_node_name(target) for target in child.targets if _node_name(target))
+        blocks.append(
+            {
+                "name": _safe_label(target or call_name),
+                "kind": _normalized_call(call_name),
+                "args": len(call.args),
+                "keywords": sorted(keyword.arg for keyword in call.keywords if keyword.arg),
+            }
+        )
+    return blocks
+
+
+def _has_dynamic_routing(calls: set[str]) -> bool:
+    routing_tokens = ("topk", "where", "gather", "scatter", "router", "moe")
+    return any(any(token in call.lower() for token in routing_tokens) for call in calls)
 
 
 def _hook_metadata(components: PrismProjectComponents) -> dict[str, Any]:
@@ -176,8 +225,7 @@ def _semantic_tokens(graph: dict[str, Any]) -> set[str]:
 
 
 def _graph_hash(graph: dict[str, Any]) -> str:
-    payload = "\n".join(sorted(_semantic_tokens(graph)))
-    return hashlib.sha256(payload.encode()).hexdigest()
+    return ArchitectureGraph.model_validate(graph).sha256()
 
 
 def _stable_name(path: str) -> str:
