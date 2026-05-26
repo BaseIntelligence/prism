@@ -1955,7 +1955,7 @@ wheels = [
 
 [[package]]
 name = "platform-network"
-version = "3.0.3"
+version = "3.0.4"
 source = { directory = "/droid/platform-v10" }
 dependencies = [
     { name = "aiosqlite" },
