@@ -10,6 +10,7 @@ from .models import (
     ArchitectureFamilyResponse,
     EpochResponse,
     EvalJobHealthEntry,
+    GpuStatusSummary,
     LeaderboardEntry,
     LeaderboardResponse,
     SubmissionCreate,
@@ -168,3 +169,27 @@ async def eval_job_health(
         )
         for row in await repository.list_eval_job_health(limit=limit)
     ]
+
+
+@public_route(tags=["gpu"])
+@router.get("/gpu/status", response_model=GpuStatusSummary)
+async def gpu_status(
+    repository: PrismRepository = Depends(repo_from_request),
+) -> GpuStatusSummary:
+    status_rows, tier_rows = await repository.gpu_status_summary()
+    by_status: dict[str, int] = {}
+    total_gpus = 0
+    for row in status_rows:
+        status_value = str(row["status"])
+        by_status[status_value] = int(cast(SupportsInt, row["lease_count"]))
+        if status_value == "active":
+            total_gpus = int(cast(SupportsInt, row["gpu_total"]))
+    by_tier = {
+        str(row["tier"]): int(cast(SupportsInt, row["lease_count"])) for row in tier_rows
+    }
+    return GpuStatusSummary(
+        total_gpus=total_gpus,
+        active_leases=by_status.get("active", 0),
+        by_status=by_status,
+        by_tier=by_tier,
+    )

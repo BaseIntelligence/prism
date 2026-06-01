@@ -549,6 +549,20 @@ class PrismRepository:
             )
         return [dict(row) for row in rows]
 
+    async def gpu_status_summary(
+        self,
+    ) -> tuple[list[dict[str, object]], list[dict[str, object]]]:
+        async with self.database.connect() as conn:
+            status_rows = await conn.execute_fetchall(
+                "SELECT status, COUNT(*) AS lease_count, "
+                "COALESCE(SUM(gpu_count), 0) AS gpu_total "
+                "FROM gpu_leases GROUP BY status",
+            )
+            tier_rows = await conn.execute_fetchall(
+                "SELECT tier, COUNT(*) AS lease_count FROM gpu_leases GROUP BY tier",
+            )
+        return [dict(row) for row in status_rows], [dict(row) for row in tier_rows]
+
     async def store_runtime_config(
         self,
         *,

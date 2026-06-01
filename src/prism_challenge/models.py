@@ -126,6 +126,13 @@ class EvalJobHealthEntry(BaseModel):
     updated_at: datetime
 
 
+class GpuStatusSummary(BaseModel):
+    total_gpus: int
+    active_leases: int
+    by_status: dict[str, int]
+    by_tier: dict[str, int]
+
+
 class ArchitectureFamilyResponse(BaseModel):
     id: str
     family_hash: str
