@@ -5,9 +5,50 @@ import io
 import json
 import zipfile
 
+import pytest
 from conftest import VALID_CODE, signed_headers
+from fastapi.testclient import TestClient
 
+from prism_challenge.app import create_app
+from prism_challenge.config import PrismSettings
 from prism_challenge.sdk.executors.docker import DockerRunResult
+
+
+@pytest.fixture
+def small_cap_client(tmp_path) -> TestClient:
+    settings = PrismSettings(
+        database_url=f"sqlite+aiosqlite:///{tmp_path / 'prism.sqlite3'}",
+        shared_token="secret",
+        allow_insecure_signatures=True,
+        fineweb_sample_count=4,
+        max_code_bytes=2_000,
+    )
+    with TestClient(create_app(settings)) as test_client:
+        yield test_client
+
+
+def _post_code(client: TestClient, code: str):
+    payload = {"code": code, "filename": "model.py"}
+    body = json.dumps(payload, separators=(",", ":")).encode()
+    return client.post(
+        "/v1/submissions",
+        content=body,
+        headers={**signed_headers("secret", body), "Content-Type": "application/json"},
+    )
+
+
+def test_size_check_accepts_just_under_cap(small_cap_client):
+    cap = small_cap_client.app.state.settings.max_code_bytes
+    response = _post_code(small_cap_client, "A" * (cap - 1))
+    assert response.status_code == 200, response.text
+
+
+def test_size_check_rejects_just_over_cap(small_cap_client):
+    cap = small_cap_client.app.state.settings.max_code_bytes
+    response = _post_code(small_cap_client, "A" * (cap + 1))
+    assert response.status_code == 413, response.text
+    assert response.json()["detail"] == "submission too large"
+
 
 
 def test_health_version_and_internal_auth(client):

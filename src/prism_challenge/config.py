@@ -36,7 +36,7 @@ class PrismSettings(ChallengeSettings):
     allow_insecure_signatures: bool = False
     signature_ttl_seconds: int = 300
     epoch_seconds: int = 21_600
-    max_code_bytes: int = 200_000
+    max_code_bytes: int = 7_500_000
     max_parameters: int = 150_000_000
     max_layers: int = 96
     max_sequence_length: int = 512

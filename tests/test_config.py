@@ -73,6 +73,17 @@ def test_internal_token_requires_secret() -> None:
 
 
 
+def test_max_code_bytes_holds_five_mib_zip_base64() -> None:
+    # 5 MiB raw zip -> base64 length 6,990,508; cap must comfortably exceed it.
+    raw_five_mib = 5 * 1024 * 1024
+    base64_len = 4 * ((raw_five_mib + 2) // 3)
+
+    settings = PrismSettings()
+
+    assert settings.max_code_bytes == 7_500_000
+    assert settings.max_code_bytes > base64_len
+
+
 def test_example_config_parses_with_nas_defaults() -> None:
     payload = yaml.safe_load(Path("config.example.yaml").read_text(encoding="utf-8"))
 
