@@ -527,6 +527,15 @@ class PrismRepository:
             )
         return [dict(row) for row in rows]
 
+    async def list_epochs(self, limit: int = 50) -> list[dict[str, object]]:
+        async with self.database.connect() as conn:
+            rows = await conn.execute_fetchall(
+                "SELECT id, starts_at, ends_at, status FROM epochs "
+                "ORDER BY starts_at DESC, id DESC LIMIT ?",
+                (limit,),
+            )
+        return [dict(row) for row in rows]
+
     async def store_runtime_config(
         self,
         *,

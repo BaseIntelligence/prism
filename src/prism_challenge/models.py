@@ -106,6 +106,13 @@ class WeightsResponse(BaseModel):
     weights: dict[str, float]
 
 
+class EpochResponse(BaseModel):
+    id: int
+    starts_at: datetime
+    ends_at: datetime
+    status: str
+
+
 class ArchitectureFamilyResponse(BaseModel):
     id: str
     family_hash: str

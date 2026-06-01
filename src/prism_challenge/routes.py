@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import SupportsFloat, cast
+from typing import SupportsFloat, SupportsInt, cast
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 
 from .auth import authenticate_miner
 from .models import (
     ArchitectureFamilyResponse,
+    EpochResponse,
     LeaderboardEntry,
     LeaderboardResponse,
     SubmissionCreate,
@@ -123,3 +124,20 @@ async def training_variants(
 async def current_epoch(request: Request) -> dict[str, int]:
     epoch_id = epoch_id_for(datetime.now(UTC), request.app.state.settings.epoch_seconds)
     return {"epoch_id": epoch_id, "epoch_seconds": request.app.state.settings.epoch_seconds}
+
+
+@public_route(tags=["epochs"])
+@router.get("/epochs", response_model=list[EpochResponse])
+async def list_epochs(
+    limit: int = Query(default=50, ge=1, le=200),
+    repository: PrismRepository = Depends(repo_from_request),
+) -> list[EpochResponse]:
+    return [
+        EpochResponse(
+            id=int(cast(SupportsInt, row["id"])),
+            starts_at=datetime.fromisoformat(str(row["starts_at"])),
+            ends_at=datetime.fromisoformat(str(row["ends_at"])),
+            status=str(row["status"]),
+        )
+        for row in await repository.list_epochs(limit=limit)
+    ]
