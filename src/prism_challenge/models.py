@@ -133,6 +133,11 @@ class GpuStatusSummary(BaseModel):
     by_tier: dict[str, int]
 
 
+class SubmissionHistoryBucket(BaseModel):
+    date: str
+    count: int
+
+
 class ArchitectureFamilyResponse(BaseModel):
     id: str
     family_hash: str

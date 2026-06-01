@@ -14,6 +14,7 @@ from .models import (
     LeaderboardEntry,
     LeaderboardResponse,
     SubmissionCreate,
+    SubmissionHistoryBucket,
     SubmissionResponse,
     SubmissionStatusResponse,
     TrainingVariantResponse,
@@ -41,6 +42,21 @@ async def submit_model(
     if len(request_body.code.encode()) > request.app.state.settings.max_code_bytes:
         raise HTTPException(status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, "submission too large")
     return await repository.create_submission(hotkey, request_body)
+
+
+@public_route(tags=["submissions"])
+@router.get("/submissions/history", response_model=list[SubmissionHistoryBucket])
+async def submission_history(
+    days: int = Query(default=90, ge=1, le=366),
+    repository: PrismRepository = Depends(repo_from_request),
+) -> list[SubmissionHistoryBucket]:
+    return [
+        SubmissionHistoryBucket(
+            date=str(row["day"]),
+            count=int(cast(SupportsInt, row["count"])),
+        )
+        for row in await repository.submission_history(days=days)
+    ]
 
 
 @public_route(tags=["submissions"])

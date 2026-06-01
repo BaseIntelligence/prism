@@ -549,6 +549,17 @@ class PrismRepository:
             )
         return [dict(row) for row in rows]
 
+    async def submission_history(self, days: int = 90) -> list[dict[str, object]]:
+        async with self.database.connect() as conn:
+            rows = await conn.execute_fetchall(
+                "SELECT date(created_at) AS day, COUNT(*) AS count "
+                "FROM submissions "
+                "WHERE date(created_at) >= date('now', ?) "
+                "GROUP BY day ORDER BY day ASC",
+                (f"-{days} days",),
+            )
+        return [dict(row) for row in rows]
+
     async def gpu_status_summary(
         self,
     ) -> tuple[list[dict[str, object]], list[dict[str, object]]]:
