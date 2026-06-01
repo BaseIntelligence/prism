@@ -18,7 +18,7 @@ class ChallengeSettings(BaseSettings):
         default="/run/secrets/platform/challenge_token", repr=False
     )
     host: str = "0.0.0.0"
-    port: int = 8000
+    port: int = 8080
 
     docker_enabled: bool = False
     docker_bin: str = "docker"
