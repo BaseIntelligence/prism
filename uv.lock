@@ -1956,7 +1956,7 @@ wheels = [
 [[package]]
 name = "platform-network"
 version = "3.0.4"
-source = { directory = "/droid/platform-v10" }
+source = { git = "https://github.com/PlatformNetwork/platform.git#38de3bd3ef0efda9668383e09ae4c8ea870db822" }
 dependencies = [
     { name = "aiosqlite" },
     { name = "alembic" },
@@ -1978,42 +1978,6 @@ dependencies = [
     { name = "uvicorn", extra = ["standard"] },
 ]
 
-[package.metadata]
-requires-dist = [
-    { name = "aiosqlite", specifier = ">=0.20" },
-    { name = "alembic", specifier = ">=1.13" },
-    { name = "asyncpg", specifier = ">=0.29" },
-    { name = "bittensor", marker = "extra == 'bittensor'", specifier = ">=9" },
-    { name = "bittensor", marker = "extra == 'master'", specifier = ">=9" },
-    { name = "bittensor", marker = "extra == 'validator'", specifier = ">=9" },
-    { name = "docker", specifier = ">=7.1" },
-    { name = "fastapi", specifier = ">=0.115" },
-    { name = "httpx", specifier = ">=0.27" },
-    { name = "kubernetes", marker = "extra == 'master'", specifier = ">=30" },
-    { name = "kubernetes", marker = "extra == 'validator'", specifier = ">=30" },
-    { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.10" },
-    { name = "opentelemetry-api", specifier = ">=1.25" },
-    { name = "opentelemetry-instrumentation-fastapi", specifier = ">=0.46b0" },
-    { name = "opentelemetry-instrumentation-httpx", specifier = ">=0.46b0" },
-    { name = "opentelemetry-instrumentation-sqlalchemy", specifier = ">=0.46b0" },
-    { name = "opentelemetry-sdk", specifier = ">=1.25" },
-    { name = "pydantic", specifier = ">=2.7" },
-    { name = "pydantic-settings", specifier = ">=2.3" },
-    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8" },
-    { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.23" },
-    { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=5" },
-    { name = "pyyaml", specifier = ">=6.0" },
-    { name = "respx", marker = "extra == 'dev'", specifier = ">=0.21" },
-    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.6" },
-    { name = "sentry-sdk", extras = ["fastapi"], specifier = ">=2.0" },
-    { name = "sqlalchemy", extras = ["asyncio"], specifier = ">=2.0" },
-    { name = "typer", specifier = ">=0.12" },
-    { name = "types-docker", marker = "extra == 'dev'", specifier = ">=7.1" },
-    { name = "types-pyyaml", marker = "extra == 'dev'", specifier = ">=6.0" },
-    { name = "uvicorn", extras = ["standard"], specifier = ">=0.30" },
-]
-provides-extras = ["bittensor", "dev", "master", "validator"]
-
 [[package]]
 name = "pluggy"
 version = "1.6.0"
@@ -2032,6 +1996,7 @@ dependencies = [
     { name = "fastapi" },
     { name = "httpx" },
     { name = "langchain-openai" },
+    { name = "numpy" },
     { name = "platform-network" },
     { name = "pydantic" },
     { name = "pydantic-settings" },
@@ -2060,7 +2025,8 @@ requires-dist = [
     { name = "httpx", specifier = ">=0.27" },
     { name = "langchain-openai", specifier = ">=0.2.0" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.10" },
-    { name = "platform-network", directory = "/droid/platform-v10" },
+    { name = "numpy", specifier = ">=1.26" },
+    { name = "platform-network", git = "https://github.com/PlatformNetwork/platform.git" },
     { name = "pydantic", specifier = ">=2.8" },
     { name = "pydantic-settings", specifier = ">=2.4" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8" },
