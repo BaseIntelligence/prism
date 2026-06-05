@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hmac
+import logging
 import time
 from hashlib import sha256
 from typing import Annotated
@@ -8,6 +9,8 @@ from typing import Annotated
 from fastapi import Header, HTTPException, Request, status
 
 from .config import PrismSettings
+
+logger = logging.getLogger(__name__)
 
 
 def canonical_submission_message(*, hotkey: str, nonce: str, timestamp: str, body: bytes) -> bytes:
@@ -52,6 +55,11 @@ async def authenticate_miner(
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "invalid timestamp") from exc
     if abs(int(time.time()) - timestamp) > app_settings.signature_ttl_seconds:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "stale signature")
+    if x_hotkey in app_settings.validator_hotkeys:
+        logger.warning("rejected self-submission from validator hotkey %s", x_hotkey)
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN, "validator hotkey is not allowed to submit"
+        )
     body = await request.body()
     message = canonical_submission_message(
         hotkey=x_hotkey, nonce=x_nonce, timestamp=x_timestamp, body=body
