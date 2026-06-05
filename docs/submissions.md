@@ -233,6 +233,8 @@ def recipe(ctx):
     return TrainingRecipe(learning_rate=3e-4, batch_size=2)
 ```
 
+For a complete, runnable multi-file submission that follows this layout, see the [DeepSeek-V4 Worked Example](examples/deepseek-v4.md).
+
 ## ZIP Safety Rules
 
 ZIP submissions are extracted defensively:

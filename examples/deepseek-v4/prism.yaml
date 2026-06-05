@@ -1,0 +1,9 @@
+kind: full
+architecture:
+  entrypoint: src/model.py
+  files:
+    - src/layers.py
+training:
+  entrypoint: src/train.py
+  files:
+    - src/layers.py
