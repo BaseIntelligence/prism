@@ -32,7 +32,14 @@ def verify_hotkey_signature(hotkey: str, message: bytes, signature: str) -> bool
 
         keypair = bt.Keypair(ss58_address=hotkey)
         return bool(keypair.verify(message, _decode_signature(signature)))
-    except Exception:
+    except Exception as exc:
+        # Security: log only exception type + message, never the signature or message bytes.
+        logger.debug(
+            "hotkey signature verification failed for hotkey=%s: %s: %s",
+            hotkey,
+            type(exc).__name__,
+            exc,
+        )
         return False
 
 
@@ -49,6 +56,8 @@ async def authenticate_miner(
     x_timestamp: Annotated[str, Header(min_length=1)],
 ) -> str:
     app_settings: PrismSettings = request.app.state.settings
+    if not app_settings.public_submissions_enabled:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "submission route disabled")
     try:
         timestamp = int(x_timestamp)
     except ValueError as exc:
@@ -68,6 +77,9 @@ async def authenticate_miner(
     if not valid and app_settings.allow_insecure_signatures:
         valid = verify_dev_signature(app_settings.internal_token(), message, x_signature)
     if not valid:
+        logger.warning(
+            "submission signature rejected for hotkey=%s nonce=%s", x_hotkey, x_nonce
+        )
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "invalid signature")
     async with request.app.state.database.connect() as conn:
         try:
@@ -77,6 +89,7 @@ async def authenticate_miner(
             )
         except Exception as exc:
             raise HTTPException(status.HTTP_409_CONFLICT, "nonce already used") from exc
+    logger.info("submission authenticated hotkey=%s nonce=%s", x_hotkey, x_nonce)
     return x_hotkey
 
 

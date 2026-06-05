@@ -37,8 +37,6 @@ async def submit_model(
     hotkey: str = Depends(authenticate_miner),
     repository: PrismRepository = Depends(repo_from_request),
 ) -> SubmissionResponse:
-    if not request.app.state.settings.public_submissions_enabled:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "submission route disabled")
     if len(request_body.code.encode()) > request.app.state.settings.max_code_bytes:
         raise HTTPException(status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, "submission too large")
     return await repository.create_submission(hotkey, request_body)

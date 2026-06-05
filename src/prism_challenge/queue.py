@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from dataclasses import asdict, dataclass
 from hashlib import sha256
 from pathlib import Path
@@ -67,6 +68,8 @@ CONTAINER_EXECUTION_BACKENDS = frozenset(
     {"platform_container", "platform_gpu", "container_gpu", "docker_gpu"}
 )
 SUPPORTED_EXECUTION_BACKENDS = CONTAINER_EXECUTION_BACKENDS
+
+logger = logging.getLogger(__name__)
 
 
 def _validated_retry_checkpoint_dir(
@@ -948,6 +951,7 @@ class PrismWorker:
             held=safety.held,
         )
         if safety.held:
+            logger.warning("submission %s held by LLM review: %s", submission_id, safety.reason)
             return StaticReviewOutcome(code_for_eval, False, safety.reason, held=True)
         if not safety.approved:
             return StaticReviewOutcome(code_for_eval, True, safety.reason, tuple(safety.violations))
@@ -985,6 +989,11 @@ class PrismWorker:
                     violations=tuple(violations),
                 )
             if duplicate.held:
+                logger.warning(
+                    "submission %s held for duplicate review: %s",
+                    submission_id,
+                    duplicate.reason,
+                )
                 await self.repository.hold_submission_for_duplicate_review(
                     submission_id=submission_id,
                     reason=duplicate.reason,
@@ -996,6 +1005,7 @@ class PrismWorker:
         return StaticReviewOutcome(code_for_eval, False)
 
     async def _reject_submission(self, submission_id: str, reason: str) -> None:
+        logger.warning("submission %s rejected: %s", submission_id, reason)
         async with self.repository.database.connect() as conn:
             await conn.execute(
                 "UPDATE submissions SET status=?, error=?, updated_at=? WHERE id=?",
