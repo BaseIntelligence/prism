@@ -107,7 +107,7 @@ class PrismSettings(ChallengeSettings):
         validation_alias=AliasChoices("PRISM_DOCKER_BIN", "CHALLENGE_DOCKER_BIN"),
     )
     docker_backend: str = Field(
-        default="cli",
+        default="broker",
         validation_alias=AliasChoices("PRISM_DOCKER_BACKEND", "CHALLENGE_DOCKER_BACKEND"),
     )
     docker_broker_url: str | None = Field(

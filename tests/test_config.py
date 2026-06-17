@@ -27,6 +27,28 @@ def test_platform_challenge_env_aliases_are_loaded(monkeypatch):
     assert str(settings.docker_broker_token_file) == "/run/secrets/platform/challenge_token"
 
 
+def test_docker_backend_default_is_broker_safe_when_env_unset(monkeypatch) -> None:
+    monkeypatch.delenv("PRISM_DOCKER_BACKEND", raising=False)
+    monkeypatch.delenv("CHALLENGE_DOCKER_BACKEND", raising=False)
+
+    settings = PrismSettings()
+
+    assert settings.docker_backend == "broker"
+    assert settings.docker_backend != "cli"
+
+
+def test_docker_backend_explicit_env_overrides_default(monkeypatch) -> None:
+    for env_name in ("CHALLENGE_DOCKER_BACKEND", "PRISM_DOCKER_BACKEND"):
+        monkeypatch.delenv("PRISM_DOCKER_BACKEND", raising=False)
+        monkeypatch.delenv("CHALLENGE_DOCKER_BACKEND", raising=False)
+        for explicit in ("cli", "direct", "broker"):
+            monkeypatch.setenv(env_name, explicit)
+            assert PrismSettings().docker_backend == explicit
+            monkeypatch.delenv(env_name, raising=False)
+
+    assert PrismSettings(docker_backend="cli").docker_backend == "cli"
+
+
 def test_settings_still_accept_field_names() -> None:
     settings = PrismSettings(
         database_url="sqlite+aiosqlite:////tmp/prism.sqlite3",
