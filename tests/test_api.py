@@ -113,6 +113,141 @@ def test_rejects_bad_signature(client):
     assert response.status_code == 401
 
 
+def _zip_submission_bytes() -> bytes:
+    stream = io.BytesIO()
+    with zipfile.ZipFile(stream, "w") as archive:
+        archive.writestr("model.py", VALID_CODE)
+    return stream.getvalue()
+
+
+def _read_submission_row(client: TestClient, submission_id: str) -> dict:
+    import anyio
+
+    stored = client.app.state.repository
+
+    async def read_code():
+        async with stored.database.connect() as conn:
+            rows = await conn.execute_fetchall(
+                "SELECT code, filename FROM submissions WHERE id=?", (submission_id,)
+            )
+        return dict(rows[0])
+
+    return anyio.run(read_code)
+
+
+def test_public_submission_accepts_raw_zip(client):
+    raw = _zip_submission_bytes()
+    response = client.post(
+        "/v1/submissions",
+        content=raw,
+        headers={
+            **signed_headers("secret", raw),
+            "Content-Type": "application/zip",
+            "X-Submission-Filename": "project.zip",
+        },
+    )
+    assert response.status_code == 200, response.text
+    submission_id = response.json()["id"]
+    row = _read_submission_row(client, submission_id)
+    assert row["filename"] == "project.zip"
+    # Signature contract: bytes consumed by the handler must equal the bytes
+    # authenticate_miner signed over (Starlette caches request.body()).
+    assert base64.b64decode(row["code"]) == raw
+
+
+def test_public_submission_raw_zip_signature_contract(client):
+    raw = _zip_submission_bytes()
+    good = client.post(
+        "/v1/submissions",
+        content=raw,
+        headers={**signed_headers("secret", raw), "Content-Type": "application/zip"},
+    )
+    assert good.status_code == 200, good.text
+    row = _read_submission_row(client, good.json()["id"])
+    assert row["filename"] == "submission.zip"
+    assert base64.b64decode(row["code"]) == raw
+
+    bad = client.post(
+        "/v1/submissions",
+        content=raw,
+        headers={
+            "X-Hotkey": "hk",
+            "X-Signature": "deadbeef",
+            "X-Nonce": "n-bad",
+            "X-Timestamp": signed_headers("secret", raw)["X-Timestamp"],
+            "Content-Type": "application/zip",
+        },
+    )
+    assert bad.status_code == 401, bad.text
+
+
+def test_public_submission_accepts_raw_python_octet_stream(client):
+    raw = VALID_CODE.encode()
+    response = client.post(
+        "/v1/submissions",
+        content=raw,
+        headers={
+            **signed_headers("secret", raw),
+            "Content-Type": "application/octet-stream",
+            "X-Submission-Filename": "entry.py",
+        },
+    )
+    assert response.status_code == 200, response.text
+    row = _read_submission_row(client, response.json()["id"])
+    assert row["filename"] == "entry.py"
+    assert base64.b64decode(row["code"]) == raw
+
+
+def test_public_submission_json_still_accepted(client):
+    payload = {"code": VALID_CODE, "filename": "model.py"}
+    body = json.dumps(payload, separators=(",", ":")).encode()
+    response = client.post(
+        "/v1/submissions",
+        content=body,
+        headers={**signed_headers("secret", body), "Content-Type": "application/json"},
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["hotkey"] == "hk"
+
+
+def test_public_submission_rejects_traversal_filename(client):
+    raw = _zip_submission_bytes()
+    response = client.post(
+        "/v1/submissions",
+        content=raw,
+        headers={
+            **signed_headers("secret", raw),
+            "Content-Type": "application/zip",
+            "X-Submission-Filename": "../escape.py",
+        },
+    )
+    assert response.status_code == 422, response.text
+    assert response.status_code != 500
+
+
+def test_public_submission_malformed_json_no_500(client):
+    raw = b"{not valid json"
+    response = client.post(
+        "/v1/submissions",
+        content=raw,
+        headers={**signed_headers("secret", raw), "Content-Type": "application/json"},
+    )
+    assert response.status_code == 400, response.text
+    assert response.status_code != 500
+
+
+def test_public_submission_oversized_raw_zip_413(small_cap_client):
+    cap = small_cap_client.app.state.settings.max_code_bytes
+    raw = b"P" * (cap + 1)
+    response = small_cap_client.post(
+        "/v1/submissions",
+        content=raw,
+        headers={**signed_headers("secret", raw), "Content-Type": "application/zip"},
+    )
+    assert response.status_code == 413, response.text
+    assert response.json()["detail"] == "submission too large"
+
+
 def test_internal_bridge_accepts_raw_zip_submission(client):
     stream = io.BytesIO()
     with zipfile.ZipFile(stream, "w") as archive:

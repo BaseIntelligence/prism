@@ -4,6 +4,7 @@ from datetime import UTC, datetime
 from typing import SupportsFloat, SupportsInt, cast
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from pydantic import ValidationError
 
 from .auth import authenticate_miner
 from .models import (
@@ -13,7 +14,6 @@ from .models import (
     GpuStatusSummary,
     LeaderboardEntry,
     LeaderboardResponse,
-    SubmissionCreate,
     SubmissionHistoryBucket,
     SubmissionResponse,
     SubmissionStatusResponse,
@@ -33,10 +33,20 @@ def repo_from_request(request: Request) -> PrismRepository:
 @router.post("/submissions", response_model=SubmissionResponse)
 async def submit_model(
     request: Request,
-    request_body: SubmissionCreate,
     hotkey: str = Depends(authenticate_miner),
     repository: PrismRepository = Depends(repo_from_request),
 ) -> SubmissionResponse:
+    from .app import _bridge_submission_create
+
+    body = await request.body()
+    try:
+        request_body = _bridge_submission_create(
+            body=body,
+            content_type=request.headers.get("content-type", ""),
+            filename=request.headers.get("x-submission-filename"),
+        )
+    except ValidationError as exc:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, exc.errors()) from exc
     if len(request_body.code.encode()) > request.app.state.settings.max_code_bytes:
         raise HTTPException(status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, "submission too large")
     return await repository.create_submission(hotkey, request_body)
