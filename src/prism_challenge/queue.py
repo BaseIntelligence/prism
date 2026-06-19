@@ -1,9 +1,8 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from hashlib import sha256
 from pathlib import Path
 from typing import Any, cast
@@ -13,11 +12,6 @@ from .config import PrismSettings
 from .db import dumps, loads
 from .evaluator import llm_review, source_similarity
 from .evaluator.anti_cheat import evaluate_anti_cheat
-from .evaluator.checkpoints import (
-    CheckpointWorkspaceError,
-    checkpoint_artifact_logical_size,
-    load_checkpoint_metadata,
-)
 from .evaluator.component_agents import (
     ComponentOwnershipDecision,
     SemanticOwnershipAgent,
@@ -33,22 +27,12 @@ from .evaluator.components import (
     project_components,
 )
 from .evaluator.container import InfrastructureEvaluationError, PrismContainerEvaluator
-from .evaluator.interface import PrismContext, TrainingRecipe
-from .evaluator.l1_syntax import validate_l1
-from .evaluator.l2_proxy import score_l2
-from .evaluator.l3_train import score_l3
-from .evaluator.l4_benchmark import score_l4
+from .evaluator.interface import PrismContext
 from .evaluator.lium_client import LiumJob
-from .evaluator.modes import execution_mode_from_value, run_local_cpu_smoke
+from .evaluator.modes import execution_mode_from_value
 from .evaluator.review_rules import ReviewRule, load_review_rules
-from .evaluator.sandbox import (
-    SandboxViolation,
-    inspect_code,
-    load_module,
-    load_submission_contract,
-)
-from .evaluator.schemas import ExecutionMode, PrismRunManifest
-from .evaluator.scoring import final_score, score_recipe
+from .evaluator.sandbox import SandboxViolation, inspect_code
+from .evaluator.scoring import final_score
 from .evaluator.static_instantiation import check_build_model_static
 from .gpu_scheduler import (
     GpuLease,
@@ -71,70 +55,6 @@ CONTAINER_EXECUTION_BACKENDS = frozenset(
 SUPPORTED_EXECUTION_BACKENDS = CONTAINER_EXECUTION_BACKENDS
 
 logger = logging.getLogger(__name__)
-
-
-def _validated_retry_checkpoint_dir(
-    job: dict[str, object],
-    *,
-    submission_id: str,
-    code_hash: str,
-    arch_hash: str,
-    recipe_fingerprint: str,
-    previous_attempt: int,
-) -> Path:
-    artifact_output = Path(str(job["artifact_output_path"]))
-    manifest_path = Path(str(job["run_manifest_path"]))
-    manifest_payload = json.loads(manifest_path.read_text(encoding="utf-8"))
-    manifest = PrismRunManifest.model_validate(manifest_payload)
-    if manifest.submission_id != submission_id:
-        raise ValueError("retry checkpoint submission_id mismatch")
-    if not manifest.validation.passed or not manifest.validation.score_eligible:
-        raise ValueError("retry checkpoint manifest is not validation-passed")
-    checkpoints = [
-        checkpoint
-        for checkpoint in manifest.artifacts.checkpoints
-        if checkpoint.attempt == previous_attempt
-    ]
-    if not checkpoints:
-        raise ValueError("retry checkpoint manifest has no prior-attempt checkpoint")
-    checkpoint = checkpoints[-1]
-    metadata_path = artifact_output / checkpoint.metadata_path
-    checkpoint_dir = metadata_path.parent
-    checkpoint_artifact_logical_size(checkpoint_dir)
-    metadata = load_checkpoint_metadata(metadata_path)
-    expected = {
-        "submission_id": submission_id,
-        "code_hash": code_hash,
-        "arch_hash": arch_hash,
-        "recipe_fingerprint": recipe_fingerprint,
-        "attempt": previous_attempt,
-        "checkpoint_dir": checkpoint_dir.relative_to(artifact_output).as_posix(),
-    }
-    for field, value in expected.items():
-        if metadata[field] != value:
-            raise ValueError(f"retry checkpoint {field} mismatch")
-    checkpoint_path = artifact_output / str(metadata["checkpoint_path"])
-    if checkpoint_path.is_symlink() or not checkpoint_path.is_file():
-        raise ValueError("retry checkpoint file is missing")
-    checkpoint_path.resolve(strict=False).relative_to(checkpoint_dir.resolve(strict=False))
-    if metadata["checkpoint_path"] != checkpoint.path:
-        raise ValueError("retry checkpoint path mismatch")
-    return checkpoint_dir
-
-
-def _recipe_fingerprint(recipe: TrainingRecipe) -> str:
-    payload = json.dumps(asdict(recipe), sort_keys=True, separators=(",", ":"))
-    return sha256(payload.encode("utf-8")).hexdigest()
-
-
-def _recipe_fingerprint_from_code(code: str, ctx: PrismContext) -> str:
-    recipe = load_module(code).get_recipe(ctx)
-    if not isinstance(recipe, TrainingRecipe):
-        if isinstance(recipe, dict):
-            recipe = TrainingRecipe(**recipe)
-        else:
-            raise SandboxViolation("get_recipe must return TrainingRecipe or dict")
-    return _recipe_fingerprint(recipe)
 
 
 @dataclass(frozen=True)
@@ -285,106 +205,6 @@ class PrismWorker:
             component_review=component_review,
         )
 
-    async def _process_local(
-        self,
-        submission_id: str,
-        code: str,
-        filename: str,
-        metadata: dict[str, Any],
-        hotkey: str,
-        code_hash: str,
-    ) -> str:
-        review = await self._review_static_submission(
-            submission_id=submission_id,
-            code=code,
-            filename=filename,
-            metadata=metadata,
-            hotkey=hotkey,
-            code_hash=code_hash,
-        )
-        if review.rejected:
-            await self._reject_submission(submission_id, review.reason or "review rejected")
-            return submission_id
-        if review.held:
-            return submission_id
-        code = review.code
-        async with self.repository.database.connect() as conn:
-            try:
-                l1 = validate_l1(code, self.ctx)
-                if not l1.valid:
-                    await conn.execute(
-                        "UPDATE submissions SET status=?, error=?, updated_at=? WHERE id=?",
-                        (SubmissionStatus.REJECTED.value, l1.error, now_iso(), submission_id),
-                    )
-                    return submission_id
-                previous = await self.repository.previous_codes(submission_id)
-                anti = evaluate_anti_cheat(code, previous)
-                l2 = score_l2(code, self.ctx)
-                l3 = score_l3(code, self.ctx)
-                l4 = await score_l4(code, self.ctx, self.lium)
-                _model, recipe, _report = load_submission_contract(code, self.ctx)
-                recipe_score = score_recipe(recipe)
-                penalty = 1.0 if l3.hard_killed else 0.0
-                if l4.scale_collapse:
-                    penalty += 0.25
-                runtime_config = await self.repository.runtime_config(self.settings, official=True)
-                scored = final_score(
-                    q_arch=l4.q_arch,
-                    q_recipe=recipe_score,
-                    anti_cheat_multiplier=anti.multiplier,
-                    diversity_bonus=anti.diversity_bonus,
-                    penalty=penalty,
-                    arch_weight=runtime_config.score_weights.final_architecture_weight,
-                    recipe_weight=runtime_config.score_weights.final_recipe_weight,
-                )
-                for finding in anti.findings:
-                    await conn.execute(
-                        "INSERT INTO cheat_findings("
-                        "id, submission_id, kind, severity, details, created_at)"
-                        " VALUES (?, ?, ?, ?, ?, ?)",
-                        (
-                            str(uuid4()),
-                            submission_id,
-                            finding.kind,
-                            finding.severity,
-                            finding.details,
-                            now_iso(),
-                        ),
-                    )
-                metrics = {
-                    "l2_q_proxy": l2.q_proxy,
-                    "l3_loss": l3.loss,
-                    "l3_kendall_tau": l3.kendall_tau,
-                    **l4.metrics,
-                }
-                await conn.execute(
-                    "INSERT OR REPLACE INTO scores("
-                    "submission_id, q_arch, q_recipe, anti_cheat_multiplier, diversity_bonus,"
-                    "penalty, final_score, metrics, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                    (
-                        submission_id,
-                        scored.q_arch,
-                        scored.q_recipe,
-                        anti.multiplier,
-                        anti.diversity_bonus,
-                        penalty,
-                        scored.final_score,
-                        dumps(metrics),
-                        now_iso(),
-                    ),
-                )
-                await conn.execute(
-                    "UPDATE submissions SET status=?, arch_hash=?, updated_at=? WHERE id=?",
-                    (SubmissionStatus.COMPLETED.value, l1.arch_hash, now_iso(), submission_id),
-                )
-                return submission_id
-            except Exception as exc:
-                await conn.execute(
-                    "UPDATE submissions SET status=?, error=?, updated_at=? WHERE id=?",
-                    (SubmissionStatus.FAILED.value, str(exc), now_iso(), submission_id),
-                )
-                return submission_id
-
     async def _submit_remote(
         self,
         submission_id: str,
@@ -517,15 +337,6 @@ class PrismWorker:
         except ValueError as exc:
             await self._reject_submission(submission_id, str(exc))
             return submission_id
-        if execution_mode is ExecutionMode.LOCAL_CPU_SMOKE:
-            return await self._process_local_cpu_smoke_mode(
-                submission_id=submission_id,
-                code=code,
-                code_hash=code_hash,
-                arch_hash=arch_hash,
-                anti_multiplier=anti.multiplier,
-                diversity_bonus=anti.diversity_bonus,
-            )
         score_eligible = metadata.get("score_eligible")
         scheduler = GpuLeaseScheduler(
             self.repository.database, targets_from_settings(self.settings, runtime_config)
@@ -558,15 +369,7 @@ class PrismWorker:
         attempt = await self.repository.container_job_attempt_count(
             submission_id, self.execution_backend
         ) + 1
-        resume_checkpoint_dir = None
-        if "function:load_checkpoint" in report.ast_fingerprint:
-            resume_checkpoint_dir = await self._retry_resume_checkpoint_dir(
-                submission_id=submission_id,
-                code_hash=code_hash,
-                arch_hash=arch_hash,
-                recipe_fingerprint=_recipe_fingerprint_from_code(code, self.ctx),
-                attempt=attempt,
-            )
+        components = component_review.components
         try:
             result = await asyncio.to_thread(
                 evaluator.evaluate,
@@ -576,11 +379,13 @@ class PrismWorker:
                 arch_hash=arch_hash,
                 backend=self.execution_backend,
                 files=snapshot.files,
-                entrypoint=component_review.components.entrypoint,
+                architecture_entrypoint=components.architecture_entrypoint,
+                training_entrypoint=components.training_entrypoint,
+                build_model_symbol=components.build_model_symbol,
+                train_symbol=components.train_symbol,
                 gpu_lease=lease,
                 execution_mode=execution_mode,
                 attempt=attempt,
-                resume_checkpoint_dir=resume_checkpoint_dir,
             )
             await self._record_container_job(
                 submission_id=submission_id,
@@ -634,116 +439,6 @@ class PrismWorker:
             return submission_id
         finally:
             await scheduler.release_for_submission(submission_id, "container job finished")
-
-    async def _retry_resume_checkpoint_dir(
-        self,
-        *,
-        submission_id: str,
-        code_hash: str,
-        arch_hash: str,
-        recipe_fingerprint: str,
-        attempt: int,
-    ) -> Path | None:
-        if attempt <= 1:
-            return None
-        job = await self.repository.latest_retryable_container_job(
-            submission_id, self.execution_backend
-        )
-        if job is None:
-            return None
-        try:
-            return _validated_retry_checkpoint_dir(
-                job,
-                submission_id=submission_id,
-                code_hash=code_hash,
-                arch_hash=arch_hash,
-                recipe_fingerprint=recipe_fingerprint,
-                previous_attempt=attempt - 1,
-            )
-        except (OSError, ValueError, CheckpointWorkspaceError):
-            return None
-
-    async def _process_local_cpu_smoke_mode(
-        self,
-        *,
-        submission_id: str,
-        code: str,
-        code_hash: str,
-        arch_hash: str,
-        anti_multiplier: float,
-        diversity_bonus: float,
-    ) -> str:
-        artifact_output = Path("/tmp/prism-local-cpu-smoke") / submission_id
-        try:
-            result = await asyncio.to_thread(
-                run_local_cpu_smoke,
-                submission_id=submission_id,
-                code=code,
-                code_hash=code_hash,
-                arch_hash=arch_hash,
-                ctx=self.ctx,
-                artifact_output_path=artifact_output,
-            )
-            metrics = {
-                **result.metrics,
-                "anti_cheat_multiplier": anti_multiplier,
-                "diversity_bonus": diversity_bonus,
-            }
-            await self._record_container_job(
-                submission_id=submission_id,
-                status="completed",
-                container_name="local_cpu_smoke",
-                metrics=metrics,
-                artifact_output_path=result.artifact_output_path,
-                run_manifest_path=result.run_manifest_path,
-            )
-            q_arch = max(0.0, min(1.0, float(metrics.get("q_arch", 0.0))))
-            q_recipe = max(0.0, min(1.0, float(metrics.get("q_recipe", 0.5))))
-            penalty = float(metrics.get("penalty", 0.0))
-            runtime_config = await self.repository.runtime_config(self.settings, official=True)
-            scored = final_score(
-                q_arch=q_arch,
-                q_recipe=q_recipe,
-                anti_cheat_multiplier=anti_multiplier,
-                diversity_bonus=diversity_bonus,
-                penalty=penalty,
-                arch_weight=runtime_config.score_weights.final_architecture_weight,
-                recipe_weight=runtime_config.score_weights.final_recipe_weight,
-            )
-            async with self.repository.database.connect() as conn:
-                await conn.execute(
-                    "INSERT OR REPLACE INTO scores("
-                    "submission_id, q_arch, q_recipe, anti_cheat_multiplier, diversity_bonus,"
-                    "penalty, final_score, metrics, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                    (
-                        submission_id,
-                        scored.q_arch,
-                        scored.q_recipe,
-                        anti_multiplier,
-                        diversity_bonus,
-                        penalty,
-                        scored.final_score,
-                        dumps(metrics),
-                        now_iso(),
-                    ),
-                )
-                await conn.execute(
-                    "UPDATE submissions SET status=?, arch_hash=?, updated_at=? WHERE id=?",
-                    (SubmissionStatus.COMPLETED.value, arch_hash, now_iso(), submission_id),
-                )
-            return submission_id
-        except Exception as exc:
-            await self._record_container_job(
-                submission_id=submission_id,
-                status="failed",
-                container_name="local_cpu_smoke",
-                metrics={},
-                error=str(exc),
-                artifact_output_path=str(artifact_output),
-                run_manifest_path=str(artifact_output / "prism_run_manifest.v1.json"),
-            )
-            await self._fail_submission(submission_id, str(exc))
-            return submission_id
 
     def _inspect_project_snapshot(
         self, snapshot: source_similarity.SourceSnapshot, primary_code: str

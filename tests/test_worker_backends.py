@@ -104,7 +104,15 @@ def test_platform_gpu_worker_runs_submission_in_container(tmp_path, monkeypatch)
     assert spec.env["PRISM_GPU_TYPE"] == "l4"
     assert spec.limits.cpus == 3.0
     assert spec.limits.memory == "12g"
-    assert captured["payload"]["code"] == REMOTE_ONLY_CODE
+    arch_file = next(
+        item
+        for item in captured["payload"]["files"]
+        if item["path"].endswith("architecture.py")
+    )
+    assert arch_file["content"] == REMOTE_ONLY_CODE
+    assert captured["payload"]["architecture_entrypoint"].endswith("architecture.py")
+    assert captured["payload"]["training_entrypoint"].endswith("training.py")
+    assert captured["payload"]["context"]["data_dir"] == "/data/fineweb-edu/train"
     assert captured["timeout_seconds"] == 900
 
 

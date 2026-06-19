@@ -17,13 +17,13 @@ from ..sdk.executors.docker import (
     DockerMount,
     DockerRunSpec,
 )
-from .checkpoints import CheckpointWorkspace, checkpoint_workspace
 from .interface import PrismContext
-from .modes import build_evaluation_mode_spec, execution_mode_from_value
-from .sandbox import OPTIONAL_CONTRACT_FUNCTIONS, REQUIRED_CONTRACT_FUNCTIONS
-from .schemas import RUN_MANIFEST_FILENAME, DeterministicEvidence, ExecutionMode, PrismRunManifest
-from .scoring import score_architecture_manifest, score_training_manifest
+from .modes import execution_mode_from_value
+from .schemas import RUN_MANIFEST_V2_FILENAME, DeterministicEvidence, ExecutionMode
 from .source_similarity import SourceFile
+
+DEFAULT_MASTER_ADDR = "127.0.0.1"
+DEFAULT_MASTER_PORT = 29500
 
 
 @dataclass(frozen=True)
@@ -67,6 +67,16 @@ class InfrastructureEvaluationError(RuntimeError):
 
 
 class PrismContainerEvaluator:
+    """Validator re-execution harness (architecture.md section 4.3).
+
+    Writes a challenge-owned ``runner.py`` that FORCES the seed + deterministic flags before any
+    miner code runs, imports the miner's two-script bundle (``architecture.py::build_model`` +
+    ``training.py::train``), and launches ``torchrun --standalone --nnodes=1 --nproc-per-node=N``
+    with a loopback rendezvous. The scored run trains on the LOCKED FineWeb-Edu train split; a
+    missing/empty locked data path fails fast (no random-token fallback) and any miner-written
+    manifest is ignored.
+    """
+
     def __init__(self, *, settings: PrismSettings, ctx: PrismContext) -> None:
         self.settings = settings
         self.ctx = ctx
@@ -80,29 +90,22 @@ class PrismContainerEvaluator:
         arch_hash: str,
         backend: str,
         files: tuple[SourceFile, ...] = (),
-        entrypoint: str | None = None,
+        architecture_entrypoint: str | None = None,
+        training_entrypoint: str | None = None,
+        build_model_symbol: str = "build_model",
+        train_symbol: str = "train",
         gpu_lease: GpuLease | None = None,
         execution_mode: ExecutionMode | str | None = None,
         attempt: int = 1,
-        resume_checkpoint_dir: Path | None = None,
     ) -> ContainerEvaluationResult:
-        payload_files = files or (SourceFile("model.py", code, code_hash),)
+        payload_files = files or (SourceFile("architecture.py", code, code_hash),)
         mode = execution_mode_from_value(execution_mode)
         self._enforce_artifact_size(payload_files)
+        arch_entry = architecture_entrypoint or _default_entrypoint(payload_files, "architecture")
+        train_entry = training_entrypoint or _default_entrypoint(payload_files, "training")
         with TemporaryDirectory(prefix=f"prism-eval-{submission_id[:12]}-") as tmp:
             workspace = Path(tmp)
-            artifact_output = self._artifact_output(submission_id, attempt)
-            artifact_output.mkdir(parents=True, exist_ok=True)
-            checkpoint = checkpoint_workspace(
-                artifact_output, submission_id=submission_id, attempt=attempt
-            )
-            checkpoint.current_dir.mkdir(parents=True, exist_ok=True)
-            checkpoint_payload = _checkpoint_payload(
-                checkpoint,
-                mounted_resume_path=Path("/resume-checkpoint")
-                if resume_checkpoint_dir is not None
-                else None,
-            )
+            artifact_output = self._fresh_artifact_output(submission_id, attempt)
             gpu_allocation = self._gpu_allocation(gpu_lease)
             payload_path = workspace / "payload.json"
             runner_path = workspace / "runner.py"
@@ -110,15 +113,15 @@ class PrismContainerEvaluator:
                 json.dumps(
                     self._payload(
                         submission_id=submission_id,
-                        code=code,
                         code_hash=code_hash,
                         arch_hash=arch_hash,
                         files=payload_files,
-                        entrypoint=entrypoint,
-                        gpu_lease=gpu_lease,
+                        architecture_entrypoint=arch_entry,
+                        training_entrypoint=train_entry,
+                        build_model_symbol=build_model_symbol,
+                        train_symbol=train_symbol,
                         gpu_allocation=gpu_allocation,
                         execution_mode=mode,
-                        checkpoint=checkpoint_payload,
                     ),
                     separators=(",", ":"),
                 ),
@@ -137,7 +140,7 @@ class PrismContainerEvaluator:
                     DockerRunSpec(
                         image=self.settings.platform_eval_image,
                         command=command,
-                        mounts=self._mounts(workspace, artifact_output, resume_checkpoint_dir),
+                        mounts=self._mounts(workspace, artifact_output),
                         workdir="/workspace",
                         env=self._env(
                             submission_id,
@@ -146,7 +149,6 @@ class PrismContainerEvaluator:
                             backend,
                             gpu_lease,
                             mode,
-                            checkpoint_payload,
                         ),
                         labels=self._labels(submission_id, backend, gpu_lease, mode),
                         limits=DockerLimits(
@@ -163,12 +165,7 @@ class PrismContainerEvaluator:
                     self.settings.platform_eval_timeout_seconds,
                 )
             except DockerExecutorError as exc:
-                artifact_path, manifest_path = _valid_infra_checkpoint_paths(artifact_output)
-                raise InfrastructureEvaluationError(
-                    str(exc),
-                    artifact_output_path=artifact_path,
-                    run_manifest_path=manifest_path,
-                ) from exc
+                raise InfrastructureEvaluationError(str(exc)) from exc
             except (KeyError, TypeError, ValueError) as exc:
                 raise InfrastructureEvaluationError(
                     f"Docker broker returned malformed response: {exc}"
@@ -198,7 +195,7 @@ class PrismContainerEvaluator:
                         ),
                     ),
                 )
-            manifest = _read_run_manifest(artifact_output / RUN_MANIFEST_FILENAME)
+            manifest = _read_run_manifest(artifact_output / RUN_MANIFEST_V2_FILENAME)
             return ContainerEvaluationResult(
                 container_name=result.container_name,
                 metrics=(
@@ -209,26 +206,30 @@ class PrismContainerEvaluator:
                 run_manifest=manifest,
                 artifact_output_path=str(artifact_output) if manifest else None,
                 run_manifest_path=(
-                    str(artifact_output / RUN_MANIFEST_FILENAME) if manifest else None
+                    str(artifact_output / RUN_MANIFEST_V2_FILENAME) if manifest else None
                 ),
             )
 
-    def _artifact_output(self, submission_id: str, attempt: int) -> Path:
-        return self.settings.platform_eval_artifact_root / submission_id / f"attempt-{attempt}"
+    def _fresh_artifact_output(self, submission_id: str, attempt: int) -> Path:
+        """A fresh artifacts dir per run; never reuse a prior run's manifest/artifacts."""
+        artifact_output = (
+            self.settings.platform_eval_artifact_root / submission_id / f"attempt-{attempt}"
+        )
+        for stale in _existing_manifests(artifact_output):
+            try:
+                stale.unlink()
+            except OSError:
+                pass
+        artifact_output.mkdir(parents=True, exist_ok=True)
+        return artifact_output
 
-    def _mounts(
-        self,
-        workspace: Path,
-        artifact_output: Path,
-        resume_checkpoint_dir: Path | None,
-    ) -> tuple[DockerMount, ...]:
-        mounts = [
+    def _mounts(self, workspace: Path, artifact_output: Path) -> tuple[DockerMount, ...]:
+        # The locked FineWeb-Edu train split + reference tokenizers are bind-mounted READ-ONLY by
+        # the broker (per-slug RO data-mount wiring); the runner reads ctx.data_dir from that mount.
+        return (
             DockerMount(workspace, "/workspace"),
             DockerMount(artifact_output, "/artifacts", read_only=False),
-        ]
-        if resume_checkpoint_dir is not None:
-            mounts.append(DockerMount(resume_checkpoint_dir, "/resume-checkpoint", read_only=True))
-        return tuple(mounts)
+        )
 
     def _executor(self) -> DockerExecutor:
         return DockerExecutor(
@@ -265,75 +266,54 @@ class PrismContainerEvaluator:
         self,
         *,
         submission_id: str,
-        code: str,
         code_hash: str,
         arch_hash: str,
         files: tuple[SourceFile, ...],
-        entrypoint: str | None,
-        gpu_lease: GpuLease | None,
-        gpu_allocation: dict[str, Any] | None = None,
+        architecture_entrypoint: str,
+        training_entrypoint: str,
+        build_model_symbol: str,
+        train_symbol: str,
+        gpu_allocation: dict[str, Any],
         execution_mode: ExecutionMode,
-        checkpoint: dict[str, Any],
     ) -> dict[str, Any]:
-        payload_files = files or (SourceFile("model.py", code, code_hash),)
-        gpu_allocation = gpu_allocation or self._gpu_allocation(gpu_lease)
-        mode_spec = build_evaluation_mode_spec(
-            execution_mode,
-            settings=self.settings,
-            gpu_count=int(gpu_allocation["actual_gpu_count"]),
-            max_gpu_count=int(gpu_allocation["max_gpu_count"]),
-            gpu_type=gpu_allocation["gpu_type"],
-            gpu_server=gpu_allocation["target_server"],
-            gpu_device_ids=list(gpu_allocation["device_ids"]),
-        )
         world_size = int(gpu_allocation["actual_gpu_count"])
         return {
             "challenge": self.settings.slug,
             "submission_id": submission_id,
-            "code": code,
             "files": [
                 {"path": file.path, "content": file.content, "sha256": file.sha256}
-                for file in payload_files
+                for file in files
             ],
-            "entrypoint": entrypoint or _entrypoint(payload_files),
+            "architecture_entrypoint": architecture_entrypoint,
+            "training_entrypoint": training_entrypoint,
+            "build_model_symbol": build_model_symbol,
+            "train_symbol": train_symbol,
             "code_hash": code_hash,
             "arch_hash": arch_hash,
             "execution_mode": execution_mode.value,
-            "mode_spec": mode_spec,
-            "contract": {
-                "required": sorted(REQUIRED_CONTRACT_FUNCTIONS),
-                "optional": sorted(OPTIONAL_CONTRACT_FUNCTIONS),
-                "metrics": [
-                    "q_arch",
-                    "q_recipe",
-                    "train_loss",
-                    "eval_loss",
-                    "parameter_count",
-                    "inference_latency_ms",
-                ],
-            },
+            "master_addr": DEFAULT_MASTER_ADDR,
+            "master_port": DEFAULT_MASTER_PORT,
             "context": {
                 "vocab_size": self.ctx.vocab_size,
                 "sequence_length": self.ctx.sequence_length,
+                "max_layers": self.ctx.max_layers,
                 "max_parameters": self.ctx.max_parameters,
-                "checkpoint_dir": checkpoint["current"]["path"],
-                "resume_checkpoint_dir": (
-                    checkpoint["resume"]["path"] if checkpoint["resume"] else None
-                ),
-                "checkpoint_api_version": checkpoint["api_version"],
-                "attempt": checkpoint["attempt"],
-                "is_resume": checkpoint["is_resume"],
+                "seed": self.ctx.seed,
+                "data_dir": self.settings.platform_eval_data_dir,
+                "artifacts_dir": "/artifacts",
+                "reference_tokenizer_dir": self.settings.platform_eval_reference_tokenizer_dir,
+                "token_budget": self.ctx.token_budget,
+                "step_budget": self.ctx.step_budget,
                 "rank": 0,
                 "local_rank": 0,
                 "world_size": world_size,
                 "distributed_backend": "nccl" if world_size > 1 else None,
             },
-            "checkpoint_workspace": checkpoint,
             "gpu_allocation": gpu_allocation,
             "artifact_output": {
                 "mount": "/artifacts",
                 "path": "/artifacts",
-                "manifest_path": f"/artifacts/{RUN_MANIFEST_FILENAME}",
+                "manifest_path": f"/artifacts/{RUN_MANIFEST_V2_FILENAME}",
             },
         }
 
@@ -345,7 +325,6 @@ class PrismContainerEvaluator:
         backend: str,
         gpu_lease: GpuLease | None = None,
         execution_mode: ExecutionMode = ExecutionMode.GPU_PROXY_EVAL,
-        checkpoint: dict[str, Any] | None = None,
     ) -> dict[str, str]:
         gpu_allocation = self._gpu_allocation(gpu_lease)
         env = {
@@ -357,25 +336,13 @@ class PrismContainerEvaluator:
             "PRISM_GPU_COUNT": str(gpu_allocation["actual_gpu_count"]),
             "PRISM_MAX_GPU_COUNT": str(gpu_allocation["max_gpu_count"]),
             "PRISM_ARTIFACT_OUTPUT_PATH": "/artifacts",
-            "PRISM_RUN_MANIFEST_PATH": f"/artifacts/{RUN_MANIFEST_FILENAME}",
+            "PRISM_RUN_MANIFEST_PATH": f"/artifacts/{RUN_MANIFEST_V2_FILENAME}",
+            "PRISM_DATA_DIR": self.settings.platform_eval_data_dir,
+            "PRISM_REFERENCE_TOKENIZER_DIR": self.settings.platform_eval_reference_tokenizer_dir,
+            # Loopback rendezvous so the c10d hostname lookup cannot hang (readiness B2).
+            "MASTER_ADDR": DEFAULT_MASTER_ADDR,
+            "MASTER_PORT": str(DEFAULT_MASTER_PORT),
         }
-        if checkpoint is not None:
-            env.update(
-                {
-                    "PRISM_CHECKPOINT_API_VERSION": str(checkpoint["api_version"]),
-                    "PRISM_CHECKPOINT_ATTEMPT": str(checkpoint["attempt"]),
-                    "PRISM_CHECKPOINT_DIR": str(checkpoint["current"]["path"]),
-                    "PRISM_CHECKPOINT_ARTIFACT_PATH": str(
-                        checkpoint["current"]["artifact_relative_path"]
-                    ),
-                    "PRISM_IS_RESUME": "1" if checkpoint["is_resume"] else "0",
-                }
-            )
-            if checkpoint["resume"] is not None:
-                env["PRISM_RESUME_CHECKPOINT_DIR"] = str(checkpoint["resume"]["path"])
-                env["PRISM_RESUME_CHECKPOINT_ARTIFACT_PATH"] = str(
-                    checkpoint["resume"]["artifact_relative_path"]
-                )
         if int(gpu_allocation["actual_gpu_count"]) > 1:
             env["PRISM_DISTRIBUTED_BACKEND"] = "nccl"
         if gpu_allocation["target_id"]:
@@ -406,7 +373,7 @@ class PrismContainerEvaluator:
             "prism.actual_gpu_count": str(gpu_allocation["actual_gpu_count"]),
             "prism.max_gpu_count": str(gpu_allocation["max_gpu_count"]),
             "prism.artifact_output_path": "/artifacts",
-            "prism.run_manifest_path": f"/artifacts/{RUN_MANIFEST_FILENAME}",
+            "prism.run_manifest_path": f"/artifacts/{RUN_MANIFEST_V2_FILENAME}",
         }
         for key in ("gpu_type", "target_id", "target_server"):
             value = gpu_allocation[key]
@@ -443,6 +410,21 @@ class PrismContainerEvaluator:
         }
 
 
+def _default_entrypoint(files: tuple[SourceFile, ...], role: str) -> str:
+    target = f"{role}.py"
+    match = next((file for file in files if file.path.endswith(target)), None)
+    if match:
+        return match.path
+    python_file = next((file for file in files if file.path.endswith(".py")), None)
+    return python_file.path if python_file else target
+
+
+def _existing_manifests(artifact_output: Path) -> list[Path]:
+    if not artifact_output.is_dir():
+        return []
+    return [path for path in artifact_output.glob("prism_run_manifest*.json") if path.is_file()]
+
+
 def _runner_launch_command(gpu_count: Any) -> tuple[str, ...]:
     if not isinstance(gpu_count, int) or isinstance(gpu_count, bool):
         raise ContainerEvaluationError(
@@ -466,55 +448,13 @@ def _runner_launch_command(gpu_count: Any) -> tuple[str, ...]:
     )
 
 
-def _checkpoint_payload(
-    checkpoint: CheckpointWorkspace, *, mounted_resume_path: Path | None = None
-) -> dict[str, Any]:
-    current = _checkpoint_entry_payload(checkpoint.artifact_output, checkpoint.current_dir)
-    resume = (
-        _checkpoint_entry_payload(
-            checkpoint.artifact_output, checkpoint.resume_dir, mounted_path=mounted_resume_path
-        )
-        if checkpoint.resume_dir is not None and mounted_resume_path is not None
-        else None
-    )
-    return {
-        "api_version": 1,
-        "attempt": checkpoint.attempt,
-        "is_resume": resume is not None,
-        "artifact_root": "/artifacts",
-        "current": current,
-        "resume": resume,
-    }
-
-
-def _checkpoint_entry_payload(
-    artifact_output: Path, path: Path, *, mounted_path: Path | None = None
-) -> dict[str, str]:
-    relative = path.relative_to(artifact_output).as_posix()
-    return {
-        "artifact_relative_path": relative,
-        "path": str(mounted_path) if mounted_path is not None else f"/artifacts/{relative}",
-    }
-
-
-def _valid_infra_checkpoint_paths(artifact_output: Path) -> tuple[str | None, str | None]:
-    manifest_path = artifact_output / RUN_MANIFEST_FILENAME
-    try:
-        manifest = _read_run_manifest(manifest_path)
-    except Exception:
-        return None, None
-    if not manifest or not manifest.get("artifacts", {}).get("checkpoints"):
-        return None, None
-    return str(artifact_output), str(manifest_path)
-
-
 def _parse_metrics(stdout: str) -> dict[str, float]:
     for line in reversed(stdout.splitlines()):
         if line.startswith("PRISM_METRICS_JSON="):
             payload = json.loads(line.removeprefix("PRISM_METRICS_JSON="))
             if not isinstance(payload, dict):
                 raise RuntimeError("Prism container evaluation returned invalid metrics")
-            return _normalize_metrics({str(key): float(value) for key, value in payload.items()})
+            return {str(key): float(value) for key, value in payload.items()}
     raise RuntimeError("Prism container evaluation did not return metrics")
 
 
@@ -524,41 +464,31 @@ def _read_run_manifest(path: Path) -> dict[str, Any] | None:
     payload = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(payload, dict):
         raise ContainerEvaluationError("Prism run manifest artifact is not a JSON object")
-    PrismRunManifest.model_validate(payload)
+    if payload.get("schema_version") != "prism_run_manifest.v2":
+        raise ContainerEvaluationError(
+            "Prism run manifest artifact is not schema prism_run_manifest.v2"
+        )
     return payload
 
 
 def _metrics_from_manifest(manifest: dict[str, Any]) -> dict[str, float]:
-    architecture = score_architecture_manifest(manifest)
-    training = score_training_manifest(manifest)
-    run_manifest = PrismRunManifest.model_validate(manifest)
-    metrics = {
-        "q_arch": architecture.score,
-        "q_recipe": training.score,
-        "parameter_count": float(run_manifest.metrics.parameter_count),
-        "gpu_count": float(run_manifest.metrics.gpu_count),
-        "tokens_seen": float(run_manifest.metrics.tokens_seen),
-        "estimated_flops": float(run_manifest.metrics.estimated_flops),
-    }
-    if run_manifest.metrics.final_loss is not None:
-        metrics["final_loss"] = run_manifest.metrics.final_loss
-        metrics["train_loss"] = run_manifest.metrics.final_loss
-        metrics["eval_loss"] = run_manifest.metrics.loss.standardized_eval_loss
-        metrics["val_loss"] = run_manifest.metrics.loss.standardized_eval_loss
-    return metrics
+    """Derive the metrics surface from the challenge-authored v2 manifest.
 
-
-def _normalize_metrics(metrics: dict[str, float]) -> dict[str, float]:
-    if "q_arch" not in metrics:
-        raise RuntimeError("Prism container evaluation did not return q_arch")
-    metrics["q_arch"] = max(0.0, min(1.0, metrics["q_arch"]))
-    metrics["q_recipe"] = max(0.0, min(1.0, metrics.get("q_recipe", 0.5)))
-    if "train_loss" not in metrics and "final_loss" in metrics:
-        metrics["train_loss"] = metrics["final_loss"]
-    if "eval_loss" not in metrics and "val_loss" in metrics:
-        metrics["eval_loss"] = metrics["val_loss"]
-    if "val_loss" not in metrics and "eval_loss" in metrics:
-        metrics["val_loss"] = metrics["eval_loss"]
+    The prequential bits-per-byte scoring fields are computed by the scoring recast; this feature
+    surfaces only the re-execution provenance (data coverage / parameter count) so the pipeline can
+    finalize the run from the challenge-owned manifest, never miner-reported numbers.
+    """
+    metrics: dict[str, float] = {}
+    run_metrics = manifest.get("metrics")
+    if isinstance(run_metrics, dict):
+        for key, value in run_metrics.items():
+            if isinstance(value, int | float) and not isinstance(value, bool):
+                metrics[str(key)] = float(value)
+    data = manifest.get("data")
+    if isinstance(data, dict):
+        available = data.get("available_bytes")
+        if isinstance(available, int | float) and not isinstance(available, bool):
+            metrics["available_bytes"] = float(available)
     return metrics
 
 
@@ -585,666 +515,282 @@ def _redact_detail(detail: str) -> str:
     return "\n".join(redacted_lines)
 
 
-def _entrypoint(files: tuple[SourceFile, ...]) -> str:
-    for candidate in ("prism_submission.py", "model.py", "main.py"):
-        match = next((file for file in files if file.path.endswith(candidate)), None)
-        if match:
-            return match.path
-    python_file = next((file for file in files if file.path.endswith(".py")), None)
-    return python_file.path if python_file else "model.py"
+_CONTAINER_EVAL_SCRIPT = r'''"""Challenge-owned re-execution runner (architecture.md section 4.3).
 
-
-_CONTAINER_EVAL_SCRIPT = r"""
+The challenge authors this runner. It FORCES global seeds + deterministic flags BEFORE importing
+any miner code, resolves the LOCKED FineWeb-Edu train split, imports the miner two-script bundle
+(architecture.py::build_model + training.py::train), and invokes the miner-owned train(ctx) loop
+under a loopback torchrun rendezvous. A missing/empty locked data path fails fast (NO random-token
+fallback); any miner-written manifest is ignored and the challenge authors
+prism_run_manifest.v2.json itself.
+"""
 import dataclasses
-import hashlib
-import importlib.util
 import json
-import math
 import os
+import random
 import sys
 import types
-from datetime import UTC, datetime
-from pathlib import Path, PurePosixPath
+from pathlib import Path
+
+MANIFEST_GLOB = "prism_run_manifest*.json"
+CHALLENGE_MANIFEST_NAME = "prism_run_manifest.v2.json"
+
+
+def _fail(reason):
+    sys.stderr.write("PRISM_RUNNER_ERROR: " + reason + "\n")
+    raise SystemExit("prism-runner: " + reason)
+
 
 if len(sys.argv) != 2:
-    raise SystemExit("usage: runner.py payload.json")
+    _fail("usage: runner.py payload.json")
 payload = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+context_data = payload.get("context", {})
+forced_seed = int(context_data.get("seed", 1337))
 
+# --- FORCE global determinism BEFORE importing any miner code (architecture.md 4.3) ---
+os.environ.setdefault("PYTHONHASHSEED", str(forced_seed))
+os.environ.setdefault("MASTER_ADDR", str(payload.get("master_addr", "127.0.0.1")))
+os.environ.setdefault("MASTER_PORT", str(payload.get("master_port", 29500)))
+random.seed(forced_seed)
+
+import torch
+
+
+def _force_init(seed):
+    random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+    try:
+        torch.use_deterministic_algorithms(True)
+    except Exception:
+        torch.use_deterministic_algorithms(True, warn_only=True)
+    if hasattr(torch.backends, "cudnn"):
+        torch.backends.cudnn.deterministic = True
+        torch.backends.cudnn.benchmark = False
+
+
+_force_init(forced_seed)
+print(
+    "PRISM_RUNNER: forced seed=" + str(forced_seed)
+    + " + manual_seed/cuda.manual_seed_all/use_deterministic_algorithms/cudnn applied "
+    + "before miner import",
+    flush=True,
+)
+
+rank = int(os.environ.get("RANK", context_data.get("rank", 0)))
+local_rank = int(os.environ.get("LOCAL_RANK", context_data.get("local_rank", 0)))
+world_size = int(os.environ.get("WORLD_SIZE", context_data.get("world_size", 1)))
+if torch.cuda.is_available():
+    device = torch.device("cuda", local_rank)
+else:
+    device = torch.device("cpu")
+
+artifacts_dir = (
+    context_data.get("artifacts_dir")
+    or os.environ.get("PRISM_ARTIFACT_OUTPUT_PATH")
+    or "/artifacts"
+)
+Path(artifacts_dir).mkdir(parents=True, exist_ok=True)
+
+# Fresh per run: discard any stale/planted manifest before the miner loop begins.
+if rank == 0:
+    for stale in Path(artifacts_dir).glob(MANIFEST_GLOB):
+        try:
+            stale.unlink()
+        except OSError:
+            pass
+
+
+def _resolve_train_shards(data_dir):
+    if not data_dir:
+        _fail("locked train data path is not configured (no random-token fallback)")
+    base = Path(data_dir)
+    if not base.is_dir():
+        _fail("locked train data path is missing: " + str(data_dir) + " (no random-token fallback)")
+    candidates = []
+    for pattern in ("train-*.jsonl", "*.jsonl", "*.bin"):
+        candidates = sorted(p for p in base.glob(pattern) if p.is_file())
+        if candidates:
+            break
+    if not candidates and (base / "train").is_dir():
+        candidates = sorted(p for p in (base / "train").glob("*.jsonl") if p.is_file())
+    nonempty = [p for p in candidates if p.stat().st_size > 0]
+    if not nonempty:
+        _fail("locked train data is empty: " + str(data_dir) + " (no random-token fallback)")
+    return nonempty
+
+
+data_dir = context_data.get("data_dir") or os.environ.get("PRISM_DATA_DIR")
+train_shards = _resolve_train_shards(data_dir)
+available_bytes = sum(p.stat().st_size for p in train_shards)
+print(
+    "PRISM_RUNNER: locked FineWeb-Edu train resolved at " + str(data_dir)
+    + " (" + str(len(train_shards)) + " shards, " + str(available_bytes) + " bytes)",
+    flush=True,
+)
+
+# --- challenge-owned interface module: the miner sees the FORCED ctx, not the installed one ---
 interface = types.ModuleType("prism_challenge.evaluator.interface")
+
 
 @dataclasses.dataclass(frozen=True)
 class PrismContext:
-    vocab_size: int = 4096
-    sequence_length: int = 128
+    vocab_size: int = 50304
+    sequence_length: int = 1024
     max_layers: int = 96
     max_parameters: int = 150_000_000
     seed: int = 1337
-    checkpoint_dir: Path | None = None
-    resume_checkpoint_dir: Path | None = None
-    checkpoint_api_version: int = 1
-    attempt: int = 1
-    is_resume: bool = False
+    data_dir: str | None = None
+    artifacts_dir: str | None = None
+    reference_tokenizer_dir: str | None = None
+    token_budget: int | None = None
+    step_budget: int | None = None
     rank: int = 0
     local_rank: int = 0
     world_size: int = 1
     distributed_backend: str | None = None
     device: str = "cpu"
-    checkpoint_metadata: dict = dataclasses.field(default_factory=dict)
 
-@dataclasses.dataclass(frozen=True)
-class TrainingRecipe:
-    learning_rate: float = 3e-4
-    batch_size: int = 4
-    optimizer: str = "adamw"
-    scheduler: str = "cosine"
-    weight_decay: float = 0.01
+    @property
+    def max_seq_len(self):
+        return self.sequence_length
 
-@dataclasses.dataclass(frozen=True)
-class PrismBatch:
-    tokens: object
-    targets: object | None = None
-    metadata: dict | None = None
+    @property
+    def max_params(self):
+        return self.max_parameters
+
+    def build_model(self, *args, **kwargs):
+        # Re-apply the forced init so the miner cannot override the random initialization.
+        _force_init(self.seed)
+        builder = interface._MINER_BUILD_MODEL
+        if builder is None:
+            raise RuntimeError("architecture build_model is not available")
+        return builder(self, *args, **kwargs)
+
+    def reference_tokenizer(self, name):
+        from prism_challenge.evaluator.reference_tokenizers import load_reference_tokenizer
+
+        return load_reference_tokenizer(name, self.reference_tokenizer_dir)
+
 
 interface.PrismContext = PrismContext
-interface.TrainingRecipe = TrainingRecipe
-interface.PrismBatch = PrismBatch
-pkg = types.ModuleType("prism_challenge")
-evaluator = types.ModuleType("prism_challenge.evaluator")
-sys.modules["prism_challenge"] = pkg
-sys.modules["prism_challenge.evaluator"] = evaluator
+interface._MINER_BUILD_MODEL = None
+prism_pkg = types.ModuleType("prism_challenge")
+evaluator_pkg = types.ModuleType("prism_challenge.evaluator")
+sys.modules.setdefault("prism_challenge", prism_pkg)
+sys.modules["prism_challenge.evaluator"] = evaluator_pkg
 sys.modules["prism_challenge.evaluator.interface"] = interface
 
-import torch
-import torch.distributed as dist
-import torch.nn.functional as F
-from torch.nn.parallel import DistributedDataParallel
-
+# --- import the two miner scripts AFTER forcing init ---
 project_root = Path(os.environ.get("PRISM_PROJECT_ROOT", "/workspace/project"))
 sys.path.insert(0, str(project_root))
-entrypoint = project_root / payload.get("entrypoint", "model.py")
-sys.path.insert(0, str(entrypoint.parent))
-spec = importlib.util.spec_from_file_location("prism_submission", entrypoint)
-if spec is None or spec.loader is None:
-    raise RuntimeError("invalid Prism project entrypoint")
-module = importlib.util.module_from_spec(spec)
-sys.modules["prism_submission"] = module
-spec.loader.exec_module(module)
 
-ctx_data = payload.get("context", {})
-checkpoint_data = payload.get("checkpoint_workspace", {})
-current_checkpoint = checkpoint_data.get("current") or {}
-resume_checkpoint = checkpoint_data.get("resume") or {}
-checkpoint_dir_value = current_checkpoint.get("path") or ctx_data.get("checkpoint_dir")
-resume_checkpoint_dir_value = (
-    resume_checkpoint.get("path") or ctx_data.get("resume_checkpoint_dir")
-)
-world_size = int(os.environ.get("WORLD_SIZE", ctx_data.get("world_size", 1)))
-rank = int(os.environ.get("RANK", ctx_data.get("rank", 0)))
-local_rank = int(os.environ.get("LOCAL_RANK", ctx_data.get("local_rank", 0)))
-distributed = world_size > 1
-if torch.cuda.is_available():
-    if distributed:
-        torch.cuda.set_device(local_rank)
-    device = torch.device("cuda", local_rank if distributed else 0)
-else:
-    device = torch.device("cpu")
-distributed_backend = None
-if distributed:
-    distributed_backend = (
-        os.environ.get("PRISM_DISTRIBUTED_BACKEND")
-        or ctx_data.get("distributed_backend")
-        or ("nccl" if torch.cuda.is_available() else "gloo")
-    )
-    if distributed_backend == "nccl" and not torch.cuda.is_available():
-        distributed_backend = "gloo"
-    dist.init_process_group(backend=distributed_backend, rank=rank, world_size=world_size)
+import importlib.util
 
-def distributed_barrier():
-    if distributed and dist.is_available() and dist.is_initialized():
-        dist.barrier()
 
-def reduce_scalar(value):
-    if not (distributed and dist.is_available() and dist.is_initialized()):
-        return float(value)
-    tensor = torch.tensor(float(value), device=device)
-    dist.all_reduce(tensor, op=dist.ReduceOp.SUM)
-    tensor /= world_size
-    return float(tensor.detach().cpu())
+def _import_from_file(path, module_name):
+    if not Path(path).is_file():
+        _fail("miner module not found: " + str(path))
+    spec = importlib.util.spec_from_file_location(module_name, path)
+    if spec is None or spec.loader is None:
+        _fail("cannot import miner module: " + str(path))
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[module_name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+arch_entry = payload.get("architecture_entrypoint", "architecture.py")
+train_entry = payload.get("training_entrypoint", "training.py")
+build_model_symbol = payload.get("build_model_symbol", "build_model")
+train_symbol = payload.get("train_symbol", "train")
+arch_module = _import_from_file(project_root / arch_entry, Path(arch_entry).stem)
+miner_build_model = getattr(arch_module, build_model_symbol, None)
+if not callable(miner_build_model):
+    _fail("architecture entrypoint " + str(arch_entry) + " is missing " + build_model_symbol)
+interface._MINER_BUILD_MODEL = miner_build_model
+train_module = _import_from_file(project_root / train_entry, Path(train_entry).stem)
+miner_train = getattr(train_module, train_symbol, None)
+if not callable(miner_train):
+    _fail("training entrypoint " + str(train_entry) + " is missing " + train_symbol)
 
 ctx = PrismContext(
-    vocab_size=int(ctx_data.get("vocab_size", 4096)),
-    sequence_length=min(int(ctx_data.get("sequence_length", 128)), 128),
-    max_parameters=int(ctx_data.get("max_parameters", 150_000_000)),
-    checkpoint_dir=Path(checkpoint_dir_value) if checkpoint_dir_value else None,
-    resume_checkpoint_dir=(
-        Path(resume_checkpoint_dir_value) if resume_checkpoint_dir_value else None
-    ),
-    checkpoint_api_version=int(
-        checkpoint_data.get("api_version", ctx_data.get("checkpoint_api_version", 1))
-    ),
-    attempt=int(checkpoint_data.get("attempt", ctx_data.get("attempt", 1))),
-    is_resume=bool(checkpoint_data.get("is_resume", ctx_data.get("is_resume", False))),
+    vocab_size=int(context_data.get("vocab_size", 50304)),
+    sequence_length=int(context_data.get("sequence_length", 1024)),
+    max_layers=int(context_data.get("max_layers", 96) or 96),
+    max_parameters=int(context_data.get("max_parameters", 150_000_000)),
+    seed=forced_seed,
+    data_dir=str(data_dir),
+    artifacts_dir=str(artifacts_dir),
+    reference_tokenizer_dir=context_data.get("reference_tokenizer_dir")
+    or os.environ.get("PRISM_REFERENCE_TOKENIZER_DIR"),
+    token_budget=context_data.get("token_budget"),
+    step_budget=context_data.get("step_budget"),
     rank=rank,
     local_rank=local_rank,
     world_size=world_size,
-    distributed_backend=distributed_backend,
+    distributed_backend=context_data.get("distributed_backend"),
     device=str(device),
-    checkpoint_metadata={"checkpoint_workspace": checkpoint_data},
 )
-torch.manual_seed(ctx.seed)
-base_model = module.build_model(ctx)
-recipe = module.get_recipe(ctx)
-if isinstance(recipe, dict):
-    recipe = TrainingRecipe(**recipe)
-params = sum(p.numel() for p in base_model.parameters())
-if params <= 0 or params > ctx.max_parameters:
-    raise RuntimeError(f"invalid parameter count: {params}")
-base_model.to(device)
 
-def load_checkpoint_if_available():
-    if ctx.resume_checkpoint_dir is None:
-        return None
-    resume_dir = Path(ctx.resume_checkpoint_dir)
-    metadata_files = sorted(resume_dir.rglob("checkpoint_metadata.v1.json"))
-    if not metadata_files:
-        raise ValueError("requested resume checkpoint is missing metadata")
-    if len(metadata_files) != 1:
-        raise ValueError("requested resume checkpoint has multiple metadata files")
-    metadata = json.loads(metadata_files[0].read_text(encoding="utf-8"))
-    if metadata.get("submission_id") != str(payload.get("submission_id", "")):
-        raise ValueError("checkpoint metadata submission_id does not match requested run")
-    if metadata.get("code_hash") != str(payload.get("code_hash", "")):
-        raise ValueError("checkpoint metadata code_hash does not match requested run")
-    if metadata.get("arch_hash") != str(payload.get("arch_hash", "")):
-        raise ValueError("checkpoint metadata arch_hash does not match requested run")
-    if int(metadata.get("attempt", 0)) != int(ctx.attempt) - 1:
-        raise ValueError("checkpoint metadata attempt is not the previous attempt")
-    expected_recipe = recipe_fingerprint()
-    if metadata.get("recipe_fingerprint") != expected_recipe:
-        raise ValueError("checkpoint metadata recipe_fingerprint does not match recipe")
-    metadata_dir = PurePosixPath(str(metadata.get("checkpoint_dir", "")))
-    checkpoint_path = PurePosixPath(str(metadata.get("checkpoint_path", "")))
-    try:
-        checkpoint_relative = checkpoint_path.relative_to(metadata_dir)
-    except ValueError as exc:
-        raise ValueError("checkpoint metadata path escapes requested resume dir") from exc
-    if not (resume_dir / checkpoint_relative.as_posix()).is_file():
-        raise ValueError("checkpoint metadata points to a missing checkpoint file")
-    hook = getattr(module, "load_checkpoint", None)
-    if not callable(hook):
-        raise ValueError("resume checkpoint requested but load_checkpoint hook is absent")
-    result = hook(base_model, resume_dir, ctx)
-    if result is not None:
-        try:
-            json.dumps(result, sort_keys=True)
-        except TypeError as exc:
-            raise TypeError("load_checkpoint return must be JSON serializable") from exc
-    return result
-
-def recipe_fingerprint():
-    recipe_payload = {
-        "learning_rate": float(getattr(recipe, "learning_rate", 3e-4)),
-        "batch_size": int(getattr(recipe, "batch_size", 1)),
-        "optimizer": str(getattr(recipe, "optimizer", "adamw")),
-        "scheduler": str(getattr(recipe, "scheduler", "cosine")),
-        "weight_decay": float(getattr(recipe, "weight_decay", 0.01)),
-    }
-    return hashlib.sha256(
-        json.dumps(recipe_payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
-    ).hexdigest()
-
-distributed_barrier()
-load_checkpoint_metadata = load_checkpoint_if_available()
-distributed_barrier()
-model = (
-    DistributedDataParallel(
-        base_model,
-        device_ids=[local_rank] if device.type == "cuda" else None,
-        output_device=local_rank if device.type == "cuda" else None,
-    )
-    if distributed
-    else base_model
+# Re-apply the forced init immediately before handing control to the miner loop.
+_force_init(forced_seed)
+print(
+    "PRISM_RUNNER: imported architecture (" + str(arch_entry) + ") + training ("
+    + str(train_entry) + "); calling train(ctx)",
+    flush=True,
 )
-seq = ctx.sequence_length
-batch_size = max(1, min(int(getattr(recipe, "batch_size", 1)), 2))
-tokens = torch.randint(0, ctx.vocab_size, (batch_size, seq), device=device)
-hooks_present = {
-    name: callable(getattr(module, name, None))
-    for name in (
-        "configure_optimizer",
-        "inference_logits",
-        "infer",
-        "compute_loss",
-        "train_step",
-    )
-}
-hook_usage = {
-    "configure_optimizer": False,
-    "inference_logits": False,
-    "infer": False,
-    "compute_loss": False,
-    "train_step": False,
-}
+miner_train(ctx)
+print("PRISM_RUNNER: train(ctx) returned", flush=True)
 
-def prism_batch(t):
-    return PrismBatch(tokens=t[:, :-1], targets=t[:, 1:], metadata={})
 
-def logits_for(t):
-    logits_hook = getattr(module, "inference_logits", None)
-    infer_hook = getattr(module, "infer", None)
-    if callable(logits_hook):
-        hook_usage["inference_logits"] = True
-        return logits_hook(model, prism_batch(t), ctx)
-    if callable(infer_hook):
-        hook_usage["infer"] = True
-        return infer_hook(model, prism_batch(t), ctx)
-    return model(t[:, :-1])
-
-def loss_for(t):
-    custom = getattr(module, "compute_loss", None)
-    if callable(custom):
-        hook_usage["compute_loss"] = True
-        return custom(model, prism_batch(t), ctx)
-    logits = logits_for(t)
-    vocab = logits.shape[-1]
-    return F.cross_entropy(logits.reshape(-1, vocab), t[:, 1:].reshape(-1) % vocab)
-
-custom_opt = getattr(module, "configure_optimizer", None)
-if callable(custom_opt):
-    hook_usage["configure_optimizer"] = True
-    optimizer = custom_opt(model, recipe, ctx)
-else:
-    trainable = [p for p in model.parameters() if p.requires_grad]
-    optimizer = torch.optim.AdamW(
-        trainable,
-        lr=min(float(getattr(recipe, "learning_rate", 3e-4)), 3e-4),
-        weight_decay=float(getattr(recipe, "weight_decay", 0.01)),
-    )
-initial_loss = float(loss_for(tokens).detach().cpu())
-final_loss = initial_loss
-for _ in range(3):
-    batch = torch.randint(0, ctx.vocab_size, (batch_size, seq), device=device)
-    custom_step = getattr(module, "train_step", None)
-    if callable(custom_step):
-        hook_usage["train_step"] = True
-        loss = custom_step(model, prism_batch(batch), optimizer, ctx)
-    else:
-        optimizer.zero_grad(set_to_none=True)
-        loss = loss_for(batch)
-        loss.backward()
-        torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-        optimizer.step()
-    final_loss = float(loss.detach().cpu())
-initial_loss = reduce_scalar(initial_loss)
-final_loss = reduce_scalar(final_loss)
-improvement = max(0.0, initial_loss - final_loss)
-quality = max(0.0, min(1.0, improvement / max(initial_loss, 1e-6)))
-efficiency = 1.0 / (1.0 + math.log10(max(params, 1)))
-q_arch = max(0.0, min(1.0, 0.82 * quality + 0.18 * efficiency))
-q_recipe = 1.0 if 1e-5 <= float(getattr(recipe, "learning_rate", 3e-4)) <= 3e-3 else 0.5
-metrics = {
-    "q_arch": q_arch,
-    "q_recipe": q_recipe,
-    "initial_loss": initial_loss,
-    "final_loss": final_loss,
-    "train_loss": final_loss,
-    "eval_loss": final_loss,
-    "val_loss": final_loss,
-    "parameter_count": float(params),
-    "hook.configure_optimizer.present": float(hooks_present["configure_optimizer"]),
-    "hook.inference_logits.present": float(hooks_present["inference_logits"]),
-    "hook.infer.present": float(hooks_present["infer"]),
-    "hook.compute_loss.present": float(hooks_present["compute_loss"]),
-    "hook.train_step.present": float(hooks_present["train_step"]),
-    "hook.configure_optimizer.used": float(hook_usage["configure_optimizer"]),
-    "hook.inference_logits.used": float(hook_usage["inference_logits"]),
-    "hook.infer.used": float(hook_usage["infer"]),
-    "hook.compute_loss.used": float(hook_usage["compute_loss"]),
-    "hook.train_step.used": float(hook_usage["train_step"]),
-}
-
-def require_json_serializable(value, label):
-    try:
-        json.dumps(value, sort_keys=True)
-    except TypeError as exc:
-        raise TypeError(f"{label} must be JSON serializable") from exc
-
-def validate_hook_path(value):
-    if not isinstance(value, str):
-        raise TypeError("save_checkpoint return path must be a string")
-    if value.startswith("/") or "\\" in value:
-        raise ValueError("save_checkpoint path must be checkpoint-dir-relative POSIX path")
-    path = PurePosixPath(value)
-    if path.is_absolute() or not path.parts or path == PurePosixPath("."):
-        raise ValueError("save_checkpoint path must name a relative file")
-    if any(part in {"", ".", ".."} for part in path.parts):
-        raise ValueError("save_checkpoint path must not contain empty, '.', or '..' segments")
-    if len(path.parts[0]) == 2 and path.parts[0][1] == ":":
-        raise ValueError("save_checkpoint path must not use host drive prefixes")
-    return path
-
-def normalize_save_checkpoint_return(result):
-    if result is None:
-        return None, None
-    if isinstance(result, str):
-        path = validate_hook_path(result)
-        return path, {"path": result}
-    if isinstance(result, dict):
-        if set(result) != {"path", "metadata"}:
-            raise TypeError("save_checkpoint dict return must contain exactly path and metadata")
-        path = validate_hook_path(result["path"])
-        if not isinstance(result["metadata"], dict):
-            raise TypeError("save_checkpoint return metadata must be a dict")
-        require_json_serializable(result, "save_checkpoint return")
-        return path, result
-    raise TypeError("save_checkpoint must return None, str, or {'path': str, 'metadata': dict}")
-
-def artifact_relative_path(path):
-    artifact_root_value = (
-        checkpoint_data.get("artifact_root")
-        or payload.get("artifact_output", {}).get("path")
-        or "/artifacts"
-    )
-    artifact_root = Path(artifact_root_value).resolve(strict=False)
-    target = Path(path).resolve(strict=False)
-    try:
-        return target.relative_to(artifact_root).as_posix()
-    except ValueError as exc:
-        raise ValueError(f"checkpoint artifact is outside artifact root: {path}") from exc
-
-def checkpoint_logical_size(checkpoint_dir):
-    total = 0
-    if checkpoint_dir.is_symlink():
-        raise ValueError("checkpoint path contains symlink")
-    if not checkpoint_dir.exists():
-        return 0
-    for item in sorted(checkpoint_dir.rglob("*")):
-        if item.is_symlink():
-            raise ValueError(f"checkpoint path contains symlink: {item}")
-        if item.is_file():
-            total += item.stat(follow_symlinks=False).st_size
-            if total > 10_000_000_000:
-                raise ValueError("checkpoint workspace exceeds 10G limit")
-    return total
-
-def write_checkpoint_record():
-    if ctx.rank != 0 or ctx.checkpoint_dir is None:
-        return None
-    hook = getattr(module, "save_checkpoint", None)
-    if not callable(hook):
-        return None
-    checkpoint_dir = Path(ctx.checkpoint_dir)
-    checkpoint_dir.mkdir(parents=True, exist_ok=True)
-    result = hook(base_model, checkpoint_dir, ctx)
-    relative_path, hook_return = normalize_save_checkpoint_return(result)
-    if relative_path is None:
-        return None
-    checkpoint_path = checkpoint_dir / relative_path.as_posix()
-    checkpoint_root = checkpoint_dir.resolve(strict=False)
-    checkpoint_target = checkpoint_path.resolve(strict=False)
-    try:
-        checkpoint_target.relative_to(checkpoint_root)
-    except ValueError as exc:
-        raise ValueError("save_checkpoint path escapes checkpoint directory") from exc
-    if checkpoint_path.is_symlink() or not checkpoint_path.is_file():
-        raise ValueError("save_checkpoint path must point to a regular file")
-    bytes_total = checkpoint_logical_size(checkpoint_dir)
-    checkpoint_artifact_path = artifact_relative_path(checkpoint_path)
-    checkpoint_artifact_dir = artifact_relative_path(checkpoint_dir)
-    metadata_path = checkpoint_path.parent / "checkpoint_metadata.v1.json"
-    metadata_artifact_path = artifact_relative_path(metadata_path)
-    created_at = datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
-    metadata = {
-        "checkpoint_api_version": int(ctx.checkpoint_api_version),
-        "submission_id": str(payload.get("submission_id", "container")),
-        "attempt": int(ctx.attempt),
-        "code_hash": str(payload.get("code_hash", "")),
-        "arch_hash": str(payload.get("arch_hash", "")),
-        "recipe_fingerprint": recipe_fingerprint(),
-        "created_at": created_at,
-        "checkpoint_path": checkpoint_artifact_path,
-        "hook_return": hook_return,
-        "world_size": int(ctx.world_size),
-        "rank_writer": 0,
-        "checkpoint_dir": checkpoint_artifact_dir,
-        "bytes_total": bytes_total,
-    }
-    require_json_serializable(metadata, "checkpoint metadata")
-    metadata_path.write_text(json.dumps(metadata, sort_keys=True, indent=2), encoding="utf-8")
-    return {
-        "manifest_entry": {
-            "path": checkpoint_artifact_path,
-            "metadata_path": metadata_artifact_path,
-            "bytes": bytes_total,
-            "attempt": int(ctx.attempt),
-            "world_size": int(ctx.world_size),
-            "rank_writer": 0,
-            "created_at": created_at,
-        },
-        "checkpoint_path": checkpoint_artifact_path,
-    }
-
-def diagnostics_manifest():
-    return {
-            "activation_entropy": {
-            "status": "ok",
-            "aggregate": 1.0,
-            "per_layer": {"all": 1.0},
-            "warnings": [],
-        },
-        "useful_sparsity": {
-            "status": "ok",
-            "aggregate": 1.0,
-            "per_layer": {"all": 1.0},
-            "warnings": [],
-        },
-        "attention_diversity": {
-            "status": "not_applicable",
-            "aggregate": None,
-            "per_layer": {},
-            "warnings": [],
-            "not_applicable_reason": "container runner does not inspect attention weights",
-            "redistribution": {
-                "enabled": True,
-                "policy_key": "loss_comparability_policy.redistribution_policy",
-                "target": "diagnostics_health",
-                "reason": "container runner does not inspect attention weights",
-            },
-        },
-        "representation_collapse": {
-            "status": "ok",
-            "aggregate": 1.0,
-            "per_layer": {"all": 1.0},
-            "warnings": [],
-        },
-        "gradient_noise_scale": {
-            "status": "ok",
-            "aggregate": 1.0,
-            "per_layer": {"all": 1.0},
-            "warnings": [],
-        },
-        "activation_norm_stability": {
-            "status": "ok",
-            "aggregate": 1.0,
-            "per_layer": {"all": 1.0},
-            "warnings": [],
-        },
-        "neuron_specialization": {
-            "status": "ok",
-            "aggregate": 1.0,
-            "per_layer": {"all": 1.0},
-            "warnings": [],
-        },
-    }
-
-def write_run_manifest(checkpoint_record):
-    manifest_path_value = (
-        payload.get("artifact_output", {}).get("manifest_path")
-        or os.environ.get("PRISM_RUN_MANIFEST_PATH")
-        or "/artifacts/prism_run_manifest.v1.json"
-    )
-    manifest_path = Path(manifest_path_value)
-    manifest_path.parent.mkdir(parents=True, exist_ok=True)
-    tokens_seen = int(batch_size * seq * 3)
-    estimated_flops = float(max(1, tokens_seen) * max(1, params) * 6)
-    graph_payload = {
-        "schema_version": "architecture_graph.v1",
-        "submission_id": payload.get("submission_id", "container"),
-        "code_hash": payload.get("code_hash", ""),
-        "arch_hash": payload.get("arch_hash", ""),
-    }
-    graph_hash = hashlib.sha256(
-        json.dumps(graph_payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
-    ).hexdigest()
+def _write_challenge_manifest():
     manifest = {
-        "schema_version": "prism_run_manifest.v1",
+        "schema_version": "prism_run_manifest.v2",
         "submission_id": str(payload.get("submission_id", "container")),
-        "architecture_id": (
-            "container-architecture-" + str(payload.get("arch_hash", "unknown"))[:12]
-        ),
-        "architecture_version_id": (
-            "container-architecture-version-"
-            + str(payload.get("code_hash", "unknown"))[:12]
-        ),
-        "training_script_version_id": (
-            "container-training-" + str(payload.get("code_hash", "unknown"))[:12]
-        ),
-        "run_id": "container-run-" + str(payload.get("submission_id", "container")),
+        "run_id": "prism-reexec-" + str(payload.get("submission_id", "container")),
         "mode": str(payload.get("execution_mode", "gpu_proxy_eval")),
-        "dataset": {
-            "name": "container-runner-fixture",
-            "revision": "v1",
-            "train_split_fingerprint": "container-train",
-            "validation_split_fingerprint": "container-validation",
-            "test_split_fingerprint": "container-test",
-            "tokenizer_fingerprint": "container-tokenizer",
-            "evaluator_fingerprint": "container-runner-v1",
-            "benchmark_fingerprints": {},
-            "contamination_report_path": "artifacts/contamination.json",
+        "run": {
+            "seed": forced_seed,
+            "forced_init": True,
+            "deterministic_algorithms": True,
+            "world_size": world_size,
+            "rank": rank,
+            "local_rank": local_rank,
+            "device": str(device),
+            "master_addr": os.environ.get("MASTER_ADDR"),
+            "nproc_per_node": world_size,
         },
-        "model": {
-            "parameter_count": int(params),
-            "architecture_graph_hash": graph_hash,
-            "tokenizer_kind": "container_fixture",
-            "vocab_size": int(ctx.vocab_size),
-            "max_sequence_length": int(ctx.sequence_length),
+        "data": {
+            "data_dir": str(data_dir),
+            "shard_count": len(train_shards),
+            "available_bytes": available_bytes,
+            "source": "locked-fineweb-edu-train",
+            "random_token_fallback": False,
         },
-        "compute": {
-            "gpu_count": int(payload.get("gpu_allocation", {}).get("actual_gpu_count", 0)),
-            "gpu_type": payload.get("gpu_allocation", {}).get("gpu_type"),
-            "gpu_server": payload.get("gpu_allocation", {}).get("target_server"),
-            "gpu_device_ids": [
-                str(item)
-                for item in payload.get("gpu_allocation", {}).get("device_ids", [])
-            ],
-            "world_size": int(ctx.world_size),
-            "rank": int(ctx.rank),
-            "local_rank": int(ctx.local_rank),
-            "distributed_backend": ctx.distributed_backend,
-            "effective_batch_size": int(batch_size),
-            "gradient_accumulation_steps": 1,
-            "tokens_seen": tokens_seen,
-            "estimated_flops": estimated_flops,
-            "wall_clock_seconds": 0.0,
-            "checkpoint_path": (
-                checkpoint_record["checkpoint_path"] if checkpoint_record else None
-            ),
-            "resume_checkpoint_path": None,
-        },
-        "metrics": {
-            "loss_vs_tokens": [
-                {"x": 0.0, "loss": initial_loss},
-                {"x": float(tokens_seen), "loss": final_loss},
-            ],
-            "loss_vs_compute": [
-                {"x": 0.0, "loss": initial_loss},
-                {"x": estimated_flops, "loss": final_loss},
-            ],
-            "loss_vs_params": [{"x": float(params), "loss": final_loss}],
-            "learning_speed_slope": (final_loss - initial_loss) / max(
-                float(tokens_seen), 1.0
-            ),
-            "tokens_seen": tokens_seen,
-            "estimated_flops": estimated_flops,
-            "parameter_count": int(params),
-            "benchmark_scores": {},
-            "benchmark_capability_metadata": {
-                "status": "not_run",
-                "reason": "container runner fixture",
-            },
-            "benchmark_noise_metadata": {
-                "status": "not_run",
-                "reason": "container runner fixture",
-            },
-            "benchmark_contamination_metadata": {
-                "required": False,
-                "reason": "container runner fixture",
-            },
-            "diagnostics": diagnostics_manifest(),
-            "gpu_count": int(payload.get("gpu_allocation", {}).get("actual_gpu_count", 0)),
-            "loss": {
-                "raw_final_loss": final_loss,
-                "standardized_eval_loss": final_loss,
-                "loss_normalization_scope": "byte_normalized",
-                "baseline_run_id": "container-runner-baseline-v1",
-                "relative_loss_reduction": max(0.0, initial_loss - final_loss) / max(
-                    initial_loss, 1e-12
-                ),
-                "architecture_normalized_heldout_improvement": max(
-                    0.0, initial_loss - final_loss
-                ) / max(initial_loss, 1e-12),
-                "loss_comparable": True,
-                "loss_component_redistribution": {"enabled": False},
-            },
-            "final_loss": final_loss,
-        },
-        "artifacts": {
-            "architecture_graph": {
-                "path": "artifacts/architecture_graph.json",
-                "sha256": graph_hash,
-                "content_type": "application/json",
-                "bytes": len(json.dumps(graph_payload)),
-            },
-            "architecture_metadata": {
-                "path": "artifacts/architecture_metadata.v1.json",
-                "sha256": hashlib.sha256(b"container-metadata").hexdigest(),
-                "content_type": "application/json",
-                "bytes": 2,
-            },
-            "run_log": {
-                "path": "artifacts/run.log",
-                "sha256": hashlib.sha256(b"container-runner").hexdigest(),
-                "content_type": "text/plain",
-                "bytes": 16,
-            },
-            "checkpoints": [checkpoint_record["manifest_entry"]] if checkpoint_record else [],
-            "metrics": {
-                "path": "artifacts/metrics.json",
-                "sha256": hashlib.sha256(
-                    json.dumps(metrics, sort_keys=True).encode("utf-8")
-                ).hexdigest(),
-                "content_type": "application/json",
-                "bytes": len(json.dumps(metrics)),
-            },
-        },
-        "validation": {
-            "passed": True,
-            "score_eligible": True,
-            "deterministic_evidence": [],
-            "warnings": [],
-            "errors": [],
-        },
+        "metrics": {},
+        "miner_reported_ignored": True,
     }
-    manifest_path.write_text(json.dumps(manifest, sort_keys=True, indent=2), encoding="utf-8")
+    out = Path(artifacts_dir) / CHALLENGE_MANIFEST_NAME
+    out.write_text(json.dumps(manifest, sort_keys=True, indent=2), encoding="utf-8")
 
-distributed_barrier()
-checkpoint_record = write_checkpoint_record() if rank == 0 else None
-distributed_barrier()
+
 if rank == 0:
-    write_run_manifest(checkpoint_record)
-distributed_barrier()
-if rank == 0:
-    print("PRISM_METRICS_JSON=" + json.dumps(metrics, separators=(",", ":")))
-if distributed and dist.is_available() and dist.is_initialized():
-    dist.destroy_process_group()
-"""
+    # The miner may have written its own manifest during train(ctx); discard it and author ours.
+    for stale in Path(artifacts_dir).glob(MANIFEST_GLOB):
+        if stale.name != CHALLENGE_MANIFEST_NAME:
+            try:
+                stale.unlink()
+            except OSError:
+                pass
+    _write_challenge_manifest()
+    print(
+        "PRISM_METRICS_JSON="
+        + json.dumps(
+            {"available_bytes": float(available_bytes), "shard_count": float(len(train_shards))},
+            separators=(",", ":"),
+        ),
+        flush=True,
+    )
+'''

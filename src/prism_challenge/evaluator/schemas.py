@@ -13,6 +13,11 @@ from prism_challenge.evaluator.metrics import REQUIRED_DIAGNOSTICS
 
 RUN_MANIFEST_FILENAME = "prism_run_manifest.v1.json"
 RUN_MANIFEST_SCHEMA_VERSION = "prism_run_manifest.v1"
+# v2 re-execution manifest (architecture.md sections 4.3, 5). Authored by the challenge runner;
+# any miner-written manifest is ignored. The prequential bits-per-byte scoring fields are filled
+# in by the scoring recast; the runner records the forced-init re-execution provenance.
+RUN_MANIFEST_V2_FILENAME = "prism_run_manifest.v2.json"
+RUN_MANIFEST_V2_SCHEMA_VERSION = "prism_run_manifest.v2"
 ARCHITECTURE_GRAPH_FILENAME: Final[Literal["architecture_graph.json"]] = "architecture_graph.json"
 ARCHITECTURE_METADATA_FILENAME = "architecture_metadata.v1.json"
 ARCHITECTURE_METADATA_SCHEMA_VERSION = "architecture_metadata.v1"

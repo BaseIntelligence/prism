@@ -180,6 +180,19 @@ class PrismSettings(ChallengeSettings):
     platform_eval_gpu_device_ids: tuple[str, ...] = ()
     platform_eval_task: str = "architecture"
     platform_eval_artifact_root: Path = Path("/tmp/prism-eval-artifacts")
+    # Read-only locked FineWeb-Edu train split mount (architecture.md section 3). The broker
+    # bind-mounts the staged train shards here (RO); the challenge runner resolves ctx.data_dir to
+    # this path and fails fast when it is missing/empty (no random-token fallback).
+    platform_eval_data_dir: str = Field(
+        default="/data/fineweb-edu/train",
+        validation_alias=AliasChoices("PRISM_PLATFORM_EVAL_DATA_DIR", "PRISM_EVAL_DATA_DIR"),
+    )
+    platform_eval_reference_tokenizer_dir: str = Field(
+        default="/opt/reference-tokenizers",
+        validation_alias=AliasChoices(
+            "PRISM_PLATFORM_EVAL_REFERENCE_TOKENIZER_DIR", "PRISM_REFERENCE_TOKENIZER_DIR"
+        ),
+    )
     validator_hotkeys: tuple[str, ...] = ()
     validator_assignment_timeout_seconds: int = 900
     validator_assignment_max_attempts: int = 3

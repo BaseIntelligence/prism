@@ -4,19 +4,16 @@ import base64
 import io
 import json
 import zipfile
-from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
 import anyio
 from conftest import signed_headers
 from fastapi.testclient import TestClient
-from test_artifact_manifest import _valid_manifest
 
 from prism_challenge.app import create_app
 from prism_challenge.config import PrismSettings
 from prism_challenge.evaluator import llm_review
-from prism_challenge.evaluator.schemas import RUN_MANIFEST_FILENAME
 from prism_challenge.sdk.executors.docker import DockerRunResult
 
 MODEL_TEMPLATE = "\n".join(
@@ -134,47 +131,28 @@ def _weights(client: TestClient) -> dict[str, float]:
     return dict(response.json()["weights"])
 
 
-def _official_manifest(
-    *, submission_id: str, mode: str, architecture_quality: float, training_quality: float
-) -> dict[str, Any]:
-    manifest = deepcopy(_valid_manifest(mode))
-    manifest["submission_id"] = submission_id
-    manifest["run_id"] = f"run-{submission_id}"
-    manifest["architecture_id"] = f"manifest-architecture-{submission_id}"
-    manifest["architecture_version_id"] = f"manifest-architecture-version-{submission_id}"
-    manifest["training_script_version_id"] = f"manifest-training-{submission_id}"
-    manifest["metrics"]["loss"]["relative_loss_reduction"] = architecture_quality
-    manifest["metrics"]["loss"]["standardized_eval_loss"] = max(
-        0.1, 2.0 - architecture_quality
-    )
-    manifest["metrics"]["loss"][
-        "architecture_normalized_heldout_improvement"
-    ] = training_quality
-    manifest["metrics"]["learning_speed_slope"] = -architecture_quality
-    manifest["metrics"]["final_loss"] = max(0.1, 2.5 - training_quality)
-    manifest["compute"]["gpu_count"] = 1
-    manifest["metrics"]["gpu_count"] = 1
-    return manifest
-
-
 def _fake_manifest_runner(scores: list[tuple[float, float]]):
+    """Simulate the challenge-authored re-execution runner emitting challenge-computed metrics.
+
+    The forced-init runner (container.py) computes the score itself and surfaces it; the bpb
+    scoring recast fills in the v2 manifest metrics. Here the (mocked) broker emits the
+    challenge metrics on stdout so the worker finalizes the architecture/training lifecycle.
+    """
     remaining = iter(scores)
 
     def fake_run(self, spec, timeout_seconds):
-        payload = json.loads((spec.mounts[0].source / "payload.json").read_text())
         architecture_quality, training_quality = next(remaining)
-        manifest = _official_manifest(
-            submission_id=str(payload["submission_id"]),
-            mode=str(payload["execution_mode"]),
-            architecture_quality=architecture_quality,
-            training_quality=training_quality,
+        metrics: dict[str, Any] = {
+            "q_arch": architecture_quality,
+            "q_recipe": training_quality,
+            "penalty": 0.0,
+        }
+        return DockerRunResult(
+            "platform-e2e-job",
+            "PRISM_METRICS_JSON=" + json.dumps(metrics, separators=(",", ":")) + "\n",
+            "",
+            0,
         )
-        artifact_mount = next(mount for mount in spec.mounts if mount.target == "/artifacts")
-        (artifact_mount.source / RUN_MANIFEST_FILENAME).write_text(
-            json.dumps(manifest, separators=(",", ":")),
-            encoding="utf-8",
-        )
-        return DockerRunResult("platform-e2e-job", "", "", 0)
 
     return fake_run
 
