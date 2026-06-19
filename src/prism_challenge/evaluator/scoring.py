@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import math
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from typing import Any, Literal, cast
 
@@ -177,6 +177,44 @@ class PrequentialBpbScore:
 def bpb_to_final_score(bpb: float) -> float:
     """Monotone-decreasing transform of bits-per-byte: lower bpb -> higher (better) final_score."""
     return 1.0 / (1.0 + max(0.0, float(bpb)))
+
+
+# --- Deterministic leaderboard ordering + final tie-break (architecture.md section 5) ------------
+# ``final_score`` already folds the primary prequential bpb and the held-out-delta tie-breaker into
+# one monotone number (lower bpb / larger delta => larger final_score, so ORDER BY final_score DESC
+# ranks better learners first). When two submissions are near-equal on BOTH axes their final_score
+# is (near-)equal; the FINAL deterministic tie-break is EARLIEST-COMMIT-WINS (then submission id) so
+# the leaderboard order is a TOTAL, reproducible order. The tie epsilon stays far below
+# ``HELDOUT_DELTA_TIE_BREAK_WEIGHT`` so a genuine held-out-delta difference still orders ahead of
+# the commit-time tie-break (the delta tie-break is never collapsed).
+LEADERBOARD_TIE_EPSILON = 1e-9
+
+
+@dataclass(frozen=True)
+class LeaderboardRow:
+    """A scored, completed submission competing for a leaderboard rank."""
+
+    submission_id: str
+    hotkey: str
+    final_score: float
+    accepted_at: str
+
+
+def leaderboard_rank_key(row: LeaderboardRow) -> tuple[int, str, str]:
+    """Total, deterministic leaderboard sort key (ascending => better rank first).
+
+    ``final_score`` is quantized onto an epsilon grid so near-equal scores share a bucket; the
+    higher bucket ranks first (``-bucket``), and a same-bucket tie is resolved by earliest commit
+    (``accepted_at`` ascending) then ``submission_id`` ascending.
+    """
+    score = float(row.final_score)
+    bucket = math.floor(score / LEADERBOARD_TIE_EPSILON + 0.5) if math.isfinite(score) else 0
+    return (-bucket, row.accepted_at, row.submission_id)
+
+
+def rank_leaderboard(rows: Iterable[LeaderboardRow]) -> list[LeaderboardRow]:
+    """Order leaderboard rows by bpb/learning with the deterministic earliest-commit tie-break."""
+    return sorted(rows, key=leaderboard_rank_key)
 
 
 def score_prequential_bpb(

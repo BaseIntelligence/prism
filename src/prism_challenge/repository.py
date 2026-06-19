@@ -19,6 +19,7 @@ from .evaluator.schemas import (
     ArchitectureMetadata,
     DeterministicEvidence,
 )
+from .evaluator.scoring import LeaderboardRow, rank_leaderboard
 from .models import (
     EvaluationAssignmentResponse,
     EvaluationAssignmentStatus,
@@ -523,12 +524,25 @@ class PrismRepository:
     async def leaderboard(self, epoch_id: int, limit: int = 50) -> list[dict[str, object]]:
         async with self.database.connect() as conn:
             rows = await conn.execute_fetchall(
-                "SELECT s.hotkey, s.id, sc.final_score FROM scores sc "
+                "SELECT s.hotkey, s.id, s.created_at, sc.final_score FROM scores sc "
                 "JOIN submissions s ON s.id=sc.submission_id "
-                "WHERE s.epoch_id=? AND s.status=? ORDER BY sc.final_score DESC LIMIT ?",
+                "WHERE s.epoch_id=? AND s.status=? "
+                "ORDER BY sc.final_score DESC, s.created_at ASC, s.id ASC LIMIT ?",
                 (epoch_id, SubmissionStatus.COMPLETED.value, limit),
             )
-        return [dict(row) for row in rows]
+        ranked = rank_leaderboard(
+            LeaderboardRow(
+                submission_id=str(row["id"]),
+                hotkey=str(row["hotkey"]),
+                final_score=float(cast(SupportsFloat, row["final_score"])),
+                accepted_at=str(row["created_at"]),
+            )
+            for row in rows
+        )
+        return [
+            {"hotkey": entry.hotkey, "id": entry.submission_id, "final_score": entry.final_score}
+            for entry in ranked
+        ]
 
     async def score_rows(self, epoch_id: int) -> list[dict[str, object]]:
         async with self.database.connect() as conn:
