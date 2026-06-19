@@ -113,7 +113,18 @@ def test_platform_gpu_worker_runs_submission_in_container(tmp_path, monkeypatch)
     assert captured["payload"]["architecture_entrypoint"].endswith("architecture.py")
     assert captured["payload"]["training_entrypoint"].endswith("training.py")
     assert captured["payload"]["context"]["data_dir"] == "/data/fineweb-edu/train"
-    assert captured["timeout_seconds"] == 900
+    # The outer docker/broker cap is the hard timeout, forced strictly above the graceful
+    # wall-clock budget + watchdog grace so the runner can stop gracefully first.
+    assert captured["timeout_seconds"] == settings.platform_eval_hard_timeout_seconds
+    assert captured["payload"]["context"]["budget_seconds"] == settings.platform_eval_budget_seconds
+    assert (
+        captured["payload"]["context"]["watchdog_grace_seconds"]
+        == settings.platform_eval_watchdog_grace_seconds
+    )
+    assert (
+        captured["payload"]["context"]["artifacts_quota_bytes"]
+        == settings.platform_eval_artifacts_quota_bytes
+    )
 
 
 def test_platform_gpu_rejects_sandbox_violations_before_container(tmp_path, monkeypatch):

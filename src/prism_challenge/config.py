@@ -166,7 +166,23 @@ class PrismSettings(ChallengeSettings):
         validation_alias=AliasChoices("PRISM_DOCKER_USER", "CHALLENGE_DOCKER_USER"),
     )
     platform_eval_image: str = "ghcr.io/platformnetwork/prism-evaluator:latest"
-    platform_eval_timeout_seconds: int = 900
+    # Wall-clock budget hardening (architecture.md sections 4.3, 9). The score is
+    # compute-normalized (tokens/FLOPs), so wall-clock is ONLY a safety cap, not part of the
+    # score. Three layers, smallest first:
+    #   1. ``platform_eval_budget_seconds`` (graceful, 10-30 min): the challenge runner stops the
+    #      single-pass loop at this point and scores on the PARTIAL captured stream.
+    #   2. ``platform_eval_budget_seconds + platform_eval_watchdog_grace_seconds`` (hard): a
+    #      runner watchdog thread terminates a loop that hangs OUTSIDE the instrumented iterator
+    #      (so a non-iterating hang is still bounded), landing the run failed with a budget reason.
+    #   3. ``platform_eval_timeout_seconds`` (outer docker/broker cap): the absolute backstop, set
+    #      strictly above budget+grace so the runner gets a chance to stop gracefully first.
+    platform_eval_budget_seconds: int = 1200
+    platform_eval_watchdog_grace_seconds: int = 120
+    # Bound on the only writable path (``ctx.artifacts_dir``): a runner watchdog fails the run if
+    # the artifacts dir grows past this quota so an artifacts disk-fill cannot take down the host
+    # (architecture.md section 9; VAL-HARNESS-026).
+    platform_eval_artifacts_quota_bytes: int = 2_147_483_648
+    platform_eval_timeout_seconds: int = 1800
     platform_eval_cpus: float = 2.0
     platform_eval_memory: str = "8g"
     platform_eval_memory_swap: str | None = "8g"
@@ -214,6 +230,17 @@ class PrismSettings(ChallengeSettings):
         if self.shared_token_file and Path(self.shared_token_file).exists():
             return Path(self.shared_token_file).read_text(encoding="utf-8").strip()
         raise RuntimeError("PRISM_SHARED_TOKEN or PRISM_SHARED_TOKEN_FILE is required")
+
+    @property
+    def platform_eval_hard_timeout_seconds(self) -> int:
+        """Outer docker/broker timeout, forced strictly above the graceful budget + watchdog grace.
+
+        The runner's graceful budget and hard watchdog must both fire BEFORE this absolute backstop
+        so an over-budget loop is stopped gracefully (or failed with a budget reason) rather than
+        bluntly killed by the broker; a slack margin gives the runner time to author its manifest.
+        """
+        floor = self.platform_eval_budget_seconds + self.platform_eval_watchdog_grace_seconds + 60
+        return max(self.platform_eval_timeout_seconds, floor)
 
     @property
     def resolved_database_path(self) -> Path:

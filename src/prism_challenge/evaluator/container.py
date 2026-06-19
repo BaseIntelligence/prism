@@ -30,6 +30,22 @@ DEFAULT_MASTER_PORT = 29500
 # compute the held-out delta on the SECRET val split (kept in sync with the runner script's
 # ``TRAINED_STATE_FILENAME``).
 TRAINED_STATE_ARTIFACT = "trained_state.pt"
+# Markers the in-container runner watchdog prints on stderr so the host can classify a non-zero
+# exit into a precise terminal reason (kept in sync with the runner script).
+BUDGET_EXCEEDED_MARKER = "PRISM_RUNNER_BUDGET_EXCEEDED"
+ARTIFACTS_QUOTA_MARKER = "PRISM_RUNNER_ARTIFACTS_QUOTA"
+# Substrings that indicate a host-RAM / GPU-VRAM / OOM exhaustion of the eval container.
+_OOM_MARKERS = (
+    "out of memory",
+    "cuda out of memory",
+    "cuda error: out of memory",
+    "oomkilled",
+    "killed process",
+    "cannot allocate memory",
+    "std::bad_alloc",
+)
+# SIGKILL-derived exit code (128 + 9): the classic cgroup OOM-kill / hard-cap signal.
+_OOM_EXIT_CODE = 137
 
 
 @dataclass(frozen=True)
@@ -168,7 +184,7 @@ class PrismContainerEvaluator:
                             gpu_count=int(gpu_allocation["actual_gpu_count"]),
                         ),
                     ),
-                    self.settings.platform_eval_timeout_seconds,
+                    self.settings.platform_eval_hard_timeout_seconds,
                 )
             except DockerExecutorError as exc:
                 raise InfrastructureEvaluationError(str(exc)) from exc
@@ -177,28 +193,29 @@ class PrismContainerEvaluator:
                     f"Docker broker returned malformed response: {exc}"
                 ) from exc
             if result.timed_out:
+                # The graceful budget + watchdog should normally fire first; reaching the outer
+                # docker/broker cap means the loop hung past every inner budget. Stop it here.
                 raise ContainerEvaluationError(
-                    "Prism container evaluation timed out",
+                    "Prism container evaluation exceeded the wall-clock safety cap",
                     _container_evidence(
-                        rule_id="prism:resource-timeout",
+                        rule_id="prism:budget-exceeded",
                         artifact_path="container://prism-eval",
                         ast_node="DockerRunSpec.timeout_seconds",
-                        basis=f"{submission_id}:{self.settings.platform_eval_timeout_seconds}",
-                        explanation="container evaluation exceeded the configured timeout limit",
+                        basis=f"{submission_id}:{self.settings.platform_eval_hard_timeout_seconds}",
+                        explanation="container evaluation exceeded the wall-clock budget cap",
                     ),
                 )
             if result.returncode != 0:
                 detail = result.stderr or result.stdout or "container returned non-zero status"
+                rule_id, explanation = _classify_failure(detail, result.returncode)
                 raise ContainerEvaluationError(
                     f"Prism container evaluation failed: {_redact_detail(detail[-2000:])}",
                     _container_evidence(
-                        rule_id="prism:resource-violation",
+                        rule_id=rule_id,
                         artifact_path="container://prism-eval",
                         ast_node="DockerRunResult.returncode",
                         basis=f"{submission_id}:{result.returncode}",
-                        explanation=(
-                            "container evaluation returned a non-zero status under sandbox limits"
-                        ),
+                        explanation=explanation,
                     ),
                 )
             manifest = _read_run_manifest(artifact_output / RUN_MANIFEST_V2_FILENAME)
@@ -299,6 +316,19 @@ class PrismContainerEvaluator:
             else None,
         )
 
+    def reap_job(self, submission_id: str) -> None:
+        """Reap the terminal eval replicated-job/container for ``submission_id`` (best-effort).
+
+        The Swarm backend already removes the replicated-job service in its own ``run`` finally;
+        this is a defense-in-depth sweep (``docker service rm`` via the broker cleanup) so a dead
+        eval service can never accumulate run-over-run even if the broker run path was interrupted
+        (architecture.md sections 4.3, 10; VAL-HARNESS-027). Never raises into the caller.
+        """
+        try:
+            self._executor().cleanup_job(submission_id)
+        except Exception:  # noqa: BLE001 - reaping is best-effort; never fail a terminal run on it
+            pass
+
     def _enforce_artifact_size(self, files: Iterable[SourceFile]) -> None:
         total_bytes = 0
         max_bytes = self.settings.plagiarism_storage_max_bytes
@@ -358,6 +388,9 @@ class PrismContainerEvaluator:
                 "reference_tokenizer_dir": self.settings.platform_eval_reference_tokenizer_dir,
                 "token_budget": self.ctx.token_budget,
                 "step_budget": self.ctx.step_budget,
+                "budget_seconds": self.settings.platform_eval_budget_seconds,
+                "watchdog_grace_seconds": self.settings.platform_eval_watchdog_grace_seconds,
+                "artifacts_quota_bytes": self.settings.platform_eval_artifacts_quota_bytes,
                 "rank": 0,
                 "local_rank": 0,
                 "world_size": world_size,
@@ -592,6 +625,35 @@ def _container_evidence(
     )
 
 
+def _classify_failure(detail: str, returncode: int) -> tuple[str, str]:
+    """Map a non-zero eval exit into a precise (rule_id, explanation) terminal reason.
+
+    Distinguishes the budget watchdog, the artifacts-quota watchdog, and resource/OOM exhaustion
+    (host RAM / GPU VRAM) from a generic miner runtime/import crash, so the submission lands failed
+    with an accurate reason (architecture.md sections 4.3, 9).
+    """
+    haystack = detail.lower()
+    if BUDGET_EXCEEDED_MARKER.lower() in haystack:
+        return (
+            "prism:budget-exceeded",
+            "training loop exceeded the wall-clock budget safety cap",
+        )
+    if ARTIFACTS_QUOTA_MARKER.lower() in haystack:
+        return (
+            "prism:artifacts-quota",
+            "artifacts_dir write exceeded the configured disk quota",
+        )
+    if returncode == _OOM_EXIT_CODE or any(marker in haystack for marker in _OOM_MARKERS):
+        return (
+            "prism:resource-oom",
+            "container evaluation exhausted host RAM / GPU VRAM (OOM) under resource caps",
+        )
+    return (
+        "prism:runtime-error",
+        "miner training loop raised at runtime (uncaught exception / import / device error)",
+    )
+
+
 def _redact_detail(detail: str) -> str:
     redacted_lines = []
     sensitive_markers = ("api_key", "authorization", "bearer", "password", "secret", "token")
@@ -619,6 +681,8 @@ import math
 import os
 import random
 import sys
+import threading
+import time
 import types
 from pathlib import Path
 
@@ -635,6 +699,13 @@ STEP0_ANOMALY_FRACTION = 0.5
 # never collapse into a finite, advantageous score.
 WORST_CASE_LOSS_MULTIPLIER = 2.0
 DEFAULT_BATCH_SIZE = 8
+# Watchdog stderr markers the HOST classifies a non-zero exit by (kept in sync with container.py).
+BUDGET_EXCEEDED_MARKER = "PRISM_RUNNER_BUDGET_EXCEEDED"
+ARTIFACTS_QUOTA_MARKER = "PRISM_RUNNER_ARTIFACTS_QUOTA"
+WATCHDOG_POLL_SECONDS = 0.5
+# Distinct non-zero exit codes for the two watchdog terminations (host reads the marker too).
+BUDGET_EXIT_CODE = 7
+ARTIFACTS_QUOTA_EXIT_CODE = 8
 
 
 def _fail(reason):
@@ -761,6 +832,7 @@ class _OnlineLossCapture:
         step_budget,
         tokenizer,
         device,
+        budget_seconds=None,
     ):
         self.shards = list(shards)
         self.vocab_size = max(int(vocab_size), 2)
@@ -769,6 +841,10 @@ class _OnlineLossCapture:
         self.baseline_nats = baseline_nats
         self.token_budget = token_budget
         self.step_budget = step_budget
+        # Graceful wall-clock budget: the loop stops here and the run is scored on the PARTIAL
+        # captured stream (the compute-normalized bpb score never depends on wall-clock; this is a
+        # safety cap only, architecture.md 4.3, 9).
+        self.budget_seconds = budget_seconds
         self.tokenizer = tokenizer
         self.device = device
         self.worst_case_nats = baseline_nats * WORST_CASE_LOSS_MULTIPLIER
@@ -783,6 +859,10 @@ class _OnlineLossCapture:
         self.nan_inf_batches = 0
         self.sum_nll_nats = 0.0
         self.started = False
+        self.start_time = None
+        # Which budget bound the single-pass run: token_budget | step_budget | wall_clock |
+        # data_exhausted (architecture.md 4.3; VAL-HARNESS-025). ``None`` until the loop ends.
+        self.stopped_reason = None
         # Handle to the model the miner trained on the instrumented batches; the challenge persists
         # its weights so the HOST scorer can compute the held-out delta on the SECRET val split
         # (never mounted into this network=none container). See architecture.md sections 5, 6.
@@ -882,27 +962,50 @@ class _OnlineLossCapture:
         self.consumed_batches += 1
         return _PrismBatch(tokens=tokens)
 
+    def _budget_reason(self):
+        # First-reached budget among token, step, and wall-clock caps. Checked at every token and
+        # batch boundary so the single-pass run terminates at whichever budget binds first; the
+        # check order is the deterministic tie-break when several bind at the same checkpoint.
+        if self.token_budget is not None and self.consumed_tokens >= self.token_budget:
+            return "token_budget"
+        if self.step_budget is not None and self.consumed_batches >= self.step_budget:
+            return "step_budget"
+        if (
+            self.budget_seconds is not None
+            and self.start_time is not None
+            and (time.monotonic() - self.start_time) >= self.budget_seconds
+        ):
+            return "wall_clock"
+        return None
+
     def iterate(self, model):
         if self.started:
             return
         self.started = True
         self.model = model
+        self.start_time = time.monotonic()
         needed = self.seq_len * self.batch_size
         buffer = []
         for token_id, weight in self._token_stream():
-            if self.token_budget is not None and self.consumed_tokens >= self.token_budget:
-                break
+            reason = self._budget_reason()
+            if reason is not None:
+                self.stopped_reason = reason
+                return
             buffer.append((token_id, weight))
             self.consumed_tokens += 1
             if len(buffer) >= needed:
                 yield self._emit(model, buffer[:needed])
                 buffer = buffer[needed:]
-                if self.step_budget is not None and self.consumed_batches >= self.step_budget:
+                reason = self._budget_reason()
+                if reason is not None:
+                    self.stopped_reason = reason
                     return
-        if len(buffer) >= 2 and (
-            self.step_budget is None or self.consumed_batches < self.step_budget
-        ):
+        # The single-pass shards were exhausted before any budget bound: emit the trailing partial
+        # (challenge-controlled, no wraparound/repeat) and record graceful data exhaustion.
+        if len(buffer) >= 2 and self._budget_reason() is None:
             yield self._emit(model, buffer)
+        if self.stopped_reason is None:
+            self.stopped_reason = "data_exhausted"
 
 
 # --- challenge-owned interface module: the miner sees the FORCED ctx, not the installed one ---
@@ -921,6 +1024,7 @@ class PrismContext:
     reference_tokenizer_dir: str | None = None
     token_budget: int | None = None
     step_budget: int | None = None
+    budget_seconds: float | None = None
     rank: int = 0
     local_rank: int = 0
     world_size: int = 1
@@ -961,6 +1065,7 @@ class PrismContext:
                 step_budget=self.step_budget,
                 tokenizer=tokenizer,
                 device=self.device,
+                budget_seconds=self.budget_seconds,
             )
             interface._ONLINE_CAPTURE = capture
         return capture.iterate(model)
@@ -1053,6 +1158,7 @@ ctx = PrismContext(
     or os.environ.get("PRISM_REFERENCE_TOKENIZER_DIR"),
     token_budget=context_data.get("token_budget"),
     step_budget=context_data.get("step_budget"),
+    budget_seconds=context_data.get("budget_seconds"),
     rank=rank,
     local_rank=local_rank,
     world_size=world_size,
@@ -1060,14 +1166,117 @@ ctx = PrismContext(
     device=str(device),
 )
 
+_WATCHDOG_STOP = threading.Event()
+
+
+def _artifacts_dir_bytes(root):
+    total = 0
+    try:
+        for path in Path(root).rglob("*"):
+            try:
+                if path.is_file():
+                    total += path.stat().st_size
+            except OSError:
+                continue
+    except OSError:
+        return total
+    return total
+
+
+def _write_watchdog_manifest(reason):
+    # Minimal challenge-authored manifest recording WHY the run was force-stopped. The run exits
+    # non-zero so this is never scored; it is on-disk evidence for manifest-inspect.
+    manifest = {
+        "schema_version": "prism_run_manifest.v2",
+        "submission_id": str(payload.get("submission_id", "container")),
+        "run_id": "prism-reexec-" + str(payload.get("submission_id", "container")),
+        "mode": str(payload.get("execution_mode", "gpu_proxy_eval")),
+        "run": {
+            "seed": forced_seed,
+            "forced_init": True,
+            "world_size": world_size,
+            "rank": rank,
+            "local_rank": local_rank,
+            "device": str(device),
+            "stopped_reason": reason,
+        },
+        "data": {
+            "data_dir": str(data_dir),
+            "source": "locked-fineweb-edu-train",
+            "random_token_fallback": False,
+            "single_pass": True,
+            "stopped_reason": reason,
+        },
+        "metrics": {"online_loss": [], "covered_bytes": 0},
+        "anti_cheat": {
+            "budget_exceeded": reason == "wall_clock",
+            "artifacts_quota_exceeded": reason == "artifacts_quota",
+        },
+        "score": {"final_score": None, "primary_metric": "prequential_bpb"},
+        "miner_reported_ignored": True,
+    }
+    try:
+        (Path(artifacts_dir) / CHALLENGE_MANIFEST_NAME).write_text(
+            json.dumps(manifest, sort_keys=True, indent=2), encoding="utf-8"
+        )
+    except OSError:
+        pass
+
+
+def _safety_watchdog(hard_budget_seconds, quota_bytes):
+    start = time.monotonic()
+    while not _WATCHDOG_STOP.wait(WATCHDOG_POLL_SECONDS):
+        if (
+            hard_budget_seconds is not None
+            and (time.monotonic() - start) >= hard_budget_seconds
+        ):
+            if rank == 0:
+                _write_watchdog_manifest("wall_clock")
+            sys.stderr.write(
+                BUDGET_EXCEEDED_MARKER + ": training loop exceeded the wall-clock budget safety "
+                + "cap (" + str(hard_budget_seconds) + "s)\n"
+            )
+            sys.stderr.flush()
+            os._exit(BUDGET_EXIT_CODE)
+        if quota_bytes is not None and _artifacts_dir_bytes(artifacts_dir) > quota_bytes:
+            if rank == 0:
+                _write_watchdog_manifest("artifacts_quota")
+            sys.stderr.write(
+                ARTIFACTS_QUOTA_MARKER + ": artifacts_dir exceeded the disk quota ("
+                + str(quota_bytes) + " bytes)\n"
+            )
+            sys.stderr.flush()
+            os._exit(ARTIFACTS_QUOTA_EXIT_CODE)
+
+
+def _start_safety_watchdog():
+    budget_seconds = context_data.get("budget_seconds")
+    grace = context_data.get("watchdog_grace_seconds")
+    quota_bytes = context_data.get("artifacts_quota_bytes")
+    hard_budget = None
+    if budget_seconds is not None:
+        hard_budget = float(budget_seconds) + float(grace if grace is not None else 0.0)
+    if hard_budget is None and quota_bytes is None:
+        return
+    threading.Thread(
+        target=_safety_watchdog, args=(hard_budget, quota_bytes), daemon=True
+    ).start()
+
+
 # Re-apply the forced init immediately before handing control to the miner loop.
 _force_init(forced_seed)
+# Start the safety watchdog (hard wall-clock budget + artifacts_dir disk quota) BEFORE handing
+# control to the miner. The graceful in-loop budget stops a well-behaved iterating loop and scores
+# the partial stream; the watchdog bounds a loop that hangs OUTSIDE the instrumented iterator or
+# fills the only writable path, so neither can take down the host (architecture.md 4.3, 9).
+_start_safety_watchdog()
 print(
     "PRISM_RUNNER: imported architecture (" + str(arch_entry) + ") + training ("
     + str(train_entry) + "); calling train(ctx)",
     flush=True,
 )
 miner_train(ctx)
+_WATCHDOG_STOP.set()
 print("PRISM_RUNNER: train(ctx) returned", flush=True)
 
 # --- summarize the challenge-captured online-loss stream (NOT miner-reported numbers) ---
@@ -1081,6 +1290,9 @@ predicted_tokens = capture.predicted_tokens if capture is not None else 0
 nan_inf_batches = capture.nan_inf_batches if capture is not None else 0
 consumed_documents = capture.consumed_documents if capture is not None else 0
 shard_offsets = capture.shard_offsets if capture is not None else []
+# Which budget bound the single-pass run (token_budget | step_budget | wall_clock |
+# data_exhausted); ``None`` only when the miner never iterated the instrument (zero-forward).
+stopped_reason = capture.stopped_reason if capture is not None else None
 baseline_nats = (
     capture.baseline_nats if capture is not None else math.log(max(ctx.vocab_size, 2))
 )
@@ -1135,6 +1347,7 @@ def _write_challenge_manifest():
             "device": str(device),
             "master_addr": os.environ.get("MASTER_ADDR"),
             "nproc_per_node": world_size,
+            "stopped_reason": stopped_reason,
         },
         "data": {
             "data_dir": str(data_dir),
@@ -1149,6 +1362,7 @@ def _write_challenge_manifest():
             "consumed_batches": consumed_batches,
             "consumed_offsets": len(shard_offsets),
             "distinct_offsets": distinct_offsets,
+            "stopped_reason": stopped_reason,
         },
         "metrics": {
             "online_loss": online_loss,

@@ -456,6 +456,9 @@ class PrismWorker:
             return submission_id
         finally:
             await scheduler.release_for_submission(submission_id, "container job finished")
+            # Reap the terminal eval replicated-job/container so dead Swarm services cannot
+            # accumulate run-over-run (architecture.md 4.3, 10; VAL-HARNESS-027). Best-effort.
+            await asyncio.to_thread(evaluator.reap_job, submission_id)
 
     def _inspect_project_snapshot(
         self, snapshot: source_similarity.SourceSnapshot, primary_code: str

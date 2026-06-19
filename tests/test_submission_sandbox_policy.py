@@ -120,12 +120,16 @@ def test_timeout_resource_violation_has_deterministic_evidence(monkeypatch) -> N
             docker_backend="broker",
             docker_broker_url="http://broker",
             docker_broker_token="token",
+            platform_eval_budget_seconds=2,
+            platform_eval_watchdog_grace_seconds=1,
             platform_eval_timeout_seconds=7,
         ),
         ctx=PrismContext(sequence_length=16),
     )
 
-    with pytest.raises(ContainerEvaluationError, match="timed out") as raised:
+    # The outer docker/broker cap firing means the loop hung past every inner budget; it lands as
+    # the wall-clock budget safety cap being exceeded (architecture.md 4.3, 9).
+    with pytest.raises(ContainerEvaluationError, match="safety cap") as raised:
         evaluator.evaluate(
             submission_id="sub-timeout",
             code="def build_model(ctx): pass\ndef get_recipe(ctx): return {}",
@@ -135,6 +139,6 @@ def test_timeout_resource_violation_has_deterministic_evidence(monkeypatch) -> N
         )
 
     evidence = raised.value.evidence[0]
-    assert evidence.rule_id == "prism:resource-timeout"
+    assert evidence.rule_id == "prism:budget-exceeded"
     assert evidence.artifact_path == "container://prism-eval"
     assert evidence.ast_node == "DockerRunSpec.timeout_seconds"
