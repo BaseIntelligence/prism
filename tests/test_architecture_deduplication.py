@@ -85,7 +85,9 @@ def _zip_payload(model_code: str, *, suffix: str = "") -> str:
             "src/train.py",
             "from prism_challenge.evaluator.interface import TrainingRecipe\n\n"
             "def recipe(ctx):\n"
-            "    return TrainingRecipe(learning_rate=0.0003, batch_size=2)\n",
+            "    return TrainingRecipe(learning_rate=0.0003, batch_size=2)\n\n"
+            "def train(ctx):\n"
+            "    return None\n",
         )
     return base64.b64encode(stream.getvalue()).decode("ascii")
 

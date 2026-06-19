@@ -753,6 +753,7 @@ class PrismWorker:
         )
         report = inspect_code(
             primary_code,
+            require_contract=False,
             allowed_import_roots=local_imports,
             artifact_path=primary_file.path if primary_file else "model.py",
         )

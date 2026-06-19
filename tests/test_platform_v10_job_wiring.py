@@ -4,7 +4,7 @@ import json
 import sqlite3
 from pathlib import Path
 
-from conftest import signed_headers
+from conftest import signed_headers, two_script_bundle
 from fastapi.testclient import TestClient
 from test_artifact_manifest import _valid_manifest
 
@@ -36,7 +36,11 @@ def load_checkpoint(model, checkpoint_dir, ctx):
 
 def _submit(client: TestClient, code: str, nonce: str, metadata: dict | None = None) -> str:
     body = json.dumps(
-        {"code": code, "filename": "model.py", "metadata": metadata or {}},
+        {
+            "code": two_script_bundle(arch_code=code),
+            "filename": "project.zip",
+            "metadata": metadata or {},
+        },
         separators=(",", ":"),
     ).encode()
     response = client.post(

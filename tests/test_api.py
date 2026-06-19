@@ -6,7 +6,7 @@ import json
 import zipfile
 
 import pytest
-from conftest import VALID_CODE, signed_headers
+from conftest import VALID_CODE, signed_headers, two_script_bundle
 from fastapi.testclient import TestClient
 
 from prism_challenge.app import create_app
@@ -73,7 +73,7 @@ def test_submit_status_process_and_leaderboard(client, monkeypatch):
         )
 
     monkeypatch.setattr("prism_challenge.evaluator.container.DockerExecutor.run", fake_run)
-    payload = {"code": VALID_CODE, "filename": "model.py"}
+    payload = {"code": two_script_bundle(arch_code=VALID_CODE), "filename": "project.zip"}
     body = json.dumps(payload, separators=(",", ":")).encode()
     response = client.post(
         "/v1/submissions",

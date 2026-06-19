@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import json
 
-from conftest import VALID_CODE, signed_headers
+from conftest import signed_headers, two_script_bundle
 from fastapi.testclient import TestClient
 
 from prism_challenge.app import create_app
 from prism_challenge.config import PrismSettings
 from prism_challenge.evaluator import llm_review
+
+VALID_BUNDLE = two_script_bundle()
 
 
 def _client(tmp_path, **overrides):
@@ -22,8 +24,8 @@ def _client(tmp_path, **overrides):
     return TestClient(create_app(settings))
 
 
-def _submit(client: TestClient, code: str = VALID_CODE, nonce: str = "assign") -> str:
-    body = json.dumps({"code": code, "filename": "model.py"}, separators=(",", ":")).encode()
+def _submit(client: TestClient, code: str = VALID_BUNDLE, nonce: str = "assign") -> str:
+    body = json.dumps({"code": code, "filename": "project.zip"}, separators=(",", ":")).encode()
     response = client.post(
         "/v1/submissions",
         content=body,
@@ -46,7 +48,7 @@ def test_master_assigns_validator_and_saves_result(tmp_path):
 
         assert assignment["submission_id"] == submission_id
         assert assignment["validator_hotkey"] == "val-a"
-        assert assignment["code"] == VALID_CODE
+        assert assignment["code"] == VALID_BUNDLE
         assert assignment["attempt"] == 1
 
         accepted = client.post(

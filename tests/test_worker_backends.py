@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 
-from conftest import signed_headers
+from conftest import signed_headers, two_script_bundle
 from fastapi.testclient import TestClient
 
 from prism_challenge.app import create_app
@@ -19,7 +19,7 @@ def get_recipe(ctx):
 
 
 def _submit(client: TestClient, code: str, nonce: str = "remote1") -> str:
-    payload = {"code": code, "filename": "model.py"}
+    payload = {"code": two_script_bundle(arch_code=code), "filename": "project.zip"}
     body = json.dumps(payload, separators=(",", ":")).encode()
     response = client.post(
         "/v1/submissions",

@@ -85,6 +85,9 @@ def _zip_payload(
             "def recipe(ctx):",
             f"    return TrainingRecipe(learning_rate={learning_rate!r}, batch_size=2)",
             "",
+            "def train(ctx):",
+            "    return None",
+            "",
         ]
     )
     stream = io.BytesIO()

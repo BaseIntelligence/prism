@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import base64
 import hmac
+import io
 import time
+import zipfile
 from hashlib import sha256
 from pathlib import Path
 
@@ -31,6 +34,37 @@ def build_model(ctx):
 def get_recipe(ctx):
     return TrainingRecipe(learning_rate=0.0003, batch_size=4)
 """
+
+VALID_ARCH_CODE = VALID_CODE
+
+VALID_TRAIN_CODE = """
+from architecture import build_model
+
+def train(ctx):
+    build_model(ctx)
+    return None
+"""
+
+
+def two_script_bundle(
+    *,
+    arch_code: str = VALID_ARCH_CODE,
+    train_code: str = VALID_TRAIN_CODE,
+    prism_yaml: str | None = None,
+    arch_name: str = "architecture.py",
+    train_name: str = "training.py",
+    extra_files: dict[str, str] | None = None,
+) -> str:
+    """Build a base64-encoded two-script submission bundle (architecture + training)."""
+    stream = io.BytesIO()
+    with zipfile.ZipFile(stream, "w") as archive:
+        if prism_yaml is not None:
+            archive.writestr("prism.yaml", prism_yaml)
+        archive.writestr(arch_name, arch_code)
+        archive.writestr(train_name, train_code)
+        for name, content in (extra_files or {}).items():
+            archive.writestr(name, content)
+    return base64.b64encode(stream.getvalue()).decode("ascii")
 
 
 def signed_headers(

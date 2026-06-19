@@ -4,7 +4,7 @@ import json
 import sqlite3
 from pathlib import Path
 
-from conftest import VALID_CODE, signed_headers
+from conftest import VALID_CODE, signed_headers, two_script_bundle
 from fastapi.testclient import TestClient
 
 from prism_challenge.app import create_app
@@ -27,8 +27,8 @@ def _settings(tmp_path: Path) -> PrismSettings:
 
 def _submit_smoke(client: TestClient, *, nonce: str) -> str:
     payload = {
-        "code": VALID_CODE,
-        "filename": "model.py",
+        "code": two_script_bundle(arch_code=VALID_CODE),
+        "filename": "project.zip",
         "metadata": {"execution_mode": "local_cpu_smoke"},
     }
     body = json.dumps(payload).encode()

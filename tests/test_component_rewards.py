@@ -49,6 +49,9 @@ from prism_challenge.evaluator.interface import TrainingRecipe
 
 def recipe(ctx):
     return TrainingRecipe(learning_rate={learning_rate!r}, batch_size=2)
+
+def train(ctx):
+    return None
 """
     stream = io.BytesIO()
     with zipfile.ZipFile(stream, "w") as archive:

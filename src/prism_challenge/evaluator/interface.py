@@ -4,6 +4,21 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
 
+# Two-script submission contract (architecture.md section 2). A v2 bundle MUST contain TWO
+# distinct scripts: an architecture module exposing a `build_model(ctx)` factory and a training
+# module exposing a `train(ctx)` entrypoint. The legacy single-module re-export idiom (both hooks
+# in one combined module) no longer satisfies the contract.
+DEFAULT_ARCHITECTURE_ENTRYPOINT = "architecture.py"
+DEFAULT_TRAINING_ENTRYPOINT = "training.py"
+ARCHITECTURE_FACTORY_NAME = "build_model"
+TRAINING_ENTRYPOINT_NAME = "train"
+
+REFERENCE_TOKENIZERS = ("gpt2", "llama")
+
+
+class SubmissionContractError(ValueError):
+    """Raised when a submission bundle violates the two-script submission contract."""
+
 
 @dataclass(frozen=True)
 class PrismContext:
@@ -23,6 +38,40 @@ class PrismContext:
     distributed_backend: str | None = None
     device: str = "cpu"
     checkpoint_metadata: dict[str, object] = field(default_factory=dict)
+    # v2 two-script contract fields (architecture.md section 2). The challenge owns the data and
+    # forces the seed/init; the miner's train(ctx) loop reads only the read-only locked train
+    # split at ``data_dir`` and writes only under ``artifacts_dir``.
+    data_dir: str | None = None
+    artifacts_dir: str | None = None
+    token_budget: int | None = None
+    step_budget: int | None = None
+    reference_tokenizer_dir: str | None = None
+
+    @property
+    def max_seq_len(self) -> int:
+        return self.sequence_length
+
+    @property
+    def max_params(self) -> int:
+        return self.max_parameters
+
+    def reference_tokenizer(self, name: str) -> Any:
+        """Load a pre-staged reference tokenizer (offline, no network).
+
+        The reference tokenizers (gpt2 via tiktoken cache, llama via a sentencepiece ``.model``)
+        are staged on the read-only data volume by the data plane. This resolves the staged path
+        and loads it lazily; it never reaches the network.
+        """
+        key = name.lower()
+        if key not in REFERENCE_TOKENIZERS:
+            raise ValueError(
+                f"unknown reference tokenizer {name!r}; expected one of {REFERENCE_TOKENIZERS}"
+            )
+        if not self.reference_tokenizer_dir:
+            raise RuntimeError(
+                f"reference tokenizer {name!r} is not staged (reference_tokenizer_dir unset)"
+            )
+        return _load_reference_tokenizer(key, Path(self.reference_tokenizer_dir))
 
 
 @dataclass(frozen=True)
@@ -72,3 +121,23 @@ def import_torch() -> Any:
         return torch
     except Exception as exc:
         raise RuntimeError("PyTorch is required for Prism evaluation") from exc
+
+
+def _load_reference_tokenizer(name: str, root: Path) -> Any:
+    if name == "gpt2":
+        import os
+
+        cache_dir = root / "gpt2"
+        if cache_dir.exists():
+            os.environ.setdefault("TIKTOKEN_CACHE_DIR", str(cache_dir))
+        import tiktoken
+
+        return tiktoken.get_encoding("gpt2")
+    model_path = root / "llama" / "tokenizer.model"
+    if not model_path.exists():
+        raise RuntimeError(f"reference tokenizer 'llama' missing at {model_path}")
+    import sentencepiece  # type: ignore[import-untyped]
+
+    processor = sentencepiece.SentencePieceProcessor()
+    processor.Load(str(model_path))
+    return processor
