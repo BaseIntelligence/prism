@@ -26,6 +26,7 @@ from .sandbox import SandboxViolation, _synthetic_evidence
 RETURN_TYPE_RULE = "prism:build-model-return-type"
 INSTANTIATION_RULE = "prism:build-model-instantiation"
 RESOURCE_RULE = "prism:build-model-resource"
+PARAM_CAP_RULE = "prism:param-cap"
 
 DEFAULT_TIMEOUT_SECONDS = 30.0
 DEFAULT_MEMORY_HEADROOM_BYTES = 8 * 1024**3
@@ -67,13 +68,18 @@ def check_build_model_static(
     build_model_symbol: str = "build_model",
     timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS,
     memory_headroom_bytes: int = DEFAULT_MEMORY_HEADROOM_BYTES,
+    max_parameters: int | None = None,
 ) -> int:
     """Instantiate ``build_model`` under the forced seed in a bounded child process.
 
     Returns the model's parameter count on success. Raises :class:`SandboxViolation` when the
-    factory returns a non-``nn.Module``, raises during construction, or exceeds the time/resource
-    budget. The whole check happens before any GPU lease/job is created.
+    factory returns a non-``nn.Module``, raises during construction, exceeds the time/resource
+    budget, or yields more than the parameter cap. The cap defaults to ``ctx.max_parameters``
+    (150M) and may be overridden via ``max_parameters``; it is architecture-agnostic because it
+    counts the actual instantiated tensors regardless of the model family. The whole check happens
+    before any GPU lease/job is created.
     """
+    cap = ctx.max_parameters if max_parameters is None else max_parameters
     parent_conn, child_conn = _MP_CONTEXT.Pipe(duplex=False)
     proc = _MP_CONTEXT.Process(
         target=_child_instantiate,
@@ -115,7 +121,17 @@ def check_build_model_static(
 
     kind, detail = result
     if kind == "ok":
-        return int(detail)  # type: ignore[call-overload]
+        param_count = int(detail)  # type: ignore[call-overload]
+        if cap is not None and param_count > cap:
+            raise SandboxViolation(
+                f"model has {param_count:,} parameters, exceeding the {cap:,} parameter cap",
+                _evidence(
+                    PARAM_CAP_RULE,
+                    entrypoint,
+                    f"build_model instantiated {param_count} parameters over the {cap} cap",
+                ),
+            )
+        return param_count
     if kind == "not_module":
         raise SandboxViolation(
             f"build_model must return a torch.nn.Module, got {detail}",
