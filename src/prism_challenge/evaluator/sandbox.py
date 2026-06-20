@@ -166,6 +166,9 @@ def inspect_code(
     tree = ast.parse(code)
     imports: set[str] = set()
     fingerprint: set[str] = set()
+    # A torch.load/save path is trusted only when anchored at a harness-provided dir whose name was
+    # NOT rebound by the submission; a shadowed trusted name no longer refers to the harness dir.
+    trusted_path_roots = TRUSTED_PATH_ROOTS - _shadowed_trusted_roots(tree)
     for node in ast.walk(tree):
         fingerprint.add(type(node).__name__)
         if isinstance(node, ast.ClassDef):
@@ -193,7 +196,9 @@ def inspect_code(
             _check_builtin_indirection(node, code, artifact_path=artifact_path)
             fingerprint.add(f"call:{node.func.id}")
         elif isinstance(node, ast.Call):
-            _check_dotted_call(node, code, artifact_path=artifact_path)
+            _check_dotted_call(
+                node, code, artifact_path=artifact_path, trusted_roots=trusted_path_roots
+            )
             fingerprint.add(f"call:{_node_name(node.func)}")
         if isinstance(node, ast.Attribute):
             _check_attribute(node, code, artifact_path=artifact_path)
@@ -283,7 +288,9 @@ def _check_attribute(node: ast.Attribute, code: str, *, artifact_path: str) -> N
             )
 
 
-def _check_dotted_call(node: ast.Call, code: str, *, artifact_path: str) -> None:
+def _check_dotted_call(
+    node: ast.Call, code: str, *, artifact_path: str, trusted_roots: set[str]
+) -> None:
     dotted = _node_name(node.func)
     if "." not in dotted:
         return
@@ -328,7 +335,9 @@ def _check_dotted_call(node: ast.Call, code: str, *, artifact_path: str) -> None
             message=f"forbidden deserialization: {dotted}",
             explanation=f"{dotted} deserializes untrusted data",
         )
-    if dotted == "torch.load" and not _call_path_is_trusted(node, index=0):
+    if dotted == "torch.load" and not _call_path_is_trusted(
+        node, index=0, trusted_roots=trusted_roots
+    ):
         raise _sandbox_call_violation(
             code,
             node,
@@ -337,7 +346,9 @@ def _check_dotted_call(node: ast.Call, code: str, *, artifact_path: str) -> None
             message="forbidden deserialization: torch.load of an external/untrusted path",
             explanation="torch.load may only read from the harness checkpoint/artifacts path",
         )
-    if dotted == "torch.save" and not _call_path_is_trusted(node, index=1):
+    if dotted == "torch.save" and not _call_path_is_trusted(
+        node, index=1, trusted_roots=trusted_roots
+    ):
         raise _sandbox_call_violation(
             code,
             node,
@@ -413,19 +424,54 @@ def _sandbox_call_violation(
     )
 
 
-def _call_path_is_trusted(node: ast.Call, *, index: int) -> bool:
+def _call_path_is_trusted(node: ast.Call, *, index: int, trusted_roots: set[str]) -> bool:
     if len(node.args) <= index:
         return False
-    return _path_is_trusted(node.args[index])
+    return _path_is_trusted(node.args[index], trusted_roots)
 
 
-def _path_is_trusted(node: ast.AST) -> bool:
-    for sub in ast.walk(node):
-        if isinstance(sub, ast.Name) and sub.id in TRUSTED_PATH_ROOTS:
-            return True
-        if isinstance(sub, ast.Attribute) and sub.attr in TRUSTED_PATH_ROOTS:
-            return True
-    return False
+def _shadowed_trusted_roots(tree: ast.AST) -> set[str]:
+    """Trusted-path roots that the submission rebinds (shadows) anywhere in the code unit.
+
+    The name-only trusted check would otherwise trust ``torch.load(artifacts_dir)`` even after
+    ``artifacts_dir = "/some/external/path"`` (or ``ctx.artifacts_dir = ...``). Any assignment-style
+    bind of a trusted root (``Store`` context on a matching ``Name``/``Attribute``) means that name
+    no longer reliably refers to the harness dir, so it must stop being treated as trusted.
+    """
+    shadowed: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store):
+            if node.id in TRUSTED_PATH_ROOTS:
+                shadowed.add(node.id)
+        elif isinstance(node, ast.Attribute) and isinstance(node.ctx, ast.Store):
+            if node.attr in TRUSTED_PATH_ROOTS:
+                shadowed.add(node.attr)
+    return shadowed
+
+
+def _path_is_trusted(node: ast.AST, trusted_roots: set[str]) -> bool:
+    """A torch.load/save path is trusted only when ANCHORED at a non-shadowed trusted root.
+
+    The path expression must START at a harness-provided trusted dir (a ``Name``/``Attribute`` whose
+    name is a non-shadowed trusted root), following ``a / "x"`` / ``a + "/x"`` / ``a[...]`` path
+    builders down to their leftmost base. A path that merely MENTIONS a trusted name inside an
+    unrelated sub-expression (e.g. ``"/etc/passwd" + str(len(artifacts_dir))``) or that anchors at a
+    constant/other variable is NOT trusted, so a variable-built or shadowed path cannot launder an
+    external load/save past the gate.
+    """
+    current = node
+    while True:
+        if isinstance(current, ast.Name):
+            return current.id in trusted_roots
+        if isinstance(current, ast.Attribute):
+            return current.attr in trusted_roots
+        if isinstance(current, ast.BinOp):
+            current = current.left
+            continue
+        if isinstance(current, ast.Subscript):
+            current = current.value
+            continue
+        return False
 
 
 def _references_builtins(node: ast.AST) -> bool:

@@ -284,12 +284,25 @@ def verify_locked_manifest(
 ) -> list[str]:
     """Recompute on-disk sha256s and return a list of integrity problems (empty == OK).
 
-    Detects: listed-but-missing shards, sha256/byte mismatches (tampering), unlisted
-    on-disk shards, and split-fingerprint drift.
+    Detects: a tampered dataset pin SHA, a tampered partition spec (boundaries/hash/modulus),
+    listed-but-missing shards, sha256/byte mismatches (tampering), unlisted on-disk shards, and
+    split-fingerprint drift. The pin/partition checks refuse an altered pin/partition even when the
+    shards are left byte-identical (architecture.md sections 3, 6, 12).
     """
     base = Path(root)
     names = splits if splits is not None else LOCKED_SPLITS
     problems: list[str] = []
+    actual_pin = manifest.dataset.get("pin_sha")
+    if actual_pin != FINEWEB_EDU_PIN_SHA:
+        problems.append(
+            f"dataset pin_sha mismatch: manifest {actual_pin!r} != expected {FINEWEB_EDU_PIN_SHA!r}"
+        )
+    expected_partition = partition_spec()
+    if manifest.partition != expected_partition:
+        problems.append(
+            f"partition spec mismatch: manifest {manifest.partition!r} "
+            f"!= canonical {expected_partition!r}"
+        )
     for name in names:
         split = manifest.splits.get(name)
         if split is None:
