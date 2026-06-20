@@ -124,7 +124,7 @@ def test_review_rejected_transition_emits_log_record(tmp_path, caplog):
     payload = {
         "code": INVALID_CODE,
         "filename": "model.py",
-        "metadata": {"execution_mode": "local_cpu_smoke"},
+        "metadata": {"execution_mode": "gpu_proxy_eval"},
     }
     body = json.dumps(payload).encode()
     headers = {

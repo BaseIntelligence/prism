@@ -15,12 +15,11 @@ async def run_worker(settings: PrismSettings, *, interval_seconds: float) -> Non
     await app.state.database.init()
     try:
         while True:
-            completed = await app.state.worker.poll_remote_jobs()
             submission_id = await app.state.worker.process_next()
-            if submission_id or completed:
+            if submission_id:
                 logger.info(
                     "worker iteration completed",
-                    extra={"submission_id": submission_id, "completed": completed},
+                    extra={"submission_id": submission_id},
                 )
             await asyncio.sleep(interval_seconds)
     finally:

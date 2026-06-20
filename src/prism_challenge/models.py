@@ -34,16 +34,6 @@ class JobStatus(StrEnum):
     FAILED = "failed"
 
 
-class EvaluationAssignmentStatus(StrEnum):
-    ASSIGNED = "assigned"
-    ACCEPTED = "accepted"
-    RUNNING = "running"
-    COMPLETED = "completed"
-    FAILED = "failed"
-    REJECTED = "rejected"
-    EXPIRED = "expired"
-
-
 class SubmissionCreate(BaseModel):
     code: str = Field(min_length=1)
     filename: str = Field(default="model.py", pattern=r"^[A-Za-z0-9_.-]+\.(py|zip)$")
@@ -67,28 +57,6 @@ class SubmissionStatusResponse(SubmissionResponse):
     anti_cheat_multiplier: float | None = None
     diversity_bonus: float | None = None
     penalty: float | None = None
-
-
-class EvaluationAssignmentResponse(BaseModel):
-    id: str
-    submission_id: str
-    validator_hotkey: str
-    status: EvaluationAssignmentStatus
-    attempt: int
-    deadline_at: datetime
-    code: str
-    filename: str
-    metadata: dict[str, Any] = Field(default_factory=dict)
-    code_hash: str
-    arch_hash: str
-
-
-class EvaluationAssignmentDecision(BaseModel):
-    reason: str | None = None
-
-
-class EvaluationResultCreate(BaseModel):
-    metrics: dict[str, float]
 
 
 class LeaderboardEntry(BaseModel):
@@ -163,19 +131,4 @@ class TrainingVariantResponse(BaseModel):
     updated_at: datetime
 
 
-class ComponentReviewHoldResponse(BaseModel):
-    id: str
-    submission_id: str
-    status: str
-    reason: str
-    confidence: float
-    created_at: datetime
-    updated_at: datetime
 
-
-class ComponentReviewHoldDecision(BaseModel):
-    architecture_action: str = Field(pattern=r"^(new|existing|transfer|reject)$")
-    training_action: str = Field(default="none", pattern=r"^(new|existing|transfer|reject|none)$")
-    architecture_id: str | None = None
-    training_variant_id: str | None = None
-    reason: str | None = None

@@ -14,12 +14,6 @@ async def get_weights(
     training_weight: float = 0.40,
 ) -> dict[str, float]:
     epoch_id = epoch_id_for(datetime.now(UTC), epoch_seconds)
-    component_rows = await repository.component_weight_rows(
-        architecture_weight=architecture_weight,
-        training_weight=training_weight,
-    )
-    if component_rows:
-        return _normalize(component_rows)
     rows = await repository.score_rows(epoch_id)
     return _normalize(rows)
 

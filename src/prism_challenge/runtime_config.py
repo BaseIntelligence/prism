@@ -12,7 +12,6 @@ from .evaluator.modes import (
     FULL_SCALE_PHASE_1_TOKEN_TARGET,
     FULL_SCALE_PHASE_2_TOKEN_TARGET,
     GPU_PROXY_TOKEN_TARGET,
-    LOCAL_SMOKE_TOKEN_BUDGET,
 )
 
 
@@ -122,7 +121,6 @@ class GpuPolicy(BaseModel):
     gpu_type: str | None = None
     official_fixed_profile: bool = True
     allocation_policy: str = "fixed_official_profile"
-    autosplit_allowed_for_smoke: bool = True
 
     @model_validator(mode="after")
     def actual_count_within_declared_max(self) -> GpuPolicy:
@@ -145,7 +143,6 @@ class DatasetConfigs(BaseModel):
 class ExecutionModeTargets(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    local_cpu_smoke: dict[str, Any]
     gpu_proxy_eval: dict[str, Any]
     full_scale_eval: dict[str, Any]
 
@@ -257,7 +254,6 @@ def runtime_policy_defaults(settings: PrismSettings) -> dict[str, Any]:
             "gpu_type": settings.platform_eval_gpu_type,
             "official_fixed_profile": True,
             "allocation_policy": "fixed_official_profile",
-            "autosplit_allowed_for_smoke": True,
         },
         "dataset_configs": {
             "fineweb_sample_count": settings.fineweb_sample_count,
@@ -268,11 +264,6 @@ def runtime_policy_defaults(settings: PrismSettings) -> dict[str, Any]:
             "network_fallback_allowed": False,
         },
         "execution_mode_targets": {
-            "local_cpu_smoke": {
-                "official_score": False,
-                "max_tokens": LOCAL_SMOKE_TOKEN_BUDGET,
-                "gpu_count": 0,
-            },
             "gpu_proxy_eval": {
                 "official_score": True,
                 "max_tokens": GPU_PROXY_TOKEN_TARGET,

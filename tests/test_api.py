@@ -65,9 +65,25 @@ def test_health_version_and_internal_auth(client):
 
 def test_submit_status_process_and_leaderboard(client, monkeypatch):
     def fake_run(self, spec, timeout_seconds):
+        artifact_dir = next(
+            mount.source for mount in spec.mounts if mount.target == "/artifacts"
+        )
+        manifest = {
+            "schema_version": "prism_run_manifest.v2",
+            "metrics": {
+                "covered_bytes": 4096,
+                "sum_neg_log_likelihood_nats": 2200.0,
+                "online_loss": [3.1, 2.9, 2.4],
+                "predicted_tokens": 800,
+                "tokens_seen": 800,
+            },
+        }
+        (artifact_dir / "prism_run_manifest.v2.json").write_text(
+            json.dumps(manifest), encoding="utf-8"
+        )
         return DockerRunResult(
             container_name="prism-eval",
-            stdout='PRISM_METRICS_JSON={"q_arch":0.8,"q_recipe":0.7}\n',
+            stdout="",
             stderr="",
             returncode=0,
         )

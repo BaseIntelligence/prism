@@ -24,7 +24,7 @@ async def repository(tmp_path):
 async def test_autosplit_to_one_gpu_for_non_scoring_path(repository: PrismRepository) -> None:
     await repository.store_runtime_config(
         config_key="gpu_policy",
-        value={"max_gpu_count": 8, "actual_gpu_count": 8, "autosplit_allowed_for_smoke": True},
+        value={"max_gpu_count": 8, "actual_gpu_count": 8},
         updated_by="ops",
     )
     runtime_policy = await repository.runtime_config(PrismSettings(), official=True)
@@ -38,7 +38,7 @@ async def test_autosplit_to_one_gpu_for_non_scoring_path(repository: PrismReposi
             submission_id="dev-submission",
             job_id="job-dev",
             runtime_policy=runtime_policy,
-            mode="local_cpu_smoke",
+            mode="gpu_proxy_eval",
             score_eligible=False,
         )
     )
@@ -90,7 +90,7 @@ async def test_fifo_constrained_queue(repository: PrismRepository) -> None:
     first_request = GpuLeaseRequest(
         submission_id="submission-1",
         job_id="job-1",
-        mode="local_cpu_smoke",
+        mode="gpu_proxy_eval",
         tier="dev",
         score_eligible=False,
         min_gpu_count=1,
@@ -102,7 +102,7 @@ async def test_fifo_constrained_queue(repository: PrismRepository) -> None:
     second_request = GpuLeaseRequest(
         submission_id="submission-2",
         job_id="job-2",
-        mode="local_cpu_smoke",
+        mode="gpu_proxy_eval",
         tier="dev",
         score_eligible=False,
         min_gpu_count=1,
@@ -192,7 +192,7 @@ async def test_legacy_database_without_gpu_leases_migrates(tmp_path) -> None:
         GpuLeaseRequest(
             submission_id="legacy-submission",
             job_id="legacy-job",
-            mode="local_cpu_smoke",
+            mode="gpu_proxy_eval",
             tier="dev",
             score_eligible=False,
             min_gpu_count=1,

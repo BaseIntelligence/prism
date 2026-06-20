@@ -23,6 +23,30 @@ def get_recipe(ctx):
 """
 
 
+def _artifact_dir(spec):
+    for mount in spec.mounts:
+        if mount.target == "/artifacts":
+            return mount.source
+    raise AssertionError("container spec has no /artifacts mount")
+
+
+def _write_v2_manifest(spec) -> None:
+    """Write a challenge-authored prism_run_manifest.v2 so the live bpb scoring path finalizes."""
+    manifest = {
+        "schema_version": "prism_run_manifest.v2",
+        "metrics": {
+            "covered_bytes": 4096,
+            "sum_neg_log_likelihood_nats": 2200.0,
+            "online_loss": [3.1, 2.9, 2.4],
+            "predicted_tokens": 800,
+            "tokens_seen": 800,
+        },
+    }
+    (_artifact_dir(spec) / "prism_run_manifest.v2.json").write_text(
+        json.dumps(manifest), encoding="utf-8"
+    )
+
+
 def _submit(client: TestClient, code: str, nonce: str = "remote1") -> str:
     payload = {"code": two_script_bundle(arch_code=code), "filename": "project.zip"}
     body = json.dumps(payload, separators=(",", ":")).encode()
@@ -58,12 +82,10 @@ def test_platform_gpu_worker_runs_submission_in_container(tmp_path, monkeypatch)
         captured["spec"] = spec
         captured["payload"] = payload
         captured["timeout_seconds"] = timeout_seconds
+        _write_v2_manifest(spec)
         return DockerRunResult(
             container_name="prism-eval",
-            stdout=(
-                'PRISM_METRICS_JSON={"q_arch":0.88,"q_recipe":0.66,"penalty":0.0,'
-                '"train_loss":1.2,"eval_loss":1.4,"inference_latency_ms":7.0}\n'
-            ),
+            stdout="",
             stderr="",
             returncode=0,
         )
@@ -96,7 +118,10 @@ def test_platform_gpu_worker_runs_submission_in_container(tmp_path, monkeypatch)
         assert process.status_code == 200, process.text
         status = client.get(f"/v1/submissions/{submission_id}").json()
         assert status["status"] == "completed"
-        assert status["q_arch"] == 0.88
+        # The live path scores from the challenge-owned bpb manifest, so the recorded score is a
+        # finite positive bpb-derived final_score (not a miner-reported q_arch).
+        assert status["q_arch"] is not None
+        assert float(status["q_arch"]) > 0.0
 
     spec = captured["spec"]
     assert spec.image == "ghcr.io/platformnetwork/prism-evaluator:latest"
@@ -238,9 +263,10 @@ def train_step(model, batch, optimizer, ctx):
 
 def test_platform_gpu_accepts_custom_training_and_inference_hooks(tmp_path, monkeypatch):
     def fake_run(self, spec, timeout_seconds):
+        _write_v2_manifest(spec)
         return DockerRunResult(
             container_name="prism-eval",
-            stdout='PRISM_METRICS_JSON={"q_arch":0.7,"q_recipe":0.8}\n',
+            stdout="",
             stderr="",
             returncode=0,
         )

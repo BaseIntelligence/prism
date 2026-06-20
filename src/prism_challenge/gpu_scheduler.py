@@ -227,9 +227,7 @@ def lease_request_from_runtime(
         min_gpu_count=1,
         max_gpu_count=max_gpu_count,
         requested_gpu_count=max(1, requested_gpu_count),
-        autosplit_allowed=bool(
-            runtime_policy.gpu_policy.autosplit_allowed_for_smoke and not is_score_eligible
-        ),
+        autosplit_allowed=not is_score_eligible,
         official_fixed_profile=bool(runtime_policy.gpu_policy.official_fixed_profile),
         reason="runtime GPU policy",
     )

@@ -9,7 +9,6 @@ from prism_challenge.evaluator.modes import (
     FULL_SCALE_PHASE_1_TOKEN_TARGET,
     FULL_SCALE_PHASE_2_TOKEN_TARGET,
     GPU_PROXY_TOKEN_TARGET,
-    LOCAL_SMOKE_TOKEN_BUDGET,
 )
 from prism_challenge.repository import PrismRepository
 from prism_challenge.runtime_config import RuntimeConfigError, runtime_policy_defaults
@@ -108,11 +107,10 @@ async def test_invalid_sql_weight_sum_fails_closed(repository: PrismRepository) 
 
 def test_runtime_execution_mode_defaults_match_evaluator_and_fineweb_contracts() -> None:
     targets = runtime_policy_defaults(PrismSettings())["execution_mode_targets"]
-    local_smoke = targets["local_cpu_smoke"]
     gpu_proxy = targets["gpu_proxy_eval"]
     full_scale = targets["full_scale_eval"]
 
-    assert local_smoke["max_tokens"] == LOCAL_SMOKE_TOKEN_BUDGET
+    assert "local_cpu_smoke" not in targets
     assert gpu_proxy["max_tokens"] == GPU_PROXY_TOKEN_TARGET
     assert gpu_proxy["dataset_subset"] == "sample-10BT"
     assert gpu_proxy["dataset_tokens"] == FINEWEB_EDU_SUBSETS["sample-10BT"]["token_count"]

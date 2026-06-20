@@ -80,13 +80,12 @@ async def test_stuck_llm_held_is_expired_to_rejected(repository: PrismRepository
     assert error == EXPIRY_REASON
 
 
-async def test_component_hold_is_not_expired_and_stays_resolvable(
+async def test_duplicate_hold_is_not_expired_and_stays_held(
     repository: PrismRepository,
 ) -> None:
-    """GUARD (proves scoping): a resolvable COMPONENT hold (held WITH a pending
-    component_review_holds row) must NOT be expired even when stale, and must
-    remain resolvable via resolve_component_hold. Expiring it would strand a
-    pending hold whose later resolve could resurrect the submission."""
+    """GUARD (proves scoping): a live duplicate-review hold (held WITH a pending
+    component_review_holds row) must NOT be expired by the stuck-LLM reaper even when
+    stale -- it stays held+pending (quarantined) rather than being stranded as rejected."""
     submission_id = await _seed_pending(repository)
 
     await repository.hold_submission_for_duplicate_review(
@@ -102,23 +101,10 @@ async def test_component_hold_is_not_expired_and_stays_resolvable(
 
     # NOT expired: still held, hold row still pending.
     status, _ = await _status_and_error(repository, submission_id)
-    assert status == SubmissionStatus.HELD.value, "component hold was wrongly expired"
+    assert status == SubmissionStatus.HELD.value, "duplicate hold was wrongly expired"
     hold = await _component_hold(repository, submission_id)
     assert hold is not None
     assert str(hold["status"]) == "pending"
-
-    # Still resolvable through the legitimate endpoint path (reject branch).
-    result = await repository.resolve_component_hold(
-        hold_id=str(hold["id"]),
-        architecture_action="reject",
-        training_action="reject",
-        architecture_id=None,
-        training_variant_id=None,
-        reason="manual rejection after review",
-    )
-    assert result == {"rejected": True, "held": False}
-    status, _ = await _status_and_error(repository, submission_id)
-    assert status == SubmissionStatus.REJECTED.value
 
 
 async def test_fresh_stuck_held_is_not_expired(repository: PrismRepository) -> None:

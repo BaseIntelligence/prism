@@ -9,13 +9,9 @@ from typing import Any, cast
 from uuid import uuid4
 
 from .config import PrismSettings
-from .db import dumps, loads
+from .db import dumps
 from .evaluator import llm_review, source_similarity
 from .evaluator.anti_cheat import evaluate_anti_cheat
-from .evaluator.component_agents import (
-    ComponentOwnershipDecision,
-    SemanticOwnershipAgent,
-)
 from .evaluator.component_signatures import (
     ComponentSemanticSignature,
     build_semantic_signature,
@@ -32,11 +28,10 @@ from .evaluator.distributed_contract import (
     enforce_single_node_bound,
 )
 from .evaluator.interface import DEFAULT_TRAINING_ENTRYPOINT, PrismContext
-from .evaluator.lium_client import LiumJob
 from .evaluator.modes import execution_mode_from_value
 from .evaluator.review_rules import ReviewRule, load_review_rules
 from .evaluator.sandbox import SandboxViolation, inspect_code
-from .evaluator.scoring import ScoreValidationError, final_score, score_prequential_bpb
+from .evaluator.scoring import ScoreValidationError, score_prequential_bpb
 from .evaluator.static_instantiation import check_build_model_static
 from .gpu_scheduler import (
     GpuLease,
@@ -44,7 +39,7 @@ from .gpu_scheduler import (
     lease_request_from_runtime,
     targets_from_settings,
 )
-from .models import EvaluationAssignmentStatus, SubmissionStatus
+from .models import SubmissionStatus
 from .repository import PrismRepository, now_iso
 from .sdk.executors.docker import DockerExecutor, DockerLimits, DockerMount, DockerRunSpec
 
@@ -93,7 +88,6 @@ class ComponentReview:
     components: PrismProjectComponents
     fingerprints: PrismComponentFingerprints
     semantic_signature: ComponentSemanticSignature
-    ownership_decision: ComponentOwnershipDecision | None = None
 
 
 class PrismWorker:
@@ -109,7 +103,6 @@ class PrismWorker:
             raise ValueError(f"Unsupported execution backend: {execution_backend}")
         self.repository = repository
         self.ctx = ctx
-        self.lium: Any = None
         self.execution_backend = execution_backend
         self.settings = settings or PrismSettings()
 
@@ -129,184 +122,6 @@ class PrismWorker:
                 submission_id, code, filename, metadata, hotkey, code_hash
             )
         raise ValueError(f"Unsupported execution backend: {self.execution_backend}")
-
-    async def assign_next_to_validator(self, validator_hotkey: str):
-        existing = await self.repository.active_assignment_for_validator(validator_hotkey)
-        if existing is not None:
-            return existing
-        submission = await self.repository.claim_next()
-        if submission is None:
-            return None
-        submission_id = str(submission["id"])
-        code = str(submission["code"])
-        filename = str(submission.get("filename") or "model.py")
-        raw_metadata = submission.get("metadata")
-        metadata = cast(dict[str, Any], raw_metadata) if isinstance(raw_metadata, dict) else {}
-        hotkey = str(submission.get("hotkey") or "")
-        code_hash = str(submission.get("code_hash") or sha256(code.encode()).hexdigest())
-        try:
-            review = await self._review_static_submission(
-                submission_id=submission_id,
-                code=code,
-                filename=filename,
-                metadata=metadata,
-                hotkey=hotkey,
-                code_hash=code_hash,
-            )
-            if review.rejected:
-                await self._reject_submission(submission_id, review.reason or "review rejected")
-                return None
-            if review.held:
-                return None
-            snapshot = self._snapshot_from_submission(code, filename, metadata)
-            component_review = self._component_review(snapshot)
-            report = self._inspect_project_snapshot(snapshot, review.code)
-        except Exception as exc:
-            await self._reject_submission(submission_id, str(exc))
-            return None
-        arch_hash = component_review.fingerprints.family_hash
-        if not arch_hash:
-            arch_hash = sha256(":".join(sorted(report.ast_fingerprint)).encode()).hexdigest()
-        return await self.repository.create_assignment(
-            submission_id=submission_id,
-            validator_hotkey=validator_hotkey,
-            arch_hash=arch_hash,
-            timeout_seconds=self.settings.validator_assignment_timeout_seconds,
-        )
-
-    async def reject_assignment(self, assignment_id: str, reason: str | None = None) -> None:
-        assignment = await self.repository.get_assignment(assignment_id)
-        if assignment is None:
-            raise ValueError("assignment not found")
-        await self.repository.set_assignment_status(
-            assignment_id,
-            EvaluationAssignmentStatus.REJECTED,
-            error=reason or "validator rejected assignment",
-        )
-        if assignment.attempt >= self.settings.validator_assignment_max_attempts:
-            await self._fail_submission(
-                assignment.submission_id, "validator assignment attempts exhausted"
-            )
-            return
-        async with self.repository.database.connect() as conn:
-            await conn.execute(
-                "UPDATE submissions SET status=?, updated_at=? WHERE id=?",
-                (SubmissionStatus.PENDING.value, now_iso(), assignment.submission_id),
-            )
-
-    async def expire_assignments(self) -> list[str]:
-        return await self.repository.expire_stale_assignments(
-            self.settings.validator_assignment_max_attempts
-        )
-
-    async def complete_assignment(self, assignment_id: str, metrics: dict[str, float]) -> None:
-        assignment = await self.repository.get_assignment(assignment_id)
-        if assignment is None:
-            raise ValueError("assignment not found")
-        await self.repository.set_assignment_status(
-            assignment_id,
-            EvaluationAssignmentStatus.COMPLETED,
-            metrics=metrics,
-        )
-        component_review: ComponentReview | None = None
-        try:
-            snapshot = self._snapshot_from_submission(
-                assignment.code,
-                assignment.filename,
-                assignment.metadata,
-            )
-            component_review = self._component_review(snapshot)
-        except Exception:
-            component_review = None
-        await self._finalize_remote_result(
-            submission_id=assignment.submission_id,
-            arch_hash=assignment.arch_hash,
-            anti_multiplier=1.0,
-            diversity_bonus=0.0,
-            metrics=metrics,
-            component_review=component_review,
-        )
-
-    async def _submit_remote(
-        self,
-        submission_id: str,
-        code: str,
-        filename: str,
-        metadata: dict[str, Any],
-        hotkey: str,
-        code_hash: str,
-    ) -> str:
-        try:
-            review = await self._review_static_submission(
-                submission_id=submission_id,
-                code=code,
-                filename=filename,
-                metadata=metadata,
-                hotkey=hotkey,
-                code_hash=code_hash,
-            )
-            if review.rejected:
-                await self._reject_submission(submission_id, review.reason or "review rejected")
-                return submission_id
-            if review.held:
-                return submission_id
-            snapshot = self._snapshot_from_submission(code, filename, metadata)
-            component_review = self._component_review(snapshot)
-            code = review.code
-            report = self._inspect_project_snapshot(snapshot, code)
-            code_hash = sha256(code.encode()).hexdigest()
-            arch_hash = component_review.fingerprints.family_hash
-            if not arch_hash:
-                arch_basis = ":".join(sorted(report.ast_fingerprint))
-                arch_hash = sha256(arch_basis.encode()).hexdigest()
-            previous = await self.repository.previous_codes(submission_id)
-            anti = evaluate_anti_cheat(
-                code,
-                previous,
-                allowed_import_roots=self._local_import_roots(snapshot),
-            )
-            job = await self.lium.submit_job(
-                {
-                    "challenge": "prism",
-                    "submission_id": submission_id,
-                    "code": code,
-                    "code_hash": code_hash,
-                    "arch_hash": arch_hash,
-                    "benchmarks": [
-                        "learning_speed",
-                        "heldout",
-                        "long_context",
-                        "reasoning",
-                        "generalism",
-                        "stability",
-                        "efficiency",
-                    ],
-                    "context": {
-                        "vocab_size": self.ctx.vocab_size,
-                        "sequence_length": self.ctx.sequence_length,
-                        "max_parameters": self.ctx.max_parameters,
-                    },
-                },
-                idempotency_key=submission_id,
-            )
-            await self._record_remote_job(submission_id, job)
-            if job.status == "completed":
-                await self._finalize_remote_result(
-                    submission_id=submission_id,
-                    arch_hash=arch_hash,
-                    anti_multiplier=anti.multiplier,
-                    diversity_bonus=anti.diversity_bonus,
-                    metrics=job.metrics,
-                    component_review=component_review,
-                )
-            return submission_id
-        except Exception as exc:
-            async with self.repository.database.connect() as conn:
-                await conn.execute(
-                    "UPDATE submissions SET status=?, error=?, updated_at=? WHERE id=?",
-                    (SubmissionStatus.REJECTED.value, str(exc), now_iso(), submission_id),
-                )
-            return submission_id
 
     async def _process_container(
         self,
@@ -420,22 +235,18 @@ class PrismWorker:
                 run_manifest_path=result.run_manifest_path,
                 attempt=attempt,
             )
-            if _is_v2_run_manifest(result.run_manifest):
-                await self._finalize_container_score(
-                    submission_id=submission_id,
-                    arch_hash=arch_hash,
-                    anti=anti,
-                    manifest=cast(dict[str, Any], result.run_manifest),
+            if not _is_v2_run_manifest(result.run_manifest):
+                await self._fail_submission(
+                    submission_id,
+                    "container run produced no challenge-authored prism_run_manifest.v2",
                 )
-            else:
-                await self._finalize_remote_result(
-                    submission_id=submission_id,
-                    arch_hash=arch_hash,
-                    anti_multiplier=anti.multiplier,
-                    diversity_bonus=anti.diversity_bonus,
-                    metrics=result.metrics,
-                    component_review=component_review,
-                )
+                return submission_id
+            await self._finalize_container_score(
+                submission_id=submission_id,
+                arch_hash=arch_hash,
+                anti=anti,
+                manifest=cast(dict[str, Any], result.run_manifest),
+            )
             return submission_id
         except InfrastructureEvaluationError as exc:
             await self._record_container_job(
@@ -581,77 +392,6 @@ class PrismWorker:
             components=components,
             fingerprints=fingerprints,
             semantic_signature=build_semantic_signature(components, fingerprints),
-        )
-
-    async def _component_ownership_review(self, review: ComponentReview) -> ComponentReview:
-        if not self.settings.component_agent_enabled:
-            decision = ComponentOwnershipDecision(
-                architecture_action="existing" if review.components.architecture_id else "new",
-                architecture_confidence=1.0,
-                training_action="none" if review.components.kind == "architecture_only" else "new",
-                training_confidence=1.0,
-                matched_architecture_id=review.components.architecture_id,
-                reason="component agent disabled",
-            )
-            return ComponentReview(
-                components=review.components,
-                fingerprints=review.fingerprints,
-                semantic_signature=review.semantic_signature,
-                ownership_decision=decision,
-            )
-        architectures, training = await self.repository.component_candidates(
-            family_hash=review.fingerprints.family_hash,
-            requested_architecture_id=review.components.architecture_id,
-            limit=self.settings.component_agent_candidate_top_k,
-        )
-        decision = SemanticOwnershipAgent(
-            min_confidence=self.settings.component_agent_min_confidence,
-            same_threshold=self.settings.component_agent_same_threshold,
-            hold_threshold=self.settings.component_agent_hold_threshold,
-        ).decide(
-            signature=review.semantic_signature,
-            architecture_candidates=architectures,
-            training_candidates=training,
-            requested_architecture_id=review.components.architecture_id,
-        )
-        if self.settings.component_hold_low_confidence and not decision.held:
-            decision = self._hold_low_confidence_decision(decision)
-        return ComponentReview(
-            components=review.components,
-            fingerprints=review.fingerprints,
-            semantic_signature=review.semantic_signature,
-            ownership_decision=decision,
-        )
-
-    def _hold_low_confidence_decision(
-        self, decision: ComponentOwnershipDecision
-    ) -> ComponentOwnershipDecision:
-        arch_action = decision.architecture_action
-        train_action = decision.training_action
-        reason = decision.reason
-        if (
-            arch_action in {"existing", "transfer"}
-            and decision.architecture_confidence < self.settings.component_agent_min_confidence
-        ):
-            arch_action = "hold"
-            reason = f"{reason}; low architecture confidence"
-        if (
-            train_action in {"existing", "transfer"}
-            and decision.training_confidence < self.settings.component_agent_min_confidence
-        ):
-            train_action = "hold"
-            reason = f"{reason}; low training confidence"
-        if arch_action == decision.architecture_action and train_action == decision.training_action:
-            return decision
-        return ComponentOwnershipDecision(
-            architecture_action=arch_action,
-            architecture_confidence=decision.architecture_confidence,
-            training_action=train_action,
-            training_confidence=decision.training_confidence,
-            matched_architecture_id=decision.matched_architecture_id,
-            matched_training_variant_id=decision.matched_training_variant_id,
-            reason=reason,
-            raw=decision.raw,
         )
 
     def _entrypoint_code(self, snapshot: source_similarity.SourceSnapshot, entrypoint: str) -> str:
@@ -867,32 +607,6 @@ class PrismWorker:
 
         return run
 
-    async def _record_remote_job(self, submission_id: str, job: LiumJob) -> None:
-        status = (
-            SubmissionStatus.COMPLETED.value
-            if job.status == "completed"
-            else SubmissionStatus.RUNNING.value
-        )
-        async with self.repository.database.connect() as conn:
-            await conn.execute(
-                "UPDATE submissions SET status=?, updated_at=? WHERE id=?",
-                (status, now_iso(), submission_id),
-            )
-            await conn.execute(
-                "INSERT INTO eval_jobs(id, submission_id, level, status, external_job_id, metrics, "
-                "created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                (
-                    str(uuid4()),
-                    submission_id,
-                    "remote",
-                    job.status,
-                    job.id,
-                    dumps(job.metrics),
-                    now_iso(),
-                    now_iso(),
-                ),
-            )
-
     async def _record_container_job(
         self,
         *,
@@ -941,114 +655,6 @@ class PrismWorker:
                 ),
             )
 
-    async def _finalize_remote_result(
-        self,
-        *,
-        submission_id: str,
-        arch_hash: str,
-        anti_multiplier: float,
-        diversity_bonus: float,
-        metrics: dict[str, float],
-        component_review: ComponentReview | None = None,
-    ) -> None:
-        q_arch = max(0.0, min(1.0, float(metrics.get("q_arch", 0.0))))
-        q_recipe = max(0.0, min(1.0, float(metrics.get("q_recipe", 0.5))))
-        runtime_config = await self.repository.runtime_config(self.settings, official=True)
-        scored = final_score(
-            q_arch=q_arch,
-            q_recipe=q_recipe,
-            anti_cheat_multiplier=anti_multiplier,
-            diversity_bonus=diversity_bonus,
-            penalty=float(metrics.get("penalty", 0.0)),
-            arch_weight=runtime_config.score_weights.final_architecture_weight,
-            recipe_weight=runtime_config.score_weights.final_recipe_weight,
-        )
-        async with self.repository.database.connect() as conn:
-            await conn.execute(
-                "INSERT OR REPLACE INTO scores("
-                "submission_id, q_arch, q_recipe, anti_cheat_multiplier, diversity_bonus,"
-                "penalty, final_score, metrics, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (
-                    submission_id,
-                    scored.q_arch,
-                    scored.q_recipe,
-                    anti_multiplier,
-                    diversity_bonus,
-                    float(metrics.get("penalty", 0.0)),
-                    scored.final_score,
-                    dumps(metrics),
-                    now_iso(),
-                ),
-            )
-            await conn.execute(
-                "UPDATE submissions SET status=?, arch_hash=?, updated_at=? WHERE id=?",
-                (SubmissionStatus.COMPLETED.value, arch_hash, now_iso(), submission_id),
-            )
-        if self.settings.component_rewards_enabled and component_review is not None:
-            component_review = await self._component_ownership_review(component_review)
-            if component_review.ownership_decision is None:
-                raise RuntimeError("component ownership decision was not created")
-            metric_mean = max(0.0, min(1.0, float(metrics.get("q_recipe", q_recipe))))
-            metric_std = max(
-                0.0,
-                float(
-                    metrics.get(
-                        "q_recipe_std",
-                        metrics.get("metric_std", self.settings.training_metric_default_std),
-                    )
-                ),
-            )
-            component_result = await self.repository.record_component_result(
-                submission_id=submission_id,
-                project_kind=component_review.components.kind,
-                family_hash=component_review.fingerprints.family_hash,
-                arch_fingerprint=component_review.fingerprints.arch_fingerprint,
-                behavior_fingerprint=component_review.fingerprints.behavior_fingerprint,
-                training_hash=component_review.fingerprints.training_hash,
-                requested_architecture_id=component_review.components.architecture_id,
-                q_arch=q_arch,
-                q_recipe=q_recipe,
-                metric_mean=metric_mean,
-                metric_std=metric_std,
-                architecture_weight=runtime_config.reward_pools.architecture,
-                training_weight=runtime_config.reward_pools.training,
-                architecture_delta_abs=self.settings.architecture_improvement_min_delta_abs,
-                architecture_delta_rel=self.settings.architecture_improvement_min_delta_rel,
-                training_delta_abs=self.settings.training_improvement_min_delta_abs,
-                training_delta_rel=self.settings.training_improvement_min_delta_rel,
-                training_z_score=self.settings.training_improvement_z_score,
-                architecture_transfer_delta_abs=self.settings.architecture_transfer_min_delta_abs,
-                architecture_transfer_delta_rel=self.settings.architecture_transfer_min_delta_rel,
-                training_transfer_delta_abs=self.settings.training_transfer_min_delta_abs,
-                training_transfer_delta_rel=self.settings.training_transfer_min_delta_rel,
-                transfer_confidence=self.settings.component_agent_transfer_confidence,
-                metrics=metrics,
-                semantic_signature=component_review.semantic_signature,
-                ownership_decision=component_review.ownership_decision,
-            )
-            if component_result.get("held"):
-                async with self.repository.database.connect() as conn:
-                    await conn.execute(
-                        "UPDATE submissions SET status=?, error=?, updated_at=? WHERE id=?",
-                        (
-                            SubmissionStatus.HELD.value,
-                            "component attribution held for review",
-                            now_iso(),
-                            submission_id,
-                        ),
-                    )
-            elif component_result.get("rejected"):
-                async with self.repository.database.connect() as conn:
-                    await conn.execute(
-                        "UPDATE submissions SET status=?, error=?, updated_at=? WHERE id=?",
-                        (
-                            SubmissionStatus.REJECTED.value,
-                            "component attribution rejected",
-                            now_iso(),
-                            submission_id,
-                        ),
-                    )
-
     async def _finalize_container_score(
         self,
         *,
@@ -1095,39 +701,4 @@ class PrismWorker:
                 (SubmissionStatus.COMPLETED.value, arch_hash, now_iso(), submission_id),
             )
 
-    async def poll_remote_jobs(self) -> list[str]:
-        if self.lium is None:
-            return []
-        completed: list[str] = []
-        async with self.repository.database.connect() as conn:
-            rows = await conn.execute_fetchall(
-                "SELECT s.id as submission_id, s.code as code, s.filename as filename, "
-                "s.metadata as metadata, e.external_job_id as external_job_id "
-                "FROM submissions s JOIN eval_jobs e ON e.submission_id=s.id "
-                "WHERE s.status=? AND e.level='remote' AND e.external_job_id IS NOT NULL",
-                (SubmissionStatus.RUNNING.value,),
-            )
-        for row in rows:
-            job = await self.lium.poll_job(str(row["external_job_id"]))
-            if job.status != "completed":
-                continue
-            metadata = loads(str(row["metadata"]))
-            snapshot = source_similarity.snapshot_from_submission(
-                str(row["code"]),
-                str(row["filename"]),
-                metadata if isinstance(metadata, dict) else {},
-            )
-            code = source_similarity.primary_python_code(snapshot)
-            report = inspect_code(code)
-            arch_hash = sha256(":".join(sorted(report.ast_fingerprint)).encode()).hexdigest()
-            previous = await self.repository.previous_codes(str(row["submission_id"]))
-            anti = evaluate_anti_cheat(code, previous)
-            await self._finalize_remote_result(
-                submission_id=str(row["submission_id"]),
-                arch_hash=arch_hash,
-                anti_multiplier=anti.multiplier,
-                diversity_bonus=anti.diversity_bonus,
-                metrics=job.metrics,
-            )
-            completed.append(str(row["submission_id"]))
-        return completed
+
