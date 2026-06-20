@@ -82,12 +82,29 @@ class PrismSettings(ChallengeSettings):
     training_metric_default_std: float = Field(default=0.0, ge=0)
     component_eval_seed_count: int = Field(default=1, ge=1)
     component_eval_repeat_count: int = Field(default=1, ge=1)
-    llm_review_enabled: bool = False
+    llm_review_enabled: bool = True
     llm_review_required: bool = False
-    chutes_base_url: str = "https://llm.chutes.ai/v1"
-    chutes_model: str | None = None
-    chutes_api_key: str | None = None
-    chutes_api_key_file: Path | None = None
+    # OpenRouter LLM hard-gate wiring (architecture.md section 7). Legacy PRISM_CHUTES_* env names
+    # remain accepted so an already-running deployment keeps resolving until it is redeployed.
+    openrouter_base_url: str = Field(
+        default="https://openrouter.ai/api/v1",
+        validation_alias=AliasChoices("PRISM_OPENROUTER_BASE_URL", "PRISM_CHUTES_BASE_URL"),
+    )
+    openrouter_model: str = Field(
+        default="openai/gpt-4o",
+        validation_alias=AliasChoices("PRISM_OPENROUTER_MODEL", "PRISM_CHUTES_MODEL"),
+    )
+    openrouter_api_key: str | None = Field(
+        default=None,
+        repr=False,
+        validation_alias=AliasChoices("PRISM_OPENROUTER_API_KEY", "PRISM_CHUTES_API_KEY"),
+    )
+    openrouter_api_key_file: Path | None = Field(
+        default=Path("/run/secrets/openrouter_api_key"),
+        validation_alias=AliasChoices(
+            "PRISM_OPENROUTER_API_KEY_FILE", "PRISM_CHUTES_API_KEY_FILE"
+        ),
+    )
     llm_review_timeout_seconds: int = 60
     held_review_timeout_seconds: int = 86400
     llm_review_temperature: float = 0.0
@@ -293,11 +310,11 @@ class PrismSettings(ChallengeSettings):
             return Path(self.database_url.removeprefix("sqlite+aiosqlite:///"))
         return self.database_path
 
-    def chutes_api_key_value(self) -> str | None:
-        if self.chutes_api_key:
-            return self.chutes_api_key
-        if self.chutes_api_key_file and self.chutes_api_key_file.exists():
-            token = self.chutes_api_key_file.read_text(encoding="utf-8").strip()
+    def openrouter_api_key_value(self) -> str | None:
+        if self.openrouter_api_key:
+            return self.openrouter_api_key
+        if self.openrouter_api_key_file and self.openrouter_api_key_file.exists():
+            token = self.openrouter_api_key_file.read_text(encoding="utf-8").strip()
             return token or None
         return None
 

@@ -171,6 +171,8 @@ def test_scored_pipeline_manifest_compute_gpu_count_matches_db(tmp_path, monkeyp
         docker_broker_token="secret",
         platform_eval_artifact_root=tmp_path / "artifacts",
         plagiarism_enabled=False,
+        # No OpenRouter key in the unit env; disable the gate (covered in test_*llm*).
+        llm_review_enabled=False,
         distributed_contract_policy="off",
     )
     with TestClient(create_app(settings)) as client:

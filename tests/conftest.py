@@ -90,6 +90,10 @@ def client(tmp_path: Path) -> TestClient:
         shared_token="secret",
         allow_insecure_signatures=True,
         fineweb_sample_count=4,
+        # The OpenRouter LLM gate is enabled by default in production, but the unit env has no
+        # API key; disable it here so pipeline tests exercise their own subject. The gate itself
+        # is covered in the test_*llm* suites.
+        llm_review_enabled=False,
         # Most pipeline tests use minimal single-process training doubles; the multi-GPU static
         # contract (production default: reject) is an isolation knob here and is exercised
         # explicitly in test_prism_distributed_contract.py.

@@ -49,11 +49,11 @@ training_improvement_z_score: 1.0
 training_metric_default_std: 0.0
 component_eval_seed_count: 1
 component_eval_repeat_count: 1
-llm_review_enabled: false
+llm_review_enabled: true
 llm_review_required: false
-chutes_base_url: https://llm.chutes.ai/v1
-chutes_model: null
-chutes_api_key_file: null
+openrouter_base_url: https://openrouter.ai/api/v1
+openrouter_model: openai/gpt-4o
+openrouter_api_key_file: /run/secrets/openrouter_api_key
 llm_review_timeout_seconds: 60
 llm_review_temperature: 0.0
 llm_review_max_tokens: 512

@@ -67,12 +67,12 @@ PRISM_LLM_REVIEW_REQUIRED=true
 PRISM_PLAGIARISM_ENABLED=true
 ```
 
-If using Chutes-compatible review:
+LLM review uses OpenRouter by default; override the wiring with:
 
 ```bash
-PRISM_CHUTES_BASE_URL=https://llm.chutes.ai/v1
-PRISM_CHUTES_MODEL=<model-name>
-PRISM_CHUTES_API_KEY_FILE=/run/secrets/chutes_api_key
+PRISM_OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
+PRISM_OPENROUTER_MODEL=openai/gpt-4o
+PRISM_OPENROUTER_API_KEY_FILE=/run/secrets/openrouter_api_key
 ```
 
 ## Component Reward Configuration

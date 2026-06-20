@@ -109,6 +109,8 @@ class LlmReviewPolicy(BaseModel):
 
     enabled: bool = False
     required: bool = False
+    base_url: str = "https://openrouter.ai/api/v1"
+    model: str | None = "openai/gpt-4o"
     min_confidence: float = Field(default=0.72, ge=0, le=1)
     timeout_seconds: int = Field(default=60, ge=1)
     evidence_required_for_rejection: bool = True
@@ -245,6 +247,8 @@ def runtime_policy_defaults(settings: PrismSettings) -> dict[str, Any]:
         "llm_review_policy": {
             "enabled": settings.llm_review_enabled,
             "required": settings.llm_review_required,
+            "base_url": settings.openrouter_base_url,
+            "model": settings.openrouter_model,
             "min_confidence": settings.component_agent_min_confidence,
             "timeout_seconds": settings.llm_review_timeout_seconds,
             "evidence_required_for_rejection": True,

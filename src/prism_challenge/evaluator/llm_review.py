@@ -71,12 +71,12 @@ class SubmitVerdict(BaseModel):
 
 @dataclass(frozen=True)
 class LlmReviewConfig:
-    enabled: bool = False
+    enabled: bool = True
     required: bool = False
-    base_url: str = "https://llm.chutes.ai/v1"
-    model: str | None = None
+    base_url: str = "https://openrouter.ai/api/v1"
+    model: str | None = "openai/gpt-4o"
     api_key: str | None = None
-    api_key_file: str | Path | None = None
+    api_key_file: str | Path | None = "/run/secrets/openrouter_api_key"
     timeout_seconds: int = 60
     temperature: float = 0.0
     max_tokens: int = 512
@@ -240,9 +240,9 @@ def _invoke_verdict(config: LlmReviewConfig, *, system: str, prompt: str) -> dic
 def _invoke_review_flow(config: LlmReviewConfig, *, system: str, prompt: str) -> dict[str, Any]:
     api_key = _api_key(config)
     if not api_key:
-        raise RuntimeError("Chutes API key is not configured")
+        raise RuntimeError("OpenRouter API key is not configured")
     if not config.model:
-        raise RuntimeError("Chutes model is not configured")
+        raise RuntimeError("OpenRouter model is not configured")
     chat_openai = _load_chat_openai()
     chat = chat_openai(
         model=config.model,
@@ -272,8 +272,9 @@ def _invoke_review_flow(config: LlmReviewConfig, *, system: str, prompt: str) ->
 
 
 def _forced_tool_call(chat: Any, tool: type[BaseModel], messages: list[tuple[str, str]]) -> Any:
-    # gpt-4o-mini emits one tool call per turn, so the two tools are forced sequentially via
-    # tool_choice; strict=False keeps ReviewEvidence's tolerant optionals provider-valid.
+    # The OpenRouter chat model emits one tool call per turn, so the two tools are forced
+    # sequentially via tool_choice; strict=False keeps ReviewEvidence's tolerant optionals
+    # provider-valid.
     bound = chat.bind_tools([tool], tool_choice=tool.__name__, strict=False)
     message = bound.invoke(messages)
     tool_calls = getattr(message, "tool_calls", None) or []

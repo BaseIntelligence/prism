@@ -40,6 +40,8 @@ def _settings(tmp_path: Path, name: str) -> PrismSettings:
         allow_insecure_signatures=True,
         plagiarism_enabled=True,
         fineweb_sample_count=4,
+        # No OpenRouter key in the unit env; disable the gate (covered in test_*llm*).
+        llm_review_enabled=False,
         distributed_contract_policy="off",
     )
 

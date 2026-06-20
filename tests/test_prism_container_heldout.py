@@ -185,6 +185,8 @@ def test_evaluate_augments_manifest_and_scores_with_heldout_delta(tmp_path, monk
         platform_eval_artifact_root=artifact_root,
         platform_eval_val_data_dir=str(val_dir),
         plagiarism_enabled=False,
+        # No OpenRouter key in the unit env; disable the gate (covered in test_*llm*).
+        llm_review_enabled=False,
         # Single-process training double; the multi-GPU static contract (default reject) is
         # exercised explicitly in test_prism_distributed_contract.py.
         distributed_contract_policy="off",
