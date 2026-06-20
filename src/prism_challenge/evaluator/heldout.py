@@ -41,6 +41,12 @@ DEFAULT_HELDOUT_BATCH_SIZE = 8
 WORST_CASE_LOSS_MULTIPLIER = 2.0
 
 
+# The host always measures the held-out val bpb on raw UTF-8 BYTES (tokenizer-agnostic), so the
+# anti-memorization GAP comparison is only valid when the run's prequential TRAIN bpb was ALSO
+# measured on the byte basis (architecture.md sections 5, 6; AGENTS.md held-out invariant).
+VAL_BPB_BASIS = "bytes"
+
+
 @dataclass(frozen=True)
 class HeldoutResult:
     """Challenge-computed held-out delta + anti-memorization gap on the SECRET val split."""
@@ -50,6 +56,8 @@ class HeldoutResult:
     heldout_delta: float
     train_heldout_gap: float | None
     memorization_flag: bool
+    train_bpb_basis: str | None = None
+    val_bpb_basis: str = VAL_BPB_BASIS
 
     def as_metrics(self) -> dict[str, Any]:
         payload: dict[str, Any] = {
@@ -58,7 +66,10 @@ class HeldoutResult:
             "heldout_delta": self.heldout_delta,
             "held_out_delta": self.heldout_delta,
             "memorization_flag": self.memorization_flag,
+            "val_bpb_basis": self.val_bpb_basis,
         }
+        if self.train_bpb_basis is not None:
+            payload["train_bpb_basis"] = self.train_bpb_basis
         if self.train_heldout_gap is not None:
             payload["train_heldout_gap"] = self.train_heldout_gap
             payload["train_val_gap"] = self.train_heldout_gap
@@ -95,9 +106,10 @@ def compute_heldout_metrics(
     files: Mapping[str, str],
     entrypoint: str,
     ctx: PrismContext,
-    trained_state_path: str | os.PathLike[str],
+    trained_state_path: str | os.PathLike[str] | None,
     val_data_dir: str | os.PathLike[str] | None,
     train_bpb: float | None,
+    train_bpb_basis: str | None = None,
     build_model_symbol: str = "build_model",
     batch_size: int = DEFAULT_HELDOUT_BATCH_SIZE,
     timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS,
@@ -109,7 +121,15 @@ def compute_heldout_metrics(
     Returns ``None`` (held-out skipped, the run still scores on prequential bpb) when the trained
     weights are absent, the secret val split is unavailable, or the bounded child cannot produce a
     finite/positive held-out bpb for both models.
+
+    ``train_bpb_basis`` is the tokenizer basis the run's prequential TRAIN bpb was measured on. The
+    held-out val bpb is always byte-level (``VAL_BPB_BASIS``); the anti-memorization GAP penalty is
+    applied ONLY when the two bases are like-for-like, so a benign tokenizer-using learner is never
+    false-flagged (VAL-SCORE-009 / VAL-SCORE-004). The byte-denominator delta tie-breaker (random
+    twin vs trained, both byte-level on val) stays valid regardless of the train basis.
     """
+    if trained_state_path is None:
+        return None
     state_path = Path(trained_state_path)
     if not state_path.is_file():
         return None
@@ -165,7 +185,8 @@ def compute_heldout_metrics(
     heldout_delta = val_bpb_random - val_bpb_trained
     gap: float | None = None
     flag = False
-    if train_bpb is not None and math.isfinite(float(train_bpb)):
+    bases_comparable = train_bpb_basis is None or train_bpb_basis == VAL_BPB_BASIS
+    if bases_comparable and train_bpb is not None and math.isfinite(float(train_bpb)):
         gap = val_bpb_trained - float(train_bpb)
         flag = gap > gap_threshold_bpb
     return HeldoutResult(
@@ -174,6 +195,7 @@ def compute_heldout_metrics(
         heldout_delta=heldout_delta,
         train_heldout_gap=gap,
         memorization_flag=flag,
+        train_bpb_basis=train_bpb_basis,
     )
 
 
@@ -258,7 +280,11 @@ def _child_heldout(
         if not isinstance(trained, torch.nn.Module):
             conn.send(("error", "build_model returned a non-nn.Module value"))
             return
-        state = torch.load(trained_state_path, map_location="cpu")
+        # weights_only=True REFUSES arbitrary pickle reconstruction: trained_state.pt lives in the
+        # miner-writable artifacts_dir, so an unguarded torch.load is a host RCE sink. A hostile
+        # pickle raises here and the held-out step fails safe (the run still scores on prequential
+        # bpb). Caller-side, only the manifest-recorded artifact path is ever passed in.
+        state = torch.load(trained_state_path, map_location="cpu", weights_only=True)
         trained.load_state_dict(_strip_module_prefix(state), strict=False)
         val_bpb_trained = _bpb_over_texts(
             trained, texts, vocab_size=vocab_size, seq_len=seq_len,

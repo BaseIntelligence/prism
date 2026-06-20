@@ -18,11 +18,16 @@ BPB_SANE_MAX = 64.0
 
 # --- Held-out delta tie-breaker + anti-memorization gap (architecture.md sections 5, 6) ----------
 # The held-out delta-over-random-init (``bpb(random-init twin on val) - bpb(trained on val)``) is a
-# TIE-BREAKER: a larger improvement ranks better, but it must not override the primary bpb axis, so
-# it contributes only a tiny term folded into ``final_score`` (a lexicographic refinement is the
-# job of the leaderboard-determinism feature). The train-vs-held-out gap flags memorization: an
-# excessive gap penalizes the score so a memorizer ranks below an equivalent non-memorizing run.
+# NEAR-TIE TIE-BREAKER: a larger improvement ranks better, but it must NEVER override the primary
+# bpb axis. The tie-break term folded into ``final_score`` is therefore bounded (see
+# ``_heldout_tie_break``) so it can only reorder submissions whose bpb is within
+# ``HELDOUT_DELTA_BPB_EPSILON`` of each other (VAL-SCORE-001 / VAL-SCORE-019); beyond that band the
+# bpb ordering always wins. The train-vs-held-out gap flags memorization: an excessive gap penalizes
+# the score so a memorizer ranks below an equivalent non-memorizing run.
 HELDOUT_DELTA_TIE_BREAK_WEIGHT = 1e-3
+# bpb band within which the held-out delta is allowed to break a near-tie. Submissions whose bpb
+# differs by more than this keep strict bpb order regardless of delta.
+HELDOUT_DELTA_BPB_EPSILON = 5e-3
 MEMORIZATION_GAP_THRESHOLD_BPB = 1.0
 MEMORIZATION_PENALTY_FACTOR = 0.5
 
@@ -213,16 +218,12 @@ def score_prequential_bpb(
     heldout = _read_heldout(manifest, metrics, anti_cheat, train_bpb=bpb)
     if heldout.memorization_flag:
         flags.append("memorization_gap")
-    # The held-out delta refines ranking only as a TIE-BREAKER (tiny additive term, monotone in the
-    # delta) so a strictly lower bpb is never ranked worse purely on the primary axis; an excessive
-    # train-vs-held-out gap multiplies in a memorization penalty so a memorizer ranks below an
-    # equivalent non-memorizing run.
+    # The held-out delta refines ranking only as a NEAR-TIE tie-breaker (bounded additive term,
+    # monotone in the delta) so a strictly lower bpb is NEVER ranked worse on the primary axis even
+    # at high bpb where ``base`` compresses; an excessive train-vs-held-out gap multiplies in a
+    # memorization penalty so a memorizer ranks below an equivalent non-memorizing run.
     base = bpb_to_final_score(bpb)
-    tie_break = (
-        HELDOUT_DELTA_TIE_BREAK_WEIGHT * math.tanh(heldout.delta)
-        if heldout.delta is not None
-        else 0.0
-    )
+    tie_break = _heldout_tie_break(bpb, heldout.delta, heldout.penalty)
     final_score_value = (base * heldout.penalty + tie_break) * anti_cheat_multiplier
     step0_loss = metrics.get("step0_loss")
     return PrequentialBpbScore(
@@ -274,17 +275,30 @@ def _read_heldout(
     delta = _coerce_float(_first_present(metrics, score_block, ("heldout_delta", "held_out_delta")))
     val_trained = _coerce_float(_first_present(metrics, score_block, ("val_bpb_trained",)))
     val_random = _coerce_float(_first_present(metrics, score_block, ("val_bpb_random_init",)))
+    # The anti-memorization GAP compares train bpb against val bpb; it is only meaningful when both
+    # were measured on the SAME tokenizer basis. The host measures val bpb on raw UTF-8 bytes, so a
+    # native-tokenizer train basis would inflate the "gap" and false-flag a benign learner
+    # (VAL-SCORE-009 / VAL-SCORE-004). When the bases are not like-for-like, no gap/flag is applied;
+    # the byte-denominator delta tie-break stays valid regardless. Absent basis info => comparable
+    # (backward compatible with manifests that recorded no basis).
+    train_basis = _coerce_str(_first_present(metrics, score_block, ("train_bpb_basis",)))
+    val_basis = _coerce_str(_first_present(metrics, score_block, ("val_bpb_basis",)))
+    bases_comparable = train_basis is None or val_basis is None or train_basis == val_basis
     gap = _coerce_float(
         _first_present(metrics, score_block, ("train_heldout_gap", "train_val_gap"))
     )
-    if gap is None and val_trained is not None and math.isfinite(train_bpb):
+    if not bases_comparable:
+        gap = None
+    elif gap is None and val_trained is not None and math.isfinite(train_bpb):
         gap = val_trained - train_bpb
     explicit_flag = bool(
         metrics.get("memorization_flag")
         or score_block.get("memorization_flag")
         or anti_cheat.get("memorization_flag")
     )
-    memorization_flag = explicit_flag or (gap is not None and gap > MEMORIZATION_GAP_THRESHOLD_BPB)
+    memorization_flag = bases_comparable and (
+        explicit_flag or (gap is not None and gap > MEMORIZATION_GAP_THRESHOLD_BPB)
+    )
     penalty = MEMORIZATION_PENALTY_FACTOR if memorization_flag else 1.0
     return _HeldoutView(
         delta=delta,
@@ -311,6 +325,27 @@ def _coerce_float(value: Any) -> float | None:
         return None
     number = float(value)
     return number if math.isfinite(number) else None
+
+
+def _coerce_str(value: Any) -> str | None:
+    return value if isinstance(value, str) and value else None
+
+
+def _heldout_tie_break(bpb: float, delta: float | None, penalty: float) -> float:
+    """Held-out-delta tie-break bounded so it can ONLY reorder a NEAR-TIE on bpb.
+
+    The term is capped at half the (penalty-scaled) final_score resolution across a
+    ``HELDOUT_DELTA_BPB_EPSILON`` bpb band (and never above ``HELDOUT_DELTA_TIE_BREAK_WEIGHT``). The
+    resolution shrinks monotonically as bpb grows (``base`` is convex), so two submissions whose bpb
+    differs by more than the epsilon keep strict bpb order regardless of delta (VAL-SCORE-001 /
+    VAL-SCORE-019); within the band the larger delta wins (VAL-SCORE-008).
+    """
+    if delta is None:
+        return 0.0
+    resolution = bpb_to_final_score(bpb) - bpb_to_final_score(bpb + HELDOUT_DELTA_BPB_EPSILON)
+    weight = max(0.0, penalty)
+    cap = min(HELDOUT_DELTA_TIE_BREAK_WEIGHT * weight, 0.5 * weight * max(0.0, resolution))
+    return cap * math.tanh(delta)
 
 
 def _manifest_covered_bytes(manifest: Mapping[str, Any], metrics: Mapping[str, Any]) -> int:

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from hashlib import sha256
 from pathlib import Path
@@ -270,16 +270,24 @@ class PrismContainerEvaluator:
         and folds the delta tie-breaker + gap penalty into the challenge-authored score block. A
         missing trained-weights artifact or unavailable val split simply skips the held-out delta
         (the run still scores on prequential bpb), so this never fails the run.
+
+        The trained-state artifact is read ONLY when the CHALLENGE-AUTHORED manifest recorded it for
+        THIS run (never a bare ``is_file()`` on the miner-writable artifacts_dir, an RCE sink), and
+        the host-side held-out gap is measured on the same tokenizer basis the run trained with.
         """
+        recorded = manifest.get("artifacts")
+        recorded_name = recorded.get("trained_state") if isinstance(recorded, Mapping) else None
+        trained_state_path = _resolve_recorded_trained_state(artifact_output, recorded_name)
         try:
             result = compute_heldout_metrics(
                 files={file.path: file.content for file in files},
                 entrypoint=architecture_entrypoint,
                 build_model_symbol=build_model_symbol,
                 ctx=self.ctx,
-                trained_state_path=artifact_output / TRAINED_STATE_ARTIFACT,
+                trained_state_path=trained_state_path,
                 val_data_dir=self.settings.platform_eval_val_data_dir,
                 train_bpb=_manifest_train_bpb(manifest),
+                train_bpb_basis=_manifest_train_bpb_basis(manifest),
             )
         except Exception:  # noqa: BLE001 - held-out is auxiliary; never fail the run on it
             return manifest
@@ -556,6 +564,36 @@ def _manifest_train_bpb(manifest: dict[str, Any]) -> float | None:
     return None
 
 
+def _manifest_train_bpb_basis(manifest: dict[str, Any]) -> str | None:
+    """The tokenizer basis the prequential TRAIN bpb was measured on (``bytes`` / ``tokenizer``)."""
+    for key in ("metrics", "score"):
+        block = manifest.get(key)
+        if isinstance(block, dict):
+            value = block.get("train_bpb_basis")
+            if isinstance(value, str) and value:
+                return value
+    return None
+
+
+def _resolve_recorded_trained_state(artifact_output: Path, recorded: Any) -> Path | None:
+    """Resolve the trained-state artifact ONLY if the CHALLENGE manifest recorded it for THIS run.
+
+    A miner-writable artifacts_dir makes a bare ``is_file()`` an unsafe-deserialization (RCE) sink:
+    the host reads only the exact challenge-authored artifact name, and only when it resolves to a
+    regular file directly under this run's artifact dir (no traversal/symlink escape).
+    """
+    if not isinstance(recorded, str) or recorded != TRAINED_STATE_ARTIFACT:
+        return None
+    try:
+        base = artifact_output.resolve()
+        candidate = (artifact_output / recorded).resolve()
+    except OSError:
+        return None
+    if candidate.parent != base:
+        return None
+    return candidate if candidate.is_file() else None
+
+
 def _merge_heldout_into_manifest(manifest: dict[str, Any], result: HeldoutResult) -> None:
     """Fold the host-computed held-out delta + anti-memorization gap into the v2 manifest blocks.
 
@@ -772,6 +810,14 @@ if rank == 0:
             stale.unlink()
         except OSError:
             pass
+    # Own the held-out artifact path from the start: a miner could have planted a hostile pickle at
+    # trained_state.pt before the runner ran. Remove it so only challenge-written weights can exist.
+    try:
+        (Path(artifacts_dir) / TRAINED_STATE_FILENAME).unlink()
+    except FileNotFoundError:
+        pass
+    except OSError:
+        pass
 
 
 def _resolve_train_shards(data_dir):
@@ -1325,6 +1371,14 @@ score_final = (
     else None
 )
 trained_model = getattr(capture, "model", None) if capture is not None else None
+# Tokenizer basis the prequential TRAIN bpb was measured on: "bytes" when the challenge instrument
+# fed raw UTF-8 bytes (no miner tokenizer), else "tokenizer" (the miner passed a tokenizer to
+# iter_train_batches). The HOST held-out measures val bpb on the BYTE basis, so the scorer only
+# applies the anti-memorization GAP penalty for like-for-like bases (a benign tokenizer learner is
+# never false-flagged; the byte-denominator delta tie-break stays valid regardless).
+train_bpb_basis = (
+    "bytes" if capture is None or getattr(capture, "tokenizer", None) is None else "tokenizer"
+)
 # The held-out delta + anti-memorization gap are computed HOST-SIDE on the SECRET val split (not
 # mounted here); the runner only persists the trained weights so the scorer can run the twin and
 # the trained model on val. ``trained_state_file`` is filled in below once the save succeeds.
@@ -1379,6 +1433,7 @@ def _write_challenge_manifest():
             "bits_per_byte": prequential_bpb,
             "total_bytes_covered": covered_bytes,
             "nan_inf_batches": nan_inf_batches,
+            "train_bpb_basis": train_bpb_basis,
         },
         "score": {
             "schema": "prism_score.v2",
@@ -1394,6 +1449,7 @@ def _write_challenge_manifest():
             "tokens_consumed": predicted_tokens,
             "compute_normalization": "tokens_bytes",
             "wall_clock_term": False,
+            "train_bpb_basis": train_bpb_basis,
             "anti_cheat_multiplier": score_anti_cheat_multiplier,
             "anomaly": step0_anomaly,
             "miner_reported_ignored": True,
@@ -1421,14 +1477,29 @@ def _save_trained_state():
     # a forced-seed random-init twin on the SECRET val split. Best-effort: a save failure only
     # skips the held-out delta; the run still scores on prequential bpb.
     global trained_state_file
+    target = Path(artifacts_dir) / TRAINED_STATE_FILENAME
+    # Unconditionally OWN this path BEFORE writing: remove any miner-planted file first so a hostile
+    # pickle cannot survive by making state_dict() raise (or by a zero-forward run skipping the
+    # save). The host reads only the manifest-recorded artifact, so trained_state_file stays None
+    # unless THIS challenge save below succeeds.
+    try:
+        target.unlink()
+    except FileNotFoundError:
+        pass
+    except OSError:
+        pass
     if zero_forward or trained_model is None:
         return
     try:
         state = {key: value.detach().to("cpu") for key, value in trained_model.state_dict().items()}
-        torch.save(state, Path(artifacts_dir) / TRAINED_STATE_FILENAME)
+        torch.save(state, target)
         trained_state_file = TRAINED_STATE_FILENAME
     except Exception as exc:  # noqa: BLE001 - never fail the run on a held-out artifact save
         sys.stderr.write("PRISM_RUNNER: trained-state save skipped: " + repr(exc) + "\n")
+        try:
+            target.unlink()
+        except OSError:
+            pass
         trained_state_file = None
 
 
