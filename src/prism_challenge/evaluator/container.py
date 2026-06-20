@@ -441,6 +441,11 @@ class PrismContainerEvaluator:
             # Loopback rendezvous so the c10d hostname lookup cannot hang (readiness B2).
             "MASTER_ADDR": DEFAULT_MASTER_ADDR,
             "MASTER_PORT": str(DEFAULT_MASTER_PORT),
+            # Strict torch.use_deterministic_algorithms(True) requires this on CUDA, so a cuBLAS
+            # GEMM under the forced deterministic flags cannot raise / silently regress on a
+            # torch / base-image bump (architecture.md 4.3, 9). The runner also defaults it before
+            # importing torch as defense in depth.
+            "CUBLAS_WORKSPACE_CONFIG": ":4096:8",
         }
         if int(gpu_allocation["actual_gpu_count"]) > 1:
             env["PRISM_DISTRIBUTED_BACKEND"] = "nccl"
@@ -805,6 +810,11 @@ forced_seed = int(context_data.get("seed", 1337))
 
 # --- FORCE global determinism BEFORE importing any miner code (architecture.md 4.3) ---
 os.environ.setdefault("PYTHONHASHSEED", str(forced_seed))
+# Strict torch.use_deterministic_algorithms(True) requires CUBLAS_WORKSPACE_CONFIG on CUDA; set it
+# BEFORE importing torch (it is read when the first cuBLAS handle is created) so determinism cannot
+# silently regress on a torch / base-image bump. The container env already carries it; this is the
+# defense-in-depth default for the standalone runner.
+os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
 os.environ.setdefault("MASTER_ADDR", str(payload.get("master_addr", "127.0.0.1")))
 os.environ.setdefault("MASTER_PORT", str(payload.get("master_port", 29500)))
 random.seed(forced_seed)
@@ -1233,6 +1243,21 @@ miner_build_model = getattr(arch_module, build_model_symbol, None)
 if not callable(miner_build_model):
     _fail("architecture entrypoint " + str(arch_entry) + " is missing " + build_model_symbol)
 interface._MINER_BUILD_MODEL = miner_build_model
+
+
+def _forced_miner_build_model(*args, **kwargs):
+    # Re-apply the forced init even on the DIRECT-import build path (training.py:
+    # ``from architecture import build_model`` / ``architecture.build_model(ctx)``) that bypasses
+    # ctx.build_model, so the harness-forced random init/determinism is authoritative regardless of
+    # how the miner reaches build_model and cannot be shifted by a re-seed (VAL-HARNESS-004,
+    # VAL-CHEAT-010; architecture.md 4.3, 6.3).
+    _force_init(forced_seed)
+    return miner_build_model(*args, **kwargs)
+
+
+# Replace the architecture module's attribute BEFORE importing training.py, so a module-level
+# ``from architecture import build_model`` in the miner loop binds to the forced wrapper.
+setattr(arch_module, build_model_symbol, _forced_miner_build_model)
 train_module = _import_from_file(project_root / train_entry, Path(train_entry).stem)
 miner_train = getattr(train_module, train_symbol, None)
 if not callable(miner_train):
