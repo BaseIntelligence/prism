@@ -53,7 +53,9 @@ def test_size_check_rejects_just_over_cap(small_cap_client):
 
 def test_health_version_and_internal_auth(client):
     assert client.get("/health").json()["slug"] == "prism"
-    assert "nas" in client.get("/version").json()["capabilities"]
+    capabilities = client.get("/version").json()["capabilities"]
+    assert "nas" not in capabilities
+    assert "get_weights" in capabilities
     assert client.get("/internal/v1/get_weights").status_code == 401
     response = client.get(
         "/internal/v1/get_weights",

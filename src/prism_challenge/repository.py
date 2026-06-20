@@ -242,25 +242,6 @@ class PrismRepository:
                 ),
             )
 
-    async def hold_submission_for_duplicate_review(
-        self, *, submission_id: str, reason: str, report: dict[str, Any]) -> None:
-        now = now_iso()
-        async with self.database.connect() as conn:
-            await conn.execute(
-                "UPDATE submissions SET status=?, error=?, updated_at=? WHERE id=?",
-                (SubmissionStatus.HELD.value, reason, now, submission_id),
-            )
-            await self._create_component_hold(
-                conn,
-                submission_id=submission_id,
-                reason=reason,
-                confidence=float(
-                    report.get("source_similarity") or report.get("graph_similarity") or 0.0
-                ),
-                payload={"submission_id": submission_id, "duplicate_report": report},
-                now=now,
-            )
-
     async def store_llm_review(
         self,
         *,
@@ -660,11 +641,9 @@ class PrismRepository:
         return [dict(row) for row in rows]
 
     async def expire_stale_held(self) -> list[str]:
-        # NOT EXISTS scoping is load-bearing: only STUCK LLM holds (held with NO
-        # pending component_review_holds row) are expired. Component holds keep a
-        # pending row, so expiring them to rejected here would let a later resolve
-        # approve-path flip rejected -> completed (terminal-state resurrection that
-        # bypasses the review gate). Cutoff/compare mirror requeue_orphaned_running.
+        # The only remaining HELD source is the LLM suspicion-without-evidence quarantine
+        # (no resolve surface in v2), so every stale held row is reaped to the terminal
+        # rejected state. Cutoff/compare mirror requeue_orphaned_running.
         cutoff = (
             datetime.now(UTC) - timedelta(seconds=self.held_review_timeout_seconds)
         ).isoformat()
@@ -672,23 +651,14 @@ class PrismRepository:
         reason = "review hold expired without resolution"
         async with self.database.connect() as conn:
             rows = await conn.execute_fetchall(
-                "SELECT id FROM submissions "
-                "WHERE status=? AND updated_at < ? "
-                "AND NOT EXISTS ("
-                "SELECT 1 FROM component_review_holds h "
-                "WHERE h.submission_id = submissions.id AND h.status='pending'"
-                ")",
+                "SELECT id FROM submissions WHERE status=? AND updated_at < ?",
                 (SubmissionStatus.HELD.value, cutoff),
             )
             expired = [str(row["id"]) for row in rows]
             if expired:
                 await conn.execute(
                     "UPDATE submissions SET status=?, error=?, updated_at=? "
-                    "WHERE status=? AND updated_at < ? "
-                    "AND NOT EXISTS ("
-                    "SELECT 1 FROM component_review_holds h "
-                    "WHERE h.submission_id = submissions.id AND h.status='pending'"
-                    ")",
+                    "WHERE status=? AND updated_at < ?",
                     (
                         SubmissionStatus.REJECTED.value,
                         reason,
@@ -821,74 +791,6 @@ class PrismRepository:
                 dumps(payload),
                 reason,
                 now_iso(),
-            ),
-        )
-
-    async def _create_component_hold(
-        self,
-        conn: aiosqlite.Connection,
-        *,
-        submission_id: str,
-        reason: str,
-        confidence: float,
-        payload: dict[str, Any],
-        now: str,
-    ) -> str:
-        hold_id = str(uuid4())
-        await conn.execute(
-            "INSERT OR REPLACE INTO component_review_holds("
-            "id, submission_id, status, reason, confidence, payload, created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            (
-                hold_id,
-                submission_id,
-                "pending",
-                reason,
-                max(0.0, min(1.0, confidence)),
-                dumps(payload),
-                now,
-                now,
-            ),
-        )
-        await self._record_ownership_event(
-            conn,
-            submission_id=submission_id,
-            event="held",
-            scope="component",
-            reason=reason,
-            now=now,
-        )
-        return hold_id
-
-    async def _record_ownership_event(
-        self,
-        conn: aiosqlite.Connection,
-        *,
-        submission_id: str,
-        event: str,
-        scope: str,
-        reason: str,
-        now: str,
-        architecture_id: str | None = None,
-        training_variant_id: str | None = None,
-        from_hotkey: str | None = None,
-        to_hotkey: str | None = None,
-    ) -> None:
-        await conn.execute(
-            "INSERT INTO ownership_events("
-            "id, submission_id, event, scope, architecture_id, training_variant_id,"
-            "from_hotkey, to_hotkey, reason, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (
-                str(uuid4()),
-                submission_id,
-                event,
-                scope,
-                architecture_id,
-                training_variant_id,
-                from_hotkey,
-                to_hotkey,
-                reason,
-                now,
             ),
         )
 

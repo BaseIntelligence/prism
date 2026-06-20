@@ -41,7 +41,7 @@ def create_challenge_app(
 
     @app.get("/version", response_model=VersionResponse, include_in_schema=False)
     async def version() -> VersionResponse:
-        capabilities = ["get_weights", "proxy_routes", "sqlite", "nas"]
+        capabilities = ["get_weights", "proxy_routes", "sqlite"]
         backend = getattr(settings, "execution_backend", "")
         if settings.docker_enabled or backend in {
             "platform_container",

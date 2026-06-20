@@ -497,35 +497,28 @@ class PrismWorker:
             top_k=self.settings.plagiarism_top_k,
         )
         if duplicate.candidate is not None:
-            violations = ["duplicate_similarity"] if duplicate.rejected else []
+            # v2 has no operator hold-resolution surface (the NAS review endpoints were
+            # decommissioned), so the borderline-duplicate quarantine band would strand a
+            # submission in HELD forever. Fold it into a terminal rejection at ingress;
+            # exact-source-hash dedup is the same path.
+            rejected = duplicate.rejected or duplicate.held
+            violations = ["duplicate_similarity"] if rejected else []
             await self.repository.store_plagiarism_review(
                 submission_id=submission_id,
                 candidate_submission_id=duplicate.candidate.submission_id,
                 similarity=float(duplicate.report["source_similarity"]),
-                verdict=duplicate.rejected,
+                verdict=rejected,
                 reason=duplicate.reason,
                 violations=violations,
                 report=duplicate.report,
             )
-            if duplicate.rejected:
+            if rejected:
                 return StaticReviewOutcome(
                     code_for_eval,
                     True,
                     reason=duplicate.reason,
                     violations=tuple(violations),
                 )
-            if duplicate.held:
-                logger.warning(
-                    "submission %s held for duplicate review: %s",
-                    submission_id,
-                    duplicate.reason,
-                )
-                await self.repository.hold_submission_for_duplicate_review(
-                    submission_id=submission_id,
-                    reason=duplicate.reason,
-                    report=duplicate.report,
-                )
-                return StaticReviewOutcome(code_for_eval, False, duplicate.reason, held=True)
             return StaticReviewOutcome(code_for_eval, False)
 
         return StaticReviewOutcome(code_for_eval, False)

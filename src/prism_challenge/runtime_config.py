@@ -13,6 +13,7 @@ from .evaluator.modes import (
     FULL_SCALE_PHASE_2_TOKEN_TARGET,
     GPU_PROXY_TOKEN_TARGET,
 )
+from .evaluator.schemas import RUN_MANIFEST_V2_FILENAME
 
 
 class RuntimeConfigError(RuntimeError):
@@ -153,7 +154,7 @@ class ArtifactLimits(BaseModel):
     max_code_bytes: int = Field(default=200_000, ge=1)
     max_files: int = Field(default=200, ge=1)
     max_bytes: int = Field(default=2_000_000, ge=1)
-    required_manifest_name: str = "prism_run_manifest.v1.json"
+    required_manifest_name: str = RUN_MANIFEST_V2_FILENAME
 
 
 class SandboxLimits(BaseModel):
@@ -291,7 +292,7 @@ def runtime_policy_defaults(settings: PrismSettings) -> dict[str, Any]:
             "max_code_bytes": settings.max_code_bytes,
             "max_files": settings.plagiarism_storage_max_files,
             "max_bytes": settings.plagiarism_storage_max_bytes,
-            "required_manifest_name": "prism_run_manifest.v1.json",
+            "required_manifest_name": RUN_MANIFEST_V2_FILENAME,
         },
         "sandbox_limits": {
             "docker_enabled": settings.docker_enabled,
