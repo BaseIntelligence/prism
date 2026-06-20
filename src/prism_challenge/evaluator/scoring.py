@@ -221,6 +221,21 @@ def rank_leaderboard(rows: Iterable[LeaderboardRow]) -> list[LeaderboardRow]:
     return sorted(rows, key=leaderboard_rank_key)
 
 
+def dedupe_best_per_hotkey(rows: Iterable[LeaderboardRow]) -> list[LeaderboardRow]:
+    """Keep exactly ONE surviving submission per hotkey: the one the canonical leaderboard
+    total-order ranks first for that hotkey (highest final_score on the epsilon grid -- with the
+    held-out-delta tie-break already folded into final_score above the grid -- then earliest
+    commit, then submission id). A hotkey therefore appears at most ONCE, and a worse same-hotkey
+    submission never supersedes or co-drives weight when a better one exists (architecture.md 5,10).
+    """
+    best: dict[str, LeaderboardRow] = {}
+    for row in rows:
+        current = best.get(row.hotkey)
+        if current is None or leaderboard_rank_key(row) < leaderboard_rank_key(current):
+            best[row.hotkey] = row
+    return list(best.values())
+
+
 def score_prequential_bpb(
     manifest: Mapping[str, Any], *, sane_max: float = BPB_SANE_MAX
 ) -> PrequentialBpbScore:

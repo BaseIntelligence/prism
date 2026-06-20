@@ -11,7 +11,7 @@ from .db import Database, dumps, loads
 from .evaluator.schemas import (
     DeterministicEvidence,
 )
-from .evaluator.scoring import LeaderboardRow, rank_leaderboard
+from .evaluator.scoring import LeaderboardRow, dedupe_best_per_hotkey, rank_leaderboard
 from .models import (
     SubmissionCreate,
     SubmissionResponse,
@@ -506,7 +506,33 @@ class PrismRepository:
                 "ORDER BY sc.final_score DESC, s.created_at ASC, s.id ASC LIMIT ?",
                 (epoch_id, SubmissionStatus.COMPLETED.value, limit),
             )
-        ranked = rank_leaderboard(
+        # Dedup to ONE surviving submission per hotkey (the leaderboard-best) BEFORE ranking, so a
+        # hotkey appears at most once and a worse same-hotkey submission never holds a board row.
+        survivors = dedupe_best_per_hotkey(
+            LeaderboardRow(
+                submission_id=str(row["id"]),
+                hotkey=str(row["hotkey"]),
+                final_score=float(cast(SupportsFloat, row["final_score"])),
+                accepted_at=str(row["created_at"]),
+            )
+            for row in rows
+        )
+        ranked = rank_leaderboard(survivors)
+        return [
+            {"hotkey": entry.hotkey, "id": entry.submission_id, "final_score": entry.final_score}
+            for entry in ranked
+        ]
+
+    async def score_rows(self, epoch_id: int) -> list[dict[str, object]]:
+        async with self.database.connect() as conn:
+            rows = await conn.execute_fetchall(
+                "SELECT s.hotkey, s.id, s.created_at, sc.final_score FROM scores sc "
+                "JOIN submissions s ON s.id=sc.submission_id WHERE s.epoch_id=? AND s.status=?",
+                (epoch_id, SubmissionStatus.COMPLETED.value),
+            )
+        # Best-per-miner supersede so weights never sum multiple same-hotkey submissions: keep the
+        # single submission the canonical leaderboard total-order ranks first for each hotkey.
+        survivors = dedupe_best_per_hotkey(
             LeaderboardRow(
                 submission_id=str(row["id"]),
                 hotkey=str(row["hotkey"]),
@@ -517,17 +543,8 @@ class PrismRepository:
         )
         return [
             {"hotkey": entry.hotkey, "id": entry.submission_id, "final_score": entry.final_score}
-            for entry in ranked
+            for entry in survivors
         ]
-
-    async def score_rows(self, epoch_id: int) -> list[dict[str, object]]:
-        async with self.database.connect() as conn:
-            rows = await conn.execute_fetchall(
-                "SELECT s.hotkey, s.id, sc.final_score FROM scores sc "
-                "JOIN submissions s ON s.id=sc.submission_id WHERE s.epoch_id=? AND s.status=?",
-                (epoch_id, SubmissionStatus.COMPLETED.value),
-            )
-        return [dict(row) for row in rows]
 
     async def list_epochs(self, limit: int = 50) -> list[dict[str, object]]:
         async with self.database.connect() as conn:

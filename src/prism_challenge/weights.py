@@ -24,7 +24,7 @@ def _normalize(rows: list[dict[str, object]]) -> dict[str, float]:
         hotkey = str(row["hotkey"])
         raw_score = row.get("score", row.get("final_score", 0.0))
         score = max(0.0, float(cast(SupportsFloat, raw_score)))
-        best[hotkey] = best.get(hotkey, 0.0) + score
+        best[hotkey] = max(best.get(hotkey, 0.0), score)
     total = sum(best.values())
     if total <= 0:
         return {}
