@@ -225,6 +225,26 @@ class PrismSettings(ChallengeSettings):
             "PRISM_PLATFORM_EVAL_VAL_DATA_DIR", "PRISM_EVAL_VAL_DATA_DIR"
         ),
     )
+    # Host-side held-out compute budget (architecture.md sections 4, 5; m4-heldout-live-budget-
+    # tuning). The held-out delta + anti-memorization gap are computed on the worker host (CPU)
+    # AFTER the container eval, evaluating a random-init twin + the trained model over the SECRET
+    # val split. The full single-threaded eval overruns a tight timeout, so the scorer caps the
+    # held-out eval to a FIXED, DETERMINISTIC val byte budget (a stable prefix, identical for both
+    # models so the delta stays comparable) and uses a raised, configurable timeout. The byte
+    # denominator keeps the delta tokenizer-agnostic; the fixed prefix keeps it deterministic. A
+    # byte budget <= 0 scores the entire val split.
+    platform_eval_heldout_val_byte_budget: int = Field(
+        default=65536,
+        validation_alias=AliasChoices(
+            "PRISM_PLATFORM_EVAL_HELDOUT_VAL_BYTE_BUDGET", "PRISM_EVAL_HELDOUT_VAL_BYTE_BUDGET"
+        ),
+    )
+    platform_eval_heldout_timeout_seconds: float = Field(
+        default=600.0,
+        validation_alias=AliasChoices(
+            "PRISM_PLATFORM_EVAL_HELDOUT_TIMEOUT_SECONDS", "PRISM_EVAL_HELDOUT_TIMEOUT_SECONDS"
+        ),
+    )
     platform_eval_reference_tokenizer_dir: str = Field(
         default="/opt/reference-tokenizers",
         validation_alias=AliasChoices(

@@ -13,6 +13,13 @@ weights (``trained_state.pt``); this module rebuilds the miner architecture unde
 (both a random-init twin and a fresh model loaded with the trained weights) and evaluates both on
 val. The factory + forward run in a short-lived, time/memory-bounded ``forkserver`` child (mirroring
 ``static_instantiation``) so a hostile model cannot stall or balloon the worker.
+
+To complete LIVE within a bounded compute budget (the full secret-val eval is single-threaded on
+the manager CPU and overruns a tight timeout), the held-out eval is capped to a FIXED, DETERMINISTIC
+val byte budget: only a stable prefix of the val split is scored, and the SAME prefix is used for
+both the random-init twin and the trained model so the delta stays comparable. The timeout is
+configurable (raised for the scorer). The byte denominator keeps the delta tokenizer-agnostic and
+the fixed prefix keeps it deterministic (same submission + seed + budget => same delta).
 """
 
 from __future__ import annotations
@@ -33,9 +40,19 @@ from .dataset import LockedDatasetError, iter_locked_documents
 from .interface import PrismContext
 from .scoring import MEMORIZATION_GAP_THRESHOLD_BPB
 
-DEFAULT_TIMEOUT_SECONDS = 120.0
+# Raised from the original 120s: a 150M-param model forward over the bounded val subsample on the
+# manager CPU needs headroom above 120s, while the byte budget keeps the absolute compute small.
+# Configurable per-deploy via ``PrismSettings.platform_eval_heldout_timeout_seconds``.
+DEFAULT_TIMEOUT_SECONDS = 600.0
 DEFAULT_MEMORY_HEADROOM_BYTES = 8 * 1024**3
 DEFAULT_HELDOUT_BATCH_SIZE = 8
+# Fixed, deterministic val compute budget: the held-out eval scores only a stable PREFIX of the
+# secret val split covering at most this many raw UTF-8 bytes (plus at most one boundary-crossing
+# document). Both the random-init twin and the trained model see the IDENTICAL prefix, so the delta
+# stays comparable and directionally correct while the host-side eval completes within budget. A
+# value <= 0 disables the cap (scores the entire val split). Configurable per-deploy via
+# ``PrismSettings.platform_eval_heldout_val_byte_budget``.
+DEFAULT_HELDOUT_VAL_BYTE_BUDGET = 65536
 # A NaN/Inf held-out batch loss is sanitized to a worst-case (high) per-batch code-length so a
 # degenerate model can never collapse into a finite, advantageous held-out bpb.
 WORST_CASE_LOSS_MULTIPLIER = 2.0
@@ -58,6 +75,7 @@ class HeldoutResult:
     memorization_flag: bool
     train_bpb_basis: str | None = None
     val_bpb_basis: str = VAL_BPB_BASIS
+    val_covered_bytes: int = 0
 
     def as_metrics(self) -> dict[str, Any]:
         payload: dict[str, Any] = {
@@ -67,6 +85,7 @@ class HeldoutResult:
             "held_out_delta": self.heldout_delta,
             "memorization_flag": self.memorization_flag,
             "val_bpb_basis": self.val_bpb_basis,
+            "val_covered_bytes": self.val_covered_bytes,
         }
         if self.train_bpb_basis is not None:
             payload["train_bpb_basis"] = self.train_bpb_basis
@@ -112,6 +131,7 @@ def compute_heldout_metrics(
     train_bpb_basis: str | None = None,
     build_model_symbol: str = "build_model",
     batch_size: int = DEFAULT_HELDOUT_BATCH_SIZE,
+    val_byte_budget: int = DEFAULT_HELDOUT_VAL_BYTE_BUDGET,
     timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS,
     memory_headroom_bytes: int = DEFAULT_MEMORY_HEADROOM_BYTES,
     gap_threshold_bpb: float = MEMORIZATION_GAP_THRESHOLD_BPB,
@@ -121,6 +141,12 @@ def compute_heldout_metrics(
     Returns ``None`` (held-out skipped, the run still scores on prequential bpb) when the trained
     weights are absent, the secret val split is unavailable, or the bounded child cannot produce a
     finite/positive held-out bpb for both models.
+
+    ``val_byte_budget`` caps the host-side compute to a FIXED, DETERMINISTIC prefix of the secret
+    val split (at most this many raw UTF-8 bytes, plus one boundary-crossing document). The twin and
+    the trained model are scored over the IDENTICAL prefix so the delta stays comparable and
+    directionally correct, while the eval completes LIVE within budget. A value <= 0 scores the
+    whole val split.
 
     ``train_bpb_basis`` is the tokenizer basis the run's prequential TRAIN bpb was measured on. The
     held-out val bpb is always byte-level (``VAL_BPB_BASIS``); the anti-memorization GAP penalty is
@@ -147,6 +173,7 @@ def compute_heldout_metrics(
             str(state_path),
             str(val_data_dir),
             int(batch_size),
+            int(val_byte_budget),
             int(memory_headroom_bytes),
             child_conn,
         ),
@@ -183,6 +210,8 @@ def compute_heldout_metrics(
     val_bpb_random = float(val_bpb_random)  # type: ignore[arg-type]
     val_bpb_trained = float(val_bpb_trained)  # type: ignore[arg-type]
     heldout_delta = val_bpb_random - val_bpb_trained
+    covered = detail.get("val_covered_bytes")
+    val_covered_bytes = int(covered) if isinstance(covered, int | float) else 0
     gap: float | None = None
     flag = False
     bases_comparable = train_bpb_basis is None or train_bpb_basis == VAL_BPB_BASIS
@@ -196,6 +225,7 @@ def compute_heldout_metrics(
         train_heldout_gap=gap,
         memorization_flag=flag,
         train_bpb_basis=train_bpb_basis,
+        val_covered_bytes=val_covered_bytes,
     )
 
 
@@ -216,6 +246,7 @@ def _child_heldout(
     trained_state_path: str,
     val_data_dir: str,
     batch_size: int,
+    val_byte_budget: int,
     memory_headroom_bytes: int,
     conn: Any,
 ) -> None:
@@ -254,16 +285,25 @@ def _child_heldout(
             conn.send(("error", f"architecture is missing callable {symbol}"))
             return
 
-        texts = _load_val_texts(val_data_dir)
+        # A fixed, deterministic prefix of the val split (same prefix for twin + trained), bounding
+        # the host-side compute so the held-out delta completes LIVE within budget.
+        texts = _load_val_texts(val_data_dir, val_byte_budget)
         if not texts:
             conn.send(("skip", "val split empty"))
             return
+        val_covered_bytes = sum(len(text.encode("utf-8")) for text in texts)
 
         vocab_size = max(int(ctx.vocab_size), 2)
         seq_len = max(int(ctx.sequence_length), 2)
         baseline_nats = math.log(vocab_size)
 
-        # Random-init twin: forced-seed instantiation reproduces the trained model's step-0 weights.
+        # Random-init baseline: a forced-seed CPU instantiation of the SAME architecture. This is a
+        # REPRESENTATIVE random-init twin for the byte-level held-out delta tie-breaker, NOT a
+        # faithful reproduction of the in-container runner's step-0 weights (the runner seeds CUDA +
+        # random + sets deterministic flags on the GPU device; here we only seed CPU torch). The
+        # delta stays a valid "trained vs a random-init twin of the same architecture" comparison
+        # and is directionally correct (a genuine learner has strictly lower val bpb than this
+        # baseline; a no-op coincides with it => delta ~ 0).
         torch.manual_seed(int(ctx.seed))
         twin = factory(ctx)
         if not isinstance(twin, torch.nn.Module):
@@ -293,7 +333,11 @@ def _child_heldout(
 
         conn.send((
             "ok",
-            {"val_bpb_random_init": val_bpb_random, "val_bpb_trained": val_bpb_trained},
+            {
+                "val_bpb_random_init": val_bpb_random,
+                "val_bpb_trained": val_bpb_trained,
+                "val_covered_bytes": val_covered_bytes,
+            },
         ))
     except BaseException as exc:  # noqa: BLE001 - report any failure cleanly to the parent
         try:
@@ -308,9 +352,25 @@ def _child_heldout(
         os._exit(0)
 
 
-def _load_val_texts(val_data_dir: str) -> list[str]:
+def _load_val_texts(val_data_dir: str, byte_budget: int) -> list[str]:
+    """A deterministic prefix of the val split bounded by ``byte_budget`` raw UTF-8 bytes.
+
+    Documents are consumed in the locked, challenge-controlled order (``iter_locked_documents``) and
+    accumulated until the cumulative byte count reaches ``byte_budget`` (the boundary-crossing
+    document is included, so at least one document is always scored). A ``byte_budget`` <= 0 returns
+    the entire split. The prefix is identical across runs and is the SAME for the twin and the
+    trained model, so the held-out delta stays deterministic and comparable.
+    """
     try:
-        return [doc.text for doc in iter_locked_documents(val_data_dir, "val")]
+        texts: list[str] = []
+        total = 0
+        for doc in iter_locked_documents(val_data_dir, "val"):
+            texts.append(doc.text)
+            if byte_budget > 0:
+                total += len(doc.text.encode("utf-8"))
+                if total >= byte_budget:
+                    break
+        return texts
     except LockedDatasetError:
         return []
 

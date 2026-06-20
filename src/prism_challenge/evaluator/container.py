@@ -288,6 +288,8 @@ class PrismContainerEvaluator:
                 val_data_dir=self.settings.platform_eval_val_data_dir,
                 train_bpb=_manifest_train_bpb(manifest),
                 train_bpb_basis=_manifest_train_bpb_basis(manifest),
+                val_byte_budget=self.settings.platform_eval_heldout_val_byte_budget,
+                timeout_seconds=self.settings.platform_eval_heldout_timeout_seconds,
             )
         except Exception:  # noqa: BLE001 - held-out is auxiliary; never fail the run on it
             return manifest
