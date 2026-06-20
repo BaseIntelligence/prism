@@ -70,6 +70,10 @@ class PrequentialBpbScore:
     train_heldout_gap: float | None = None
     memorization_flag: bool = False
     memorization_penalty: float = 1.0
+    # The CONVERGED (final-checkpoint) train bpb used as the gap's train reference, and which
+    # reference produced the gap ("converged" vs the curve-averaged "prequential" fallback).
+    train_bpb_converged: float | None = None
+    gap_basis: str | None = None
 
     def metrics_payload(self) -> dict[str, Any]:
         """Flat metrics for the ``scores`` row (challenge-computed; no raw-loss term)."""
@@ -98,6 +102,10 @@ class PrequentialBpbScore:
         if self.train_heldout_gap is not None:
             payload["train_heldout_gap"] = self.train_heldout_gap
             payload["train_val_gap"] = self.train_heldout_gap
+        if self.train_bpb_converged is not None:
+            payload["train_bpb_converged"] = self.train_bpb_converged
+        if self.gap_basis is not None:
+            payload["gap_basis"] = self.gap_basis
         return payload
 
     def manifest_score_block(self) -> dict[str, Any]:
@@ -133,6 +141,10 @@ class PrequentialBpbScore:
             block["val_bpb_random_init"] = self.val_bpb_random_init
         if self.train_heldout_gap is not None:
             block["train_heldout_gap"] = self.train_heldout_gap
+        if self.train_bpb_converged is not None:
+            block["train_bpb_converged"] = self.train_bpb_converged
+        if self.gap_basis is not None:
+            block["gap_basis"] = self.gap_basis
         return block
 
 
@@ -272,6 +284,8 @@ def score_prequential_bpb(
         train_heldout_gap=heldout.gap,
         memorization_flag=heldout.memorization_flag,
         memorization_penalty=heldout.penalty,
+        train_bpb_converged=heldout.train_bpb_converged,
+        gap_basis=heldout.gap_basis,
     )
 
 
@@ -283,6 +297,8 @@ class _HeldoutView:
     gap: float | None
     memorization_flag: bool
     penalty: float
+    train_bpb_converged: float | None = None
+    gap_basis: str | None = None
 
 
 def _read_heldout(
@@ -303,22 +319,34 @@ def _read_heldout(
     delta = _coerce_float(_first_present(metrics, score_block, ("heldout_delta", "held_out_delta")))
     val_trained = _coerce_float(_first_present(metrics, score_block, ("val_bpb_trained",)))
     val_random = _coerce_float(_first_present(metrics, score_block, ("val_bpb_random_init",)))
-    # The anti-memorization GAP compares train bpb against val bpb; it is only meaningful when both
-    # were measured on the SAME tokenizer basis. The host measures val bpb on raw UTF-8 bytes, so a
-    # native-tokenizer train basis would inflate the "gap" and false-flag a benign learner
-    # (VAL-SCORE-009 / VAL-SCORE-004). When the bases are not like-for-like, no gap/flag is applied;
-    # the byte-denominator delta tie-break stays valid regardless. Absent basis info => comparable
-    # (backward compatible with manifests that recorded no basis).
+    # The CONVERGED (final-checkpoint) train reference is measured byte-level on the SAME trained
+    # model as the held-out val bpb, so the gap is like-for-like by construction. When the manifest
+    # carries it, the gap bypasses the tokenizer-basis gating below (which only guards the inflated,
+    # potentially cross-basis prequential fallback) and reflects the converged model -- closing the
+    # false-negative hole where the curve-averaged prequential reference shrinks the gap.
+    train_converged = _coerce_float(_first_present(metrics, score_block, ("train_bpb_converged",)))
+    gap_basis = _coerce_str(_first_present(metrics, score_block, ("gap_basis",)))
+    converged = gap_basis == "converged" or train_converged is not None
+    # The anti-memorization GAP compares train bpb against val bpb; for the prequential fallback it
+    # is only meaningful when both were measured on the SAME tokenizer basis. The host measures val
+    # bpb on raw UTF-8 bytes, so a native-tokenizer train basis would inflate the "gap" and
+    # false-flag a benign learner (VAL-SCORE-009 / VAL-SCORE-004). Absent basis info => comparable
+    # (backward compatible with manifests that recorded no basis). A converged reference is always
+    # comparable (byte-level on both sides).
     train_basis = _coerce_str(_first_present(metrics, score_block, ("train_bpb_basis",)))
     val_basis = _coerce_str(_first_present(metrics, score_block, ("val_bpb_basis",)))
-    bases_comparable = train_basis is None or val_basis is None or train_basis == val_basis
+    bases_comparable = converged or (
+        train_basis is None or val_basis is None or train_basis == val_basis
+    )
     gap = _coerce_float(
         _first_present(metrics, score_block, ("train_heldout_gap", "train_val_gap"))
     )
     if not bases_comparable:
         gap = None
-    elif gap is None and val_trained is not None and math.isfinite(train_bpb):
-        gap = val_trained - train_bpb
+    elif gap is None and val_trained is not None:
+        reference = train_converged if train_converged is not None else train_bpb
+        if reference is not None and math.isfinite(reference):
+            gap = val_trained - reference
     explicit_flag = bool(
         metrics.get("memorization_flag")
         or score_block.get("memorization_flag")
@@ -335,6 +363,8 @@ def _read_heldout(
         gap=gap,
         memorization_flag=memorization_flag,
         penalty=penalty,
+        train_bpb_converged=train_converged,
+        gap_basis=("converged" if converged else gap_basis),
     )
 
 

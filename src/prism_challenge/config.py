@@ -225,6 +225,20 @@ class PrismSettings(ChallengeSettings):
             "PRISM_PLATFORM_EVAL_VAL_DATA_DIR", "PRISM_EVAL_VAL_DATA_DIR"
         ),
     )
+    # Host-readable train split for the anti-memorization gap (architecture.md section 6.2). The
+    # held-out scorer re-evaluates the trained model byte-level over a fixed prefix of the EXPOSED
+    # train split to obtain the CONVERGED (final-checkpoint) train bpb, used as the train side of
+    # the train-vs-held-out gap. Measuring the gap against the converged model (not the
+    # curve-averaged prequential AUC, which is inflated by early high-loss steps and shrinks the
+    # gap) reliably flags a genuine memorizer while leaving a benign learner unflagged. The train
+    # split is NOT secret, so the deploy may mount it into the scorer container; when this path is
+    # unset/unavailable the gap gracefully falls back to the (basis-gated) prequential reference.
+    platform_eval_train_data_dir: str = Field(
+        default="/data/fineweb-edu/train",
+        validation_alias=AliasChoices(
+            "PRISM_PLATFORM_EVAL_TRAIN_DATA_DIR", "PRISM_EVAL_TRAIN_DATA_DIR"
+        ),
+    )
     # Host-side held-out compute budget (architecture.md sections 4, 5; m4-heldout-live-budget-
     # tuning). The held-out delta + anti-memorization gap are computed on the worker host (CPU)
     # AFTER the container eval, evaluating a random-init twin + the trained model over the SECRET

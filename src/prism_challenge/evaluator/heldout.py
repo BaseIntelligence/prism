@@ -76,6 +76,12 @@ class HeldoutResult:
     train_bpb_basis: str | None = None
     val_bpb_basis: str = VAL_BPB_BASIS
     val_covered_bytes: int = 0
+    # The CONVERGED (final-checkpoint) train bpb: the trained model re-evaluated byte-level over a
+    # fixed prefix of the exposed train split. When present it is the train side of the gap (a
+    # like-for-like, byte-basis comparison with ``val_bpb_trained``); ``gap_basis`` records which
+    # train reference the gap used ("converged" vs the curve-averaged "prequential" fallback).
+    train_bpb_converged: float | None = None
+    gap_basis: str | None = None
 
     def as_metrics(self) -> dict[str, Any]:
         payload: dict[str, Any] = {
@@ -89,6 +95,10 @@ class HeldoutResult:
         }
         if self.train_bpb_basis is not None:
             payload["train_bpb_basis"] = self.train_bpb_basis
+        if self.train_bpb_converged is not None:
+            payload["train_bpb_converged"] = self.train_bpb_converged
+        if self.gap_basis is not None:
+            payload["gap_basis"] = self.gap_basis
         if self.train_heldout_gap is not None:
             payload["train_heldout_gap"] = self.train_heldout_gap
             payload["train_val_gap"] = self.train_heldout_gap
@@ -129,6 +139,7 @@ def compute_heldout_metrics(
     val_data_dir: str | os.PathLike[str] | None,
     train_bpb: float | None,
     train_bpb_basis: str | None = None,
+    train_data_dir: str | os.PathLike[str] | None = None,
     build_model_symbol: str = "build_model",
     batch_size: int = DEFAULT_HELDOUT_BATCH_SIZE,
     val_byte_budget: int = DEFAULT_HELDOUT_VAL_BYTE_BUDGET,
@@ -148,11 +159,21 @@ def compute_heldout_metrics(
     directionally correct, while the eval completes LIVE within budget. A value <= 0 scores the
     whole val split.
 
-    ``train_bpb_basis`` is the tokenizer basis the run's prequential TRAIN bpb was measured on. The
-    held-out val bpb is always byte-level (``VAL_BPB_BASIS``); the anti-memorization GAP penalty is
-    applied ONLY when the two bases are like-for-like, so a benign tokenizer-using learner is never
-    false-flagged (VAL-SCORE-009 / VAL-SCORE-004). The byte-denominator delta tie-breaker (random
-    twin vs trained, both byte-level on val) stays valid regardless of the train basis.
+    ``train_data_dir`` (when resolvable host-side) switches the anti-memorization GAP to use the
+    CONVERGED (final-checkpoint) train bpb as the train reference: the trained model is re-evaluated
+    byte-level over a fixed prefix of the exposed train split (the SAME byte-level method as val),
+    so the gap is a like-for-like comparison of the converged model's train vs held-out performance.
+    This closes a false-negative hole in the prequential reference: the curve-averaged prequential
+    train bpb is inflated by early high-loss steps, which SHRINKS the gap and can MISS a genuine
+    memorizer. Because both sides are byte-level on the same trained model, the converged gap is
+    basis-consistent by construction (no tokenizer-basis false-flag).
+
+    ``train_bpb_basis`` is the tokenizer basis the run's prequential TRAIN bpb was measured on. It
+    only governs the PREQUENTIAL fallback used when ``train_data_dir`` is unavailable: the held-out
+    val bpb is always byte-level (``VAL_BPB_BASIS``), so the prequential-reference gap is applied
+    ONLY when the two bases are like-for-like, sparing a benign tokenizer-using learner from a false
+    flag (VAL-SCORE-009 / VAL-SCORE-004). The byte-denominator delta tie-breaker (random twin vs
+    trained, both byte-level on val) stays valid regardless of the train basis.
     """
     if trained_state_path is None:
         return None
@@ -172,6 +193,7 @@ def compute_heldout_metrics(
             ctx,
             str(state_path),
             str(val_data_dir),
+            str(train_data_dir) if train_data_dir else "",
             int(batch_size),
             int(val_byte_budget),
             int(memory_headroom_bytes),
@@ -212,12 +234,31 @@ def compute_heldout_metrics(
     heldout_delta = val_bpb_random - val_bpb_trained
     covered = detail.get("val_covered_bytes")
     val_covered_bytes = int(covered) if isinstance(covered, int | float) else 0
+    train_converged_raw = detail.get("train_bpb_converged")
+    train_bpb_converged = (
+        float(train_converged_raw)  # type: ignore[arg-type]
+        if _is_sane_bpb(train_converged_raw)
+        else None
+    )
     gap: float | None = None
     flag = False
-    bases_comparable = train_bpb_basis is None or train_bpb_basis == VAL_BPB_BASIS
-    if bases_comparable and train_bpb is not None and math.isfinite(float(train_bpb)):
-        gap = val_bpb_trained - float(train_bpb)
+    gap_basis: str | None = None
+    if train_bpb_converged is not None:
+        # Prefer the CONVERGED (final-checkpoint) train bpb: the trained model byte-level on the
+        # exposed train split, like-for-like with the byte-level held-out val bpb. It reflects the
+        # converged model (not the inflated curve-averaged AUC), so a genuine memorizer is reliably
+        # flagged; the symmetric byte basis means no tokenizer-basis gating is needed.
+        gap = val_bpb_trained - train_bpb_converged
         flag = gap > gap_threshold_bpb
+        gap_basis = "converged"
+    else:
+        # Fallback: the curve-averaged prequential train bpb, gated to a like-for-like basis so a
+        # benign tokenizer-using learner is never false-flagged on a cross-basis gap.
+        bases_comparable = train_bpb_basis is None or train_bpb_basis == VAL_BPB_BASIS
+        if bases_comparable and train_bpb is not None and math.isfinite(float(train_bpb)):
+            gap = val_bpb_trained - float(train_bpb)
+            flag = gap > gap_threshold_bpb
+            gap_basis = "prequential"
     return HeldoutResult(
         val_bpb_trained=val_bpb_trained,
         val_bpb_random_init=val_bpb_random,
@@ -226,6 +267,8 @@ def compute_heldout_metrics(
         memorization_flag=flag,
         train_bpb_basis=train_bpb_basis,
         val_covered_bytes=val_covered_bytes,
+        train_bpb_converged=train_bpb_converged,
+        gap_basis=gap_basis,
     )
 
 
@@ -245,6 +288,7 @@ def _child_heldout(
     ctx: PrismContext,
     trained_state_path: str,
     val_data_dir: str,
+    train_data_dir: str,
     batch_size: int,
     val_byte_budget: int,
     memory_headroom_bytes: int,
@@ -287,7 +331,7 @@ def _child_heldout(
 
         # A fixed, deterministic prefix of the val split (same prefix for twin + trained), bounding
         # the host-side compute so the held-out delta completes LIVE within budget.
-        texts = _load_val_texts(val_data_dir, val_byte_budget)
+        texts = _load_split_texts(val_data_dir, "val", val_byte_budget)
         if not texts:
             conn.send(("skip", "val split empty"))
             return
@@ -331,12 +375,28 @@ def _child_heldout(
             batch_size=batch_size, baseline_nats=baseline_nats,
         )
 
+        # CONVERGED (final-checkpoint) train bpb: the SAME trained model re-evaluated byte-level
+        # over a fixed deterministic prefix of the EXPOSED train split (the data it actually
+        # learned), the SAME byte-level method used for val. The train side of the memorization gap;
+        # measuring it on the converged model (not the curve-averaged AUC) reliably exposes a
+        # memorizer's train-vs-held-out divergence. Absent/unresolvable train data => omitted, and
+        # the parent falls back to the prequential train reference.
+        train_bpb_converged: float | None = None
+        if train_data_dir:
+            train_texts = _load_split_texts(train_data_dir, "train", val_byte_budget)
+            if train_texts:
+                train_bpb_converged = _bpb_over_texts(
+                    trained, train_texts, vocab_size=vocab_size, seq_len=seq_len,
+                    batch_size=batch_size, baseline_nats=baseline_nats,
+                )
+
         conn.send((
             "ok",
             {
                 "val_bpb_random_init": val_bpb_random,
                 "val_bpb_trained": val_bpb_trained,
                 "val_covered_bytes": val_covered_bytes,
+                "train_bpb_converged": train_bpb_converged,
             },
         ))
     except BaseException as exc:  # noqa: BLE001 - report any failure cleanly to the parent
@@ -352,19 +412,20 @@ def _child_heldout(
         os._exit(0)
 
 
-def _load_val_texts(val_data_dir: str, byte_budget: int) -> list[str]:
-    """A deterministic prefix of the val split bounded by ``byte_budget`` raw UTF-8 bytes.
+def _load_split_texts(data_dir: str, split: str, byte_budget: int) -> list[str]:
+    """A deterministic prefix of ``split`` bounded by ``byte_budget`` raw UTF-8 bytes.
 
     Documents are consumed in the locked, challenge-controlled order (``iter_locked_documents``) and
     accumulated until the cumulative byte count reaches ``byte_budget`` (the boundary-crossing
     document is included, so at least one document is always scored). A ``byte_budget`` <= 0 returns
-    the entire split. The prefix is identical across runs and is the SAME for the twin and the
-    trained model, so the held-out delta stays deterministic and comparable.
+    the entire split. The prefix is identical across runs and is the SAME for both the twin and the
+    trained model (val) and for the converged train reference, so the held-out metrics stay
+    deterministic and comparable.
     """
     try:
         texts: list[str] = []
         total = 0
-        for doc in iter_locked_documents(val_data_dir, "val"):
+        for doc in iter_locked_documents(data_dir, split):
             texts.append(doc.text)
             if byte_budget > 0:
                 total += len(doc.text.encode("utf-8"))

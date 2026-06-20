@@ -287,6 +287,7 @@ class PrismContainerEvaluator:
                 ctx=self.ctx,
                 trained_state_path=trained_state_path,
                 val_data_dir=self.settings.platform_eval_val_data_dir,
+                train_data_dir=self.settings.platform_eval_train_data_dir,
                 train_bpb=_manifest_train_bpb(manifest),
                 train_bpb_basis=_manifest_train_bpb_basis(manifest),
                 val_byte_budget=self.settings.platform_eval_heldout_val_byte_budget,
