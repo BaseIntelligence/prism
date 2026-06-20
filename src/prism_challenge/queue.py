@@ -132,12 +132,38 @@ class PrismWorker:
         hotkey: str,
         code_hash: str,
     ) -> str:
+        # Static gates run FIRST: a sandbox / param-cap / distributed-contract rejection precedes
+        # and SKIPS the LLM review entirely -- no llm_reviews/llm_review_events row and no GPU
+        # work for a statically-rejected bundle (VAL-LLM-020, VAL-CONTRACT-018).
+        try:
+            snapshot = self._snapshot_from_submission(code, filename, metadata)
+            component_review = self._component_review(snapshot)
+            code_for_eval = self._entrypoint_code(
+                snapshot, component_review.components.entrypoint
+            )
+            if not code_for_eval.strip():
+                await self._reject_submission(
+                    submission_id, "submission contains no Python source"
+                )
+                return submission_id
+            report = self._inspect_project_snapshot(snapshot, code_for_eval)
+            await self._static_model_instantiation_check(snapshot, component_review)
+            self._distributed_contract_check(snapshot, component_review, metadata)
+        except (SandboxViolation, SyntaxError) as exc:
+            await self._reject_submission(submission_id, str(exc))
+            return submission_id
+        except Exception as exc:
+            await self._reject_submission(submission_id, str(exc))
+            return submission_id
+
+        # LLM hard gate + plagiarism run only AFTER the static gates have passed.
         try:
             review = await self._review_static_submission(
                 submission_id=submission_id,
-                code=code,
+                snapshot=snapshot,
+                component_review=component_review,
+                code_for_eval=code_for_eval,
                 filename=filename,
-                metadata=metadata,
                 hotkey=hotkey,
                 code_hash=code_hash,
             )
@@ -146,15 +172,7 @@ class PrismWorker:
                 return submission_id
             if review.held:
                 return submission_id
-            snapshot = self._snapshot_from_submission(code, filename, metadata)
-            component_review = self._component_review(snapshot)
             code = review.code
-            report = self._inspect_project_snapshot(snapshot, code)
-            await self._static_model_instantiation_check(snapshot, component_review)
-            self._distributed_contract_check(snapshot, component_review, metadata)
-        except (SandboxViolation, SyntaxError) as exc:
-            await self._reject_submission(submission_id, str(exc))
-            return submission_id
         except Exception as exc:
             await self._reject_submission(submission_id, str(exc))
             return submission_id
@@ -404,29 +422,24 @@ class PrismWorker:
         self,
         *,
         submission_id: str,
-        code: str,
+        snapshot: source_similarity.SourceSnapshot,
+        component_review: ComponentReview,
+        code_for_eval: str,
         filename: str,
-        metadata: dict[str, Any],
         hotkey: str,
         code_hash: str,
     ) -> StaticReviewOutcome:
-        try:
-            snapshot = self._snapshot_from_submission(code, filename, metadata)
-            await self.repository.record_llm_review_event(
-                submission_id=submission_id,
-                state="received",
-                actor="system",
-                tool_name="submission_receiver",
-                payload={"filename": filename, "code_hash": code_hash},
-                reason="submission received for LLM review flow",
-                idempotency_key="state:received",
-            )
-            component_review = self._component_review(snapshot)
-            code_for_eval = self._entrypoint_code(snapshot, component_review.components.entrypoint)
-        except Exception as exc:
-            return StaticReviewOutcome("", True, str(exc))
-        if not code_for_eval.strip():
-            return StaticReviewOutcome(code_for_eval, True, "submission contains no Python source")
+        # Invoked ONLY after the static AST sandbox / param-cap / distributed-contract gates have
+        # passed, so a static rejection never reaches (or records any event for) the LLM gate.
+        await self.repository.record_llm_review_event(
+            submission_id=submission_id,
+            state="received",
+            actor="system",
+            tool_name="submission_receiver",
+            payload={"filename": filename, "code_hash": code_hash},
+            reason="submission received for LLM review flow",
+            idempotency_key="state:received",
+        )
         await self.repository.record_llm_review_event(
             submission_id=submission_id,
             state="static_validation_passed",
@@ -557,6 +570,7 @@ class PrismWorker:
             temperature=self.settings.llm_review_temperature,
             max_tokens=self.settings.llm_review_max_tokens,
             max_retries=self.settings.llm_review_max_retries,
+            max_source_chars=self.settings.llm_review_max_source_chars,
         )
 
     def _pair_sandbox_runner(self, submission_id: str) -> source_similarity.SandboxRunner:

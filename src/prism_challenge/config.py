@@ -110,6 +110,7 @@ class PrismSettings(ChallengeSettings):
     llm_review_temperature: float = 0.0
     llm_review_max_tokens: int = 512
     llm_review_max_retries: int = 1
+    llm_review_max_source_chars: int = 200_000
     subnet_rules_json: str | None = None
     subnet_rules_file: Path | None = None
     plagiarism_enabled: bool = True

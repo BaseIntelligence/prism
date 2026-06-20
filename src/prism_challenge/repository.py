@@ -269,13 +269,19 @@ class PrismRepository:
                 mermaid=mermaid_text,
                 payload=cast(dict[str, Any], raw_mermaid or {"mermaid": mermaid_text}),
             )
+            # Persist the reviewed-bytes fingerprint alongside the verdict so an allow stays bound
+            # to the exact bytes it reviewed; a tampered resubmission cannot reuse it (VAL-LLM-023).
+            verdict_raw = dict(raw_verdict)
+            reviewed_sha = raw.get("reviewed_code_sha256")
+            if reviewed_sha is not None:
+                verdict_raw.setdefault("reviewed_code_sha256", reviewed_sha)
             await self.submit_llm_verdict(
                 submission_id=submission_id,
                 approved=approved,
                 reason=reason,
                 violations=violations,
                 confidence=confidence,
-                raw=cast(dict[str, Any], raw_verdict),
+                raw=verdict_raw,
                 evidence=evidence_payload or _validate_evidence(raw_verdict.get("evidence") or []),
                 mermaid=mermaid_text,
                 held=held,
