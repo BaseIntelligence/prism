@@ -76,7 +76,10 @@ def test_evidence_backed_rejects_submission(tmp_path):
     anyio.run(run)
 
 
-def test_suspicion_without_evidence_quarantines(tmp_path):
+def test_explicit_held_quarantines(tmp_path):
+    # Inverted gating (m5-llm-hard-gate-verdicts): a reject WITHOUT evidence is now TERMINAL
+    # 'rejected'; only an explicit held=True (e.g. a fail-closed LLM error / plagiarism band)
+    # quarantines to the HELD state.
     async def run() -> None:
         repo = await _repo(tmp_path)
         submission_id = await _submission(repo)
@@ -93,6 +96,7 @@ def test_suspicion_without_evidence_quarantines(tmp_path):
             confidence=0.61,
             raw={"reason": "LLM suspects hidden behavior", "verdict": False},
             evidence=[],
+            held=True,
         )
 
         status = await repo.get_submission(submission_id)

@@ -503,11 +503,14 @@ class PrismRepository:
                 "SELECT s.hotkey, s.id, s.created_at, sc.final_score FROM scores sc "
                 "JOIN submissions s ON s.id=sc.submission_id "
                 "WHERE s.epoch_id=? AND s.status=? "
-                "ORDER BY sc.final_score DESC, s.created_at ASC, s.id ASC LIMIT ?",
-                (epoch_id, SubmissionStatus.COMPLETED.value, limit),
+                "ORDER BY sc.final_score DESC, s.created_at ASC, s.id ASC",
+                (epoch_id, SubmissionStatus.COMPLETED.value),
             )
-        # Dedup to ONE surviving submission per hotkey (the leaderboard-best) BEFORE ranking, so a
-        # hotkey appears at most once and a worse same-hotkey submission never holds a board row.
+        # Dedup to ONE surviving submission per hotkey (the leaderboard-best) BEFORE applying the
+        # display LIMIT, so a worse same-hotkey duplicate falling inside the top window never holds
+        # a board slot a distinct hotkey would otherwise fill; the board shows a full window of
+        # DISTINCT hotkeys. The at-most-once-per-hotkey invariant holds, and score_rows()/weights
+        # stay unlimited + correct (they dedupe over the whole epoch).
         survivors = dedupe_best_per_hotkey(
             LeaderboardRow(
                 submission_id=str(row["id"]),
@@ -520,7 +523,7 @@ class PrismRepository:
         ranked = rank_leaderboard(survivors)
         return [
             {"hotkey": entry.hotkey, "id": entry.submission_id, "final_score": entry.final_score}
-            for entry in ranked
+            for entry in ranked[:limit]
         ]
 
     async def score_rows(self, epoch_id: int) -> list[dict[str, object]]:
@@ -665,8 +668,9 @@ class PrismRepository:
         return [dict(row) for row in rows]
 
     async def expire_stale_held(self) -> list[str]:
-        # The only remaining HELD source is the LLM suspicion-without-evidence quarantine
-        # (no resolve surface in v2), so every stale held row is reaped to the terminal
+        # After the LLM gating inversion a reject is TERMINAL ('rejected'), so the remaining HELD
+        # source is an explicit held=True quarantine (a fail-closed LLM error / plagiarism band),
+        # which has no resolve surface in v2; every stale held row is reaped to the terminal
         # rejected state. Cutoff/compare mirror requeue_orphaned_running.
         cutoff = (
             datetime.now(UTC) - timedelta(seconds=self.held_review_timeout_seconds)

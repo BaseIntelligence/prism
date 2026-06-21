@@ -128,8 +128,8 @@ def _manifest_payload(submission_id: str, vocab: int) -> dict:
             "final_score": 1.0 / (1.0 + bpb),
             "lower_is_better": True,
         },
-        # The host scorer reads trained_state.pt ONLY when the CHALLENGE manifest records it for THIS
-        # run (a bare is_file() on the miner-writable artifacts_dir is an RCE sink).
+        # The host scorer reads trained_state.pt ONLY when the CHALLENGE manifest records it for
+        # THIS run (a bare is_file() on the miner-writable artifacts_dir is an RCE sink).
         "artifacts": {"trained_state": "trained_state.pt"},
         "miner_reported_ignored": True,
     }

@@ -436,7 +436,11 @@ def _shadowed_trusted_roots(tree: ast.AST) -> set[str]:
     The name-only trusted check would otherwise trust ``torch.load(artifacts_dir)`` even after
     ``artifacts_dir = "/some/external/path"`` (or ``ctx.artifacts_dir = ...``). Any assignment-style
     bind of a trusted root (``Store`` context on a matching ``Name``/``Attribute``) means that name
-    no longer reliably refers to the harness dir, so it must stop being treated as trusted.
+    no longer reliably refers to the harness dir, so it must stop being treated as trusted. A
+    dynamic ``setattr(obj, "artifacts_dir", ...)`` / ``delattr(obj, "artifacts_dir")`` rebind is not
+    a ``Store`` node, so the trust model would otherwise be static-name-only; detect it here too so
+    a trusted root reached through a ``setattr``-laundered attribute also drops out of the trusted
+    set for the whole code unit.
     """
     shadowed: set[str] = set()
     for node in ast.walk(tree):
@@ -446,7 +450,30 @@ def _shadowed_trusted_roots(tree: ast.AST) -> set[str]:
         elif isinstance(node, ast.Attribute) and isinstance(node.ctx, ast.Store):
             if node.attr in TRUSTED_PATH_ROOTS:
                 shadowed.add(node.attr)
+        elif isinstance(node, ast.Call):
+            rebound = _setattr_rebound_trusted_root(node)
+            if rebound is not None:
+                shadowed.add(rebound)
     return shadowed
+
+
+def _setattr_rebound_trusted_root(node: ast.Call) -> str | None:
+    """The trusted-path root rebound by a ``setattr``/``delattr`` call, if any.
+
+    ``setattr(ctx, "artifacts_dir", "/ext")`` / ``delattr(ctx, "artifacts_dir")`` dynamically
+    rebinds a trusted root without a ``Store`` AST node, so a later
+    ``torch.load(ctx.artifacts_dir)`` must not be trusted on the strength of the static name alone.
+    Only a constant-string attribute that names a trusted root is matched (a non-literal attribute
+    name is already blocked as a dynamic indirection by ``_check_builtin_indirection``).
+    """
+    if not (isinstance(node.func, ast.Name) and node.func.id in {"setattr", "delattr"}):
+        return None
+    if len(node.args) < 2:
+        return None
+    attr = _const_str(node.args[1])
+    if attr in TRUSTED_PATH_ROOTS:
+        return attr
+    return None
 
 
 def _path_is_trusted(node: ast.AST, trusted_roots: set[str]) -> bool:

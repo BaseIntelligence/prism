@@ -213,6 +213,59 @@ async def test_leaderboard_shows_each_hotkey_once(repository: PrismRepository) -
     assert hotkeys == ["bob", "alice"]
 
 
+# --- repository.leaderboard(): dedupe per hotkey BEFORE applying the display LIMIT ---------------
+
+
+async def test_leaderboard_dedupes_per_hotkey_before_display_limit(
+    repository: PrismRepository,
+) -> None:
+    # Hotkey "alice" owns the TWO highest scores; both fall inside a limit=2 display window. If the
+    # SQL LIMIT were applied BEFORE the per-hotkey dedupe, the window would collapse to a single
+    # distinct hotkey. Deduping first must keep a FULL window of 2 DISTINCT hotkeys.
+    await _insert_completed(
+        repository,
+        submission_id="alice-best",
+        hotkey="alice",
+        final_score=0.9,
+        created_at="2024-01-01T00:00:00+00:00",
+    )
+    await _insert_completed(
+        repository,
+        submission_id="alice-second",
+        hotkey="alice",
+        final_score=0.8,
+        created_at="2024-01-02T00:00:00+00:00",
+    )
+    await _insert_completed(
+        repository,
+        submission_id="bob-only",
+        hotkey="bob",
+        final_score=0.7,
+        created_at="2024-01-03T00:00:00+00:00",
+    )
+    await _insert_completed(
+        repository,
+        submission_id="carol-only",
+        hotkey="carol",
+        final_score=0.6,
+        created_at="2024-01-04T00:00:00+00:00",
+    )
+
+    board = await repository.leaderboard(1, limit=2)
+
+    # A full window of 2 DISTINCT hotkeys (alice-best, bob), not 1 collapsed alice window.
+    assert [str(row["hotkey"]) for row in board] == ["alice", "bob"]
+    assert [str(row["id"]) for row in board] == ["alice-best", "bob-only"]
+    assert len({str(row["hotkey"]) for row in board}) == len(board) == 2
+
+    # score_rows()/weights remain unlimited + correct: best-per-hotkey across ALL hotkeys, with
+    # alice driven by her BEST (0.9) submission (VAL-CROSS-017 unaffected by the display LIMIT).
+    rows = await repository.score_rows(1)
+    by_hotkey = {str(row["hotkey"]): row for row in rows}
+    assert set(by_hotkey) == {"alice", "bob", "carol"}
+    assert by_hotkey["alice"]["id"] == "alice-best"
+
+
 # --- supersede reuses the canonical tie-break (delta > epsilon grid > earliest-commit > sub id) ---
 
 

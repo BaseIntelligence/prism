@@ -151,6 +151,31 @@ TRAIN_OVER_CAP_INLINE = (
     "        opt.step()\n"
 )
 
+# training.py trains a model whose over-cap weights are DEFERRED until the first forward (the
+# lazy / first-forward construction vector). At construction only the small embedding exists, so the
+# pre-loop param-cap check passes; the first instrumented forward realizes the over-cap projection
+# and the runner must re-check + reject BEFORE recording any ranking bpb.
+TRAIN_DEFERRED_OVER_CAP = (
+    "import torch\n"
+    "from torch import nn\n\n"
+    "class DeferredBig(nn.Module):\n"
+    "    def __init__(self, vocab, dim=8):\n"
+    "        super().__init__()\n"
+    "        self.emb = nn.Embedding(vocab, dim)\n"
+    "        self.vocab = vocab\n"
+    "        self.dim = dim\n"
+    "        self.proj = None\n"
+    "    def forward(self, tokens):\n"
+    "        if self.proj is None:\n"
+    "            self.proj = nn.Linear(self.dim, 5000)\n"
+    "            self.out = nn.Linear(5000, self.vocab)\n"
+    "        return self.out(self.proj(self.emb(tokens)))\n\n"
+    "def train(ctx):\n"
+    "    model = DeferredBig(ctx.vocab_size)\n"
+    "    for _ in ctx.iter_train_batches(model, batch_size=1):\n"
+    "        pass\n"
+)
+
 # An honest miner that builds + trains the sub-cap build_model.
 TRAIN_HONEST = (
     "import torch\n\n"
@@ -258,6 +283,26 @@ def test_runner_scored_over_cap_model_rejected_no_ranking_bpb(tmp_path: Path) ->
     assert "PRISM_RUNNER_PARAM_CAP" in proc.stderr, proc.stderr
     # No ranking bpb is attributable to the over-cap model: the run fails before authoring a
     # scored manifest (and if any manifest is present its final_score must be null).
+    manifest_path = artifacts / RUN_MANIFEST_V2_FILENAME
+    if manifest_path.exists():
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        assert manifest.get("score", {}).get("final_score") is None, manifest.get("score")
+
+
+def test_runner_deferred_lazy_over_cap_rejected_no_ranking_bpb(tmp_path: Path) -> None:
+    # The over-cap weights are created only on the first forward (lazy / first-forward deferred):
+    # the runner re-checks the realized param count after that forward and fails with
+    # prism:param-cap before any ranking bpb is captured (VAL-CHEAT-022, the runtime twin of the
+    # static lazy/dynamic gate).
+    proc, artifacts = _run_runner(
+        tmp_path,
+        run_name="deferred-overcap",
+        arch_code=ARCH_SMALL,
+        train_code=TRAIN_DEFERRED_OVER_CAP,
+        max_parameters=50_000,  # only the deferred proj/out (>600k params) breach the cap
+    )
+    assert proc.returncode != 0, proc.stdout
+    assert "PRISM_RUNNER_PARAM_CAP" in proc.stderr, proc.stderr
     manifest_path = artifacts / RUN_MANIFEST_V2_FILENAME
     if manifest_path.exists():
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))

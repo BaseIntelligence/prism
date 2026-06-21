@@ -101,6 +101,29 @@ def test_anticheat_incidental_trusted_name_does_not_launder_external_load() -> N
     assert _violation(_fn(body)).evidence[0].rule_id == "prism:no-deserialization"
 
 
+def test_anticheat_setattr_rebound_trusted_path_torch_load_blocked() -> None:
+    # A dynamic setattr rebind of a trusted root (no Store AST node) must drop it from the trusted
+    # set so torch.load(ctx.artifacts_dir) cannot be laundered past the static name-only check.
+    code = (
+        IMPORT_TORCH
+        + "\n\ndef use(model, ctx, data):\n"
+        + "    setattr(ctx, 'artifacts_dir', '/tmp/pretrained.pt')\n"
+        + "    return torch.load(ctx.artifacts_dir)\n"
+    )
+    assert _violation(code).evidence[0].rule_id == "prism:no-deserialization"
+
+
+def test_anticheat_setattr_rebound_trusted_path_torch_save_blocked() -> None:
+    code = (
+        IMPORT_TORCH
+        + "\n\ndef use(model, ctx, data):\n"
+        + "    setattr(ctx, 'checkpoint_dir', '/etc/cron.d/x')\n"
+        + "    torch.save(model.state_dict(), ctx.checkpoint_dir)\n"
+        + "    return None\n"
+    )
+    assert _violation(code).evidence[0].rule_id == "prism:no-filesystem"
+
+
 def test_anticheat_shadowed_trusted_name_torch_save_blocked() -> None:
     body = (
         "    artifacts_dir = '/etc/cron.d/x'\n"

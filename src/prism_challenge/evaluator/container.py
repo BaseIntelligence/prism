@@ -1379,6 +1379,21 @@ ctx = PrismContext(
 _WATCHDOG_STOP = threading.Event()
 
 
+def _compute_block():
+    # Author the provisional compute block through the typed ComputeBlock schema (via
+    # scoring.build_compute_block) so it is schema-validated at authoring time too, consistent with
+    # the host-reconciled block. The host overwrites gpu_count with the leased DB actual_gpu_count
+    # on the scored path; this is never an input to final_score.
+    from prism_challenge.evaluator.scoring import build_compute_block
+
+    return build_compute_block(
+        gpu_count=world_size,
+        world_size=world_size,
+        nproc_per_node=world_size,
+        device=str(device),
+    )
+
+
 def _artifacts_dir_bytes(root):
     total = 0
     try:
@@ -1410,13 +1425,7 @@ def _write_watchdog_manifest(reason):
             "device": str(device),
             "stopped_reason": reason,
         },
-        "compute": {
-            "schema": "prism_compute.v1",
-            "gpu_count": world_size,
-            "world_size": world_size,
-            "nproc_per_node": world_size,
-            "device": str(device),
-        },
+        "compute": _compute_block(),
         "data": {
             "data_dir": str(data_dir),
             "source": "locked-fineweb-edu-train",
@@ -1578,16 +1587,11 @@ def _write_challenge_manifest():
             "nproc_per_node": world_size,
             "stopped_reason": stopped_reason,
         },
-        "compute": {
-            # Observability-only GPUs leased for this run (== world_size == nproc_per_node for the
-            # single-node scored path; ==1 for the scored nproc=1 run). The host reconciles
-            # gpu_count to the DB actual_gpu_count. Never an input to final_score.
-            "schema": "prism_compute.v1",
-            "gpu_count": world_size,
-            "world_size": world_size,
-            "nproc_per_node": world_size,
-            "device": str(device),
-        },
+        # Observability-only GPUs leased for this run (== world_size == nproc_per_node for the
+        # single-node scored path; ==1 for the scored nproc=1 run). Authored via the typed
+        # ComputeBlock schema; the host reconciles gpu_count to the DB actual_gpu_count. Never an
+        # input to final_score.
+        "compute": _compute_block(),
         "data": {
             "data_dir": str(data_dir),
             "shard_count": len(train_shards),
