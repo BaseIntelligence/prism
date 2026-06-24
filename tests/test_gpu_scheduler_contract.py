@@ -6,9 +6,9 @@ import pytest
 from prism_challenge.config import PrismSettings
 from prism_challenge.db import Database
 from prism_challenge.gpu_scheduler import (
+    BaseGpuTarget,
     GpuLeaseRequest,
     GpuLeaseScheduler,
-    BaseGpuTarget,
     lease_request_from_runtime,
 )
 from prism_challenge.repository import PrismRepository

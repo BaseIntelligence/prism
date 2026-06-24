@@ -11,9 +11,9 @@ from prism_challenge.app import create_app
 from prism_challenge.config import PrismSettings
 from prism_challenge.db import Database
 from prism_challenge.gpu_scheduler import (
+    BaseGpuTarget,
     GpuLeaseRequest,
     GpuLeaseScheduler,
-    BaseGpuTarget,
 )
 from prism_challenge.sdk.executors.docker import DockerRunResult
 
