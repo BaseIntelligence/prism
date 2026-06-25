@@ -264,6 +264,19 @@ def test_anticheat_only_artifacts_mount_is_writable(tmp_path: Path) -> None:
     assert {mount.target for mount in mounts if mount.read_only}  # workspace stays read-only
 
 
+def test_anticheat_eval_container_never_mounts_secret_heldout(tmp_path: Path) -> None:
+    ev = _evaluator(tmp_path)
+    settings = PrismSettings()
+    mounts = ev._mounts(tmp_path / "ws", tmp_path / "art")
+    targets = {mount.target for mount in mounts}
+    # The SECRET held-out val split lives only on the host scorer; the untrusted
+    # eval container is handed NO filesystem path to it (every mount target is
+    # the workspace or artifacts dir), so miner code cannot read the held-out data.
+    assert settings.base_eval_val_data_dir not in targets
+    assert not any(mount.target.rstrip("/").endswith("/val") for mount in mounts)
+    assert targets <= {"/workspace", "/artifacts"}
+
+
 # --- VAL-CHEAT-019: the review/host secret never reaches the scored eval container ---------------
 
 

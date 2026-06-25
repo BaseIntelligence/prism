@@ -60,6 +60,18 @@ def test_openrouter_key_only_sourced_from_secret_file(
     assert missing.openrouter_api_key_value() is None
 
 
+def test_hf_token_only_sourced_from_secret_file(tmp_path: Path) -> None:
+    secret = tmp_path / "hf_token"
+    secret.write_text("hf_secret\n", encoding="utf-8")
+    settings = PrismSettings(hf_token_file=secret)
+    assert settings.hf_token_value() == "hf_secret"
+
+    # FineWeb-Edu is public (anonymous works), so a missing token file resolves
+    # to None instead of failing: the prep download simply runs unauthenticated.
+    missing = PrismSettings(hf_token=None, hf_token_file=tmp_path / "nope")
+    assert missing.hf_token_value() is None
+
+
 def test_legacy_chutes_env_alias_still_resolves(monkeypatch: pytest.MonkeyPatch) -> None:
     _clear_llm_env(monkeypatch)
     monkeypatch.setenv("PRISM_CHUTES_MODEL", "openai/gpt-4o-mini")

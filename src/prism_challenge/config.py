@@ -105,6 +105,15 @@ class PrismSettings(ChallengeSettings):
             "PRISM_OPENROUTER_API_KEY_FILE", "PRISM_CHUTES_API_KEY_FILE"
         ),
     )
+    hf_token: str | None = Field(
+        default=None,
+        repr=False,
+        validation_alias=AliasChoices("PRISM_HF_TOKEN", "HF_TOKEN"),
+    )
+    hf_token_file: Path | None = Field(
+        default=Path("/run/secrets/hf_token"),
+        validation_alias=AliasChoices("PRISM_HF_TOKEN_FILE", "HF_TOKEN_FILE"),
+    )
     llm_review_timeout_seconds: int = 60
     held_review_timeout_seconds: int = 86400
     llm_review_temperature: float = 0.0
@@ -353,6 +362,14 @@ class PrismSettings(ChallengeSettings):
             return self.openrouter_api_key
         if self.openrouter_api_key_file and self.openrouter_api_key_file.exists():
             token = self.openrouter_api_key_file.read_text(encoding="utf-8").strip()
+            return token or None
+        return None
+
+    def hf_token_value(self) -> str | None:
+        if self.hf_token:
+            return self.hf_token
+        if self.hf_token_file and self.hf_token_file.exists():
+            token = self.hf_token_file.read_text(encoding="utf-8").strip()
             return token or None
         return None
 

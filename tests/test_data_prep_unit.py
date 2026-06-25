@@ -155,3 +155,46 @@ def test_prepare_locked_dataset_rejects_non_string_text(tmp_path):
         prepare_locked_dataset(
             [("a", 123)], tmp_path, token_counter=FakeCounter()  # type: ignore[list-item]
         )
+
+
+def _install_fake_datasets(monkeypatch: pytest.MonkeyPatch, captured: dict) -> None:
+    import sys
+    import types
+
+    fake = types.ModuleType("datasets")
+
+    def load_dataset(path, **kwargs):
+        captured["path"] = path
+        captured["kwargs"] = kwargs
+        return iter([{"id": "doc-0", "text": "hello world"}])
+
+    fake.load_dataset = load_dataset  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "datasets", fake)
+
+
+def test_download_passes_optional_hf_token_to_load_dataset(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from prism_challenge.evaluator.data_prep import download_fineweb_edu_documents
+
+    captured: dict = {}
+    _install_fake_datasets(monkeypatch, captured)
+
+    list(download_fineweb_edu_documents(limit=1, token="hf_secret"))
+
+    # The Docker-secret-sourced token reaches HuggingFace auth; the pin SHA stays
+    # the immutable revision (never a moving tag).
+    assert captured["kwargs"]["token"] == "hf_secret"
+    assert captured["kwargs"]["revision"]
+
+
+def test_download_omits_token_when_absent(monkeypatch: pytest.MonkeyPatch) -> None:
+    from prism_challenge.evaluator.data_prep import download_fineweb_edu_documents
+
+    captured: dict = {}
+    _install_fake_datasets(monkeypatch, captured)
+
+    list(download_fineweb_edu_documents(limit=1, token=None))
+
+    # FineWeb-Edu is public: with no secret the prep runs anonymous (no token kwarg).
+    assert "token" not in captured["kwargs"]

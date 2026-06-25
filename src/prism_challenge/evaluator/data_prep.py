@@ -172,11 +172,14 @@ def download_fineweb_edu_documents(
     dataset_name: str = FINEWEB_EDU_DATASET,
     config_name: str = FINEWEB_EDU_DEFAULT_CONFIG,
     split: str = FINEWEB_EDU_DEFAULT_SPLIT,
+    token: str | None = None,
 ) -> Iterator[tuple[str, str]]:
     """Stream ``(doc_id, text)`` from the PINNED FineWeb-Edu commit (network/prep-only).
 
     Lazily imports ``datasets`` so the rest of this module stays importable offline. The
-    revision is pinned to the immutable commit SHA, never a moving tag.
+    revision is pinned to the immutable commit SHA, never a moving tag. ``token`` is an
+    OPTIONAL HuggingFace credential (FineWeb-Edu is public, so anonymous access works);
+    when supplied it is sourced from a Docker secret file, never a plaintext literal.
     """
     try:
         from datasets import load_dataset
@@ -186,13 +189,15 @@ def download_fineweb_edu_documents(
             "install it in the network-enabled prep environment"
         ) from exc
 
-    stream = load_dataset(
-        dataset_name,
-        name=config_name,
-        split=split,
-        revision=pin_sha,
-        streaming=True,
-    )
+    load_kwargs: dict[str, object] = {
+        "name": config_name,
+        "split": split,
+        "revision": pin_sha,
+        "streaming": True,
+    }
+    if token:
+        load_kwargs["token"] = token
+    stream = load_dataset(dataset_name, **load_kwargs)
     count = 0
     for record in stream:
         if count >= limit:
@@ -217,7 +222,13 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--pin-sha", default=FINEWEB_EDU_PIN_SHA)
     args = parser.parse_args(argv)
 
-    documents = download_fineweb_edu_documents(limit=args.limit, pin_sha=args.pin_sha)
+    from ..config import PrismSettings
+
+    documents = download_fineweb_edu_documents(
+        limit=args.limit,
+        pin_sha=args.pin_sha,
+        token=PrismSettings().hf_token_value(),
+    )
     manifest = prepare_locked_dataset(
         documents,
         args.output_dir,
