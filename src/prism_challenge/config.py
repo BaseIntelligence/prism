@@ -202,6 +202,22 @@ class PrismSettings(ChallengeSettings):
     # (architecture.md section 9; VAL-HARNESS-026).
     base_eval_artifacts_quota_bytes: int = 2_147_483_648
     base_eval_timeout_seconds: int = 1800
+    # Orchestration-level HARD wall-time cap (architecture.md sections 4.3, 9). The inner docker /
+    # broker timeout (``base_eval_hard_timeout_seconds``) should normally fire first, but a hung
+    # broker / un-cancellable worker thread could otherwise hold the single GPU forever; this is
+    # the absolute backstop the worker enforces around ``evaluator.evaluate`` so an over-time eval
+    # is KILLED (its container reaped) and its GPU lease RELEASED. ``0`` auto-derives it as
+    # ``base_eval_hard_timeout_seconds + base_eval_orchestration_grace_seconds`` so it always sits
+    # strictly above the inner cap; a positive value overrides it (used to force a tiny cap).
+    base_eval_orchestration_timeout_seconds: float = Field(
+        default=0.0,
+        ge=0.0,
+        validation_alias=AliasChoices(
+            "PRISM_BASE_EVAL_ORCHESTRATION_TIMEOUT_SECONDS",
+            "CHALLENGE_BASE_EVAL_ORCHESTRATION_TIMEOUT_SECONDS",
+        ),
+    )
+    base_eval_orchestration_grace_seconds: int = Field(default=300, ge=0)
     base_eval_cpus: float = 2.0
     base_eval_memory: str = "8g"
     base_eval_memory_swap: str | None = "8g"
@@ -209,6 +225,19 @@ class PrismSettings(ChallengeSettings):
     base_eval_read_only: bool = True
     base_eval_max_gpu_count: int = Field(default=8, ge=1, le=8)
     base_eval_gpu_count: int = 1
+    # Per-eval GPU VRAM cap in MiB (architecture.md section 9). Docker has no native per-container
+    # VRAM cgroup, so the cap is propagated to the container env (``PRISM_GPU_VRAM_CAP_MIB``) and
+    # the challenge runner clamps the torch CUDA allocator via
+    # ``torch.cuda.set_per_process_memory_fraction`` BEFORE any miner code runs, so an oversized
+    # model (``max_code_bytes`` up to 7.5MB) cannot exhaust GPU memory and wedge the single worker.
+    # ``0`` disables the cap (deploys set a concrete value with headroom in config.example.yaml).
+    base_eval_gpu_vram_mib: int = Field(
+        default=0,
+        ge=0,
+        validation_alias=AliasChoices(
+            "PRISM_BASE_EVAL_GPU_VRAM_MIB", "CHALLENGE_BASE_EVAL_GPU_VRAM_MIB"
+        ),
+    )
     # Multi-GPU static contract policy (architecture.md section 8). Gate A statically verifies the
     # miner training.py uses the distributed primitives + a rank-0 write guard and rejects a
     # gpu_count > 8 / multi-node request before any GPU work. ``reject`` (default) hard-rejects a
@@ -304,6 +333,14 @@ class PrismSettings(ChallengeSettings):
         """
         floor = self.base_eval_budget_seconds + self.base_eval_watchdog_grace_seconds + 60
         return max(self.base_eval_timeout_seconds, floor)
+
+    @property
+    def resolved_orchestration_timeout_seconds(self) -> float:
+        if self.base_eval_orchestration_timeout_seconds > 0:
+            return self.base_eval_orchestration_timeout_seconds
+        return float(
+            self.base_eval_hard_timeout_seconds + self.base_eval_orchestration_grace_seconds
+        )
 
     @property
     def resolved_database_path(self) -> Path:

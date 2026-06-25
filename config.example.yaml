@@ -81,6 +81,8 @@ docker_user: null
 docker_enabled: false
 base_eval_image: ghcr.io/baseintelligence/prism-evaluator:latest
 base_eval_timeout_seconds: 900
+base_eval_orchestration_timeout_seconds: 0.0
+base_eval_orchestration_grace_seconds: 300
 base_eval_cpus: 2.0
 base_eval_memory: 8g
 base_eval_memory_swap: 8g
@@ -88,6 +90,7 @@ base_eval_pids_limit: 512
 base_eval_read_only: true
 base_eval_max_gpu_count: 8
 base_eval_gpu_count: 1
+base_eval_gpu_vram_mib: 0
 base_eval_gpu_type: null
 base_gpu_targets: null
 base_eval_gpu_server: null

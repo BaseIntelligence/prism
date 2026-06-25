@@ -75,6 +75,26 @@ class GpuLease:
         return self.status == "active"
 
 
+@dataclass(frozen=True)
+class GpuCapacitySnapshot:
+    total_devices: int
+    active_devices: int
+    active_leases: int
+    queued_leases: int
+
+    @property
+    def free_devices(self) -> int:
+        return max(0, self.total_devices - self.active_devices)
+
+    @property
+    def at_capacity(self) -> bool:
+        return self.free_devices == 0
+
+    @property
+    def oversubscribed(self) -> bool:
+        return self.active_devices > self.total_devices
+
+
 class GpuLeaseScheduler:
     def __init__(self, database: Database, targets: tuple[BaseGpuTarget, ...]) -> None:
         self.database = database
@@ -116,6 +136,30 @@ class GpuLeaseScheduler:
         async with self.database.connect() as conn:
             rows = await conn.execute_fetchall("SELECT * FROM gpu_leases ORDER BY created_at, id")
         return [_lease_from_row(dict(row)) for row in rows]
+
+    async def capacity_snapshot(self) -> GpuCapacitySnapshot:
+        async with self.database.connect() as conn:
+            leased = await self._leased_devices(conn)
+            queued_rows = await conn.execute_fetchall(
+                "SELECT COUNT(*) AS n FROM gpu_leases WHERE status='queued'"
+            )
+            active_rows = await conn.execute_fetchall(
+                "SELECT COUNT(*) AS n FROM gpu_leases WHERE status='active'"
+            )
+        total_devices = sum(
+            target.gpu_count
+            for target in self.targets
+            if target.enabled and not target.draining
+        )
+        active_devices = sum(len(devices) for devices in leased.values())
+        queued_list = list(queued_rows)
+        active_list = list(active_rows)
+        return GpuCapacitySnapshot(
+            total_devices=total_devices,
+            active_devices=active_devices,
+            active_leases=int(active_list[0]["n"]) if active_list else 0,
+            queued_leases=int(queued_list[0]["n"]) if queued_list else 0,
+        )
 
     async def _active_or_queued_lease(
         self, conn: aiosqlite.Connection, submission_id: str

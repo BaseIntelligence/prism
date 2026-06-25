@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass
 from hashlib import sha256
 from pathlib import Path
@@ -56,6 +57,24 @@ SUPPORTED_EXECUTION_BACKENDS = CONTAINER_EXECUTION_BACKENDS
 logger = logging.getLogger(__name__)
 
 
+class EvalWallTimeExceeded(RuntimeError):
+    """Raised when an eval exceeds the orchestration wall-time backstop and is force-killed.
+
+    The inner docker run has its own ``base_eval_hard_timeout_seconds``; this backstop guards the
+    orchestration layer so a thread that never returns (hung CUDA call, wedged docker daemon)
+    cannot hold its GPU lease forever. On this error the container is reaped and the lease released.
+    """
+
+
+EvaluatorFactory = Callable[[PrismSettings, PrismContext], PrismContainerEvaluator]
+
+
+def _default_evaluator_factory(
+    settings: PrismSettings, ctx: PrismContext
+) -> PrismContainerEvaluator:
+    return PrismContainerEvaluator(settings=settings, ctx=ctx)
+
+
 def _is_v2_run_manifest(manifest: Any) -> bool:
     """True when the container returned a challenge-authored prism_run_manifest.v2 with metrics."""
     return (
@@ -98,6 +117,7 @@ class PrismWorker:
         *,
         execution_backend: str = "base_gpu",
         settings: PrismSettings | None = None,
+        evaluator_factory: EvaluatorFactory | None = None,
     ) -> None:
         if execution_backend not in SUPPORTED_EXECUTION_BACKENDS:
             raise ValueError(f"Unsupported execution backend: {execution_backend}")
@@ -105,6 +125,7 @@ class PrismWorker:
         self.ctx = ctx
         self.execution_backend = execution_backend
         self.settings = settings or PrismSettings()
+        self._evaluator_factory = evaluator_factory or _default_evaluator_factory
 
     async def process_next(self) -> str | None:
         submission = await self.repository.claim_next()
@@ -221,24 +242,20 @@ class PrismWorker:
                 "base_eval_gpu_device_ids": lease.device_ids,
             }
         )
-        evaluator = PrismContainerEvaluator(settings=effective_settings, ctx=self.ctx)
+        evaluator = self._evaluator_factory(effective_settings, self.ctx)
         attempt = await self.repository.container_job_attempt_count(
             submission_id, self.execution_backend
         ) + 1
         components = component_review.components
         try:
-            result = await asyncio.to_thread(
-                evaluator.evaluate,
+            result = await self._evaluate_within_wall_time(
+                evaluator,
                 submission_id=submission_id,
                 code=code,
                 code_hash=code_hash,
                 arch_hash=arch_hash,
-                backend=self.execution_backend,
                 files=snapshot.files,
-                architecture_entrypoint=components.architecture_entrypoint,
-                training_entrypoint=components.training_entrypoint,
-                build_model_symbol=components.build_model_symbol,
-                train_symbol=components.train_symbol,
+                components=components,
                 gpu_lease=lease,
                 execution_mode=execution_mode,
                 attempt=attempt,
@@ -285,6 +302,18 @@ class PrismWorker:
                     (SubmissionStatus.PENDING.value, str(exc), now_iso(), submission_id),
                 )
             return submission_id
+        except EvalWallTimeExceeded as exc:
+            await self._record_container_job(
+                submission_id=submission_id,
+                status="failed",
+                container_name=None,
+                metrics={},
+                error=str(exc),
+                lease=lease,
+                attempt=attempt,
+            )
+            await self._fail_submission(submission_id, str(exc))
+            return submission_id
         except Exception as exc:
             await self._record_container_job(
                 submission_id=submission_id,
@@ -298,10 +327,50 @@ class PrismWorker:
             await self._fail_submission(submission_id, str(exc))
             return submission_id
         finally:
-            await scheduler.release_for_submission(submission_id, "container job finished")
-            # Reap the terminal eval replicated-job/container so dead Swarm services cannot
-            # accumulate run-over-run (architecture.md 4.3, 10; VAL-HARNESS-027). Best-effort.
+            # Reap (force-kill) the eval container FIRST so an overrunning or wedged job stops
+            # consuming the GPU, THEN release the lease. Ordering matters: releasing before the
+            # kill could hand the device to the next eval while the old process is still resident
+            # (architecture.md 4.3, 10; VAL-HARNESS-027). Both steps are best-effort.
             await asyncio.to_thread(evaluator.reap_job, submission_id)
+            await scheduler.release_for_submission(submission_id, "container job finished")
+
+    async def _evaluate_within_wall_time(
+        self,
+        evaluator: PrismContainerEvaluator,
+        *,
+        submission_id: str,
+        code: str,
+        code_hash: str,
+        arch_hash: str,
+        files: tuple[source_similarity.SourceFile, ...],
+        components: PrismProjectComponents,
+        gpu_lease: GpuLease,
+        execution_mode: Any,
+        attempt: int,
+    ) -> Any:
+        eval_call = asyncio.to_thread(
+            evaluator.evaluate,
+            submission_id=submission_id,
+            code=code,
+            code_hash=code_hash,
+            arch_hash=arch_hash,
+            backend=self.execution_backend,
+            files=files,
+            architecture_entrypoint=components.architecture_entrypoint,
+            training_entrypoint=components.training_entrypoint,
+            build_model_symbol=components.build_model_symbol,
+            train_symbol=components.train_symbol,
+            gpu_lease=gpu_lease,
+            execution_mode=execution_mode,
+            attempt=attempt,
+        )
+        timeout = self.settings.resolved_orchestration_timeout_seconds
+        try:
+            return await asyncio.wait_for(eval_call, timeout=timeout)
+        except TimeoutError as exc:
+            raise EvalWallTimeExceeded(
+                f"eval exceeded orchestration wall-time of {timeout:g}s; container force-killed"
+            ) from exc
 
     def _inspect_project_snapshot(
         self, snapshot: source_similarity.SourceSnapshot, primary_code: str

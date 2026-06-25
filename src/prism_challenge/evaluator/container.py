@@ -453,6 +453,10 @@ class PrismContainerEvaluator:
         }
         if int(gpu_allocation["actual_gpu_count"]) > 1:
             env["PRISM_DISTRIBUTED_BACKEND"] = "nccl"
+        if self.settings.base_eval_gpu_vram_mib > 0:
+            # Per-eval VRAM cap: no docker cgroup exists for GPU memory, so the runner clamps the
+            # torch CUDA allocator to this many MiB before any miner code runs (see runner script).
+            env["PRISM_GPU_VRAM_CAP_MIB"] = str(self.settings.base_eval_gpu_vram_mib)
         if gpu_allocation["target_id"]:
             env["PRISM_GPU_TARGET_ID"] = str(gpu_allocation["target_id"])
         if gpu_allocation["target_server"]:
@@ -882,6 +886,23 @@ if torch.cuda.is_available():
     device = torch.device("cuda", local_rank)
 else:
     device = torch.device("cpu")
+
+# Per-eval VRAM cap: docker has no GPU-memory cgroup, so clamp the torch CUDA allocator to the
+# host-configured MiB BEFORE any miner code runs. The cap is a fraction of this device's total
+# memory; an oversized model then OOMs inside its own budget instead of exhausting the shared GPU.
+_vram_cap_mib = int(os.environ.get("PRISM_GPU_VRAM_CAP_MIB", "0") or 0)
+if _vram_cap_mib > 0 and torch.cuda.is_available():
+    try:
+        _total_bytes = torch.cuda.get_device_properties(device).total_memory
+        _fraction = min(1.0, max(0.01, (_vram_cap_mib * 1024 * 1024) / float(_total_bytes)))
+        torch.cuda.set_per_process_memory_fraction(_fraction, device)
+        print(
+            "PRISM_RUNNER: VRAM cap applied "
+            + str(_vram_cap_mib) + "MiB (fraction=" + format(_fraction, ".4f") + ")",
+            flush=True,
+        )
+    except Exception as exc:
+        sys.stderr.write("PRISM_RUNNER: VRAM cap could not be applied: " + str(exc) + "\n")
 
 artifacts_dir = (
     context_data.get("artifacts_dir")
