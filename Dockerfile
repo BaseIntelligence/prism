@@ -105,7 +105,10 @@ RUN apt-get update \
 COPY pyproject.toml ./
 COPY src ./src
 
-RUN pip install --no-cache-dir .
+# Security: the service performs miner sr25519 signature verification via bittensor
+# (auth.verify_hotkey_signature). Without the bittensor extra every signed submission
+# is rejected, locking out all miners; install it so production verifies real signatures.
+RUN pip install --no-cache-dir ".[bittensor]"
 
 RUN useradd --create-home --shell /usr/sbin/nologin prism \
     && mkdir -p /data \
