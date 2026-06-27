@@ -45,7 +45,9 @@ class PrismWorkUnit:
 
     work_unit_id: str
     submission_id: str
-    submission_ref: str
+    #: The submitting miner's hotkey. The master records this as the assignment's ``submission_ref``
+    #: (the prism agent reference); execution itself only needs ``submission_id`` + ``payload``.
+    hotkey: str
     required_capability: str = PRISM_WORK_UNIT_CAPABILITY
     payload: dict[str, Any] = field(default_factory=dict)
 
@@ -90,7 +92,7 @@ async def list_pending_prism_work_units(
             PrismWorkUnit(
                 work_unit_id=prism_work_unit_id(submission_id),
                 submission_id=submission_id,
-                submission_ref=str(row.get("hotkey") or ""),
+                hotkey=str(row.get("hotkey") or ""),
                 payload=payload,
             )
         )
@@ -130,7 +132,9 @@ def work_unit_to_payload(unit: PrismWorkUnit) -> Mapping[str, Any]:
     return {
         "work_unit_id": unit.work_unit_id,
         "submission_id": unit.submission_id,
-        "submission_ref": unit.submission_ref,
+        # The master (``HttpChallengeWorkSource``) records the prism agent reference under
+        # ``submission_ref``; for prism that reference is the submitting miner's hotkey.
+        "submission_ref": unit.hotkey,
         "required_capability": unit.required_capability,
         "payload": dict(unit.payload),
     }

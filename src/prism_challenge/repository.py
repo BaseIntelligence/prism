@@ -775,11 +775,27 @@ class PrismRepository:
         """Return submissions awaiting re-execution (one prism work unit each), oldest first."""
         async with self.database.connect() as conn:
             rows = await conn.execute_fetchall(
-                "SELECT id, hotkey, code_hash, created_at FROM submissions "
-                "WHERE status=? ORDER BY created_at",
+                "SELECT id, hotkey, created_at FROM submissions WHERE status=? ORDER BY created_at",
                 (SubmissionStatus.PENDING.value,),
             )
         return [dict(cast(Any, row)) for row in rows]
+
+    async def count_in_flight_submissions(self) -> int:
+        """Return how many submissions are currently in-flight (claimed, not yet terminal).
+
+        A claimed submission sits in ``running`` until it reaches a terminal status, so this is the
+        validator's true concurrency draw. ``run_validator_cycle`` uses it to enforce the
+        concurrency-1 cap against reality rather than assuming zero, so a cycle started while a
+        prism unit is still running pulls nothing more (defense-in-depth; the master assign engine
+        already enforces concurrency 1).
+        """
+        async with self.database.connect() as conn:
+            rows = await conn.execute_fetchall(
+                "SELECT COUNT(*) AS count FROM submissions WHERE status=?",
+                (SubmissionStatus.RUNNING.value,),
+            )
+        row_list = list(rows)
+        return int(cast(Any, row_list[0])["count"]) if row_list else 0
 
     async def record_published_checkpoint(
         self,

@@ -176,6 +176,48 @@ def test_llm_gate_falls_back_to_direct_openrouter_without_gateway(monkeypatch) -
     assert captured["api_key"] == PROVIDER_KEY
 
 
+def test_resolve_endpoint_fails_closed_when_gateway_token_unresolvable() -> None:
+    # A gateway URL is explicitly configured but its scoped token is unresolvable: the gate MUST
+    # refuse rather than fall back to a direct provider-key call (the validator holds no provider
+    # key; a direct call would defeat the gateway boundary).
+    with pytest.raises(RuntimeError, match="gateway"):
+        llm._resolve_endpoint(
+            LlmReviewConfig(
+                gateway_url=GATEWAY_OPENROUTER_URL,
+                gateway_token=None,
+                api_key=PROVIDER_KEY,
+            )
+        )
+
+    # With no gateway URL configured at all, the direct provider-key path still resolves.
+    base_url, credential = llm._resolve_endpoint(LlmReviewConfig(api_key=PROVIDER_KEY))
+    assert base_url == "https://openrouter.ai/api/v1"
+    assert credential == PROVIDER_KEY
+
+
+def test_gateway_configured_without_token_holds_no_direct_provider_call(monkeypatch) -> None:
+    # End-to-end: review_code with a gateway URL but no resolvable token fails closed (HOLD) and
+    # never constructs a chat client / makes a direct provider call. The provider key never leaks.
+    def must_not_build_client() -> None:
+        raise AssertionError("no chat client may be built when the gateway token is unresolvable")
+
+    monkeypatch.setattr(llm, "_load_chat_openai", must_not_build_client)
+
+    review = review_code(
+        "def build_model(ctx):\n    return None\n",
+        config=LlmReviewConfig(
+            gateway_url=GATEWAY_OPENROUTER_URL,
+            gateway_token=None,
+            api_key=PROVIDER_KEY,
+        ),
+    )
+
+    assert review.approved is False
+    assert review.held is True
+    assert "llm_review_failed" in review.violations
+    assert PROVIDER_KEY not in review.reason
+
+
 def test_settings_gateway_token_only_sourced_from_secret_file(tmp_path: Path) -> None:
     secret = tmp_path / "base_gateway_token"
     secret.write_text(GATEWAY_TOKEN + "\n", encoding="utf-8")

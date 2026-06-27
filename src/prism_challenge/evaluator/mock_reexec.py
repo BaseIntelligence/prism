@@ -39,6 +39,15 @@ class MockCpuReexecError(RuntimeError):
     """The dispatched prism run spec violated the network-isolated, workspace+artifacts posture."""
 
 
+def _as_text(value: str | bytes | None) -> str:
+    """Coerce captured subprocess output to str, never None (``text=True`` already yields str)."""
+    if value is None:
+        return ""
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="replace")
+    return value
+
+
 def _mount_source(spec: DockerRunSpec, target: str) -> Path:
     for mount in spec.mounts:
         if mount.target == target:
@@ -157,14 +166,26 @@ def run_cpu_reexec(
     # The local CPU process must not see a CUDA device even if the host advertises one.
     env["CUDA_VISIBLE_DEVICES"] = ""
 
-    completed = subprocess.run(
-        [python_executable or sys.executable, str(runner), str(local_payload)],
-        env=env,
-        capture_output=True,
-        text=True,
-        timeout=timeout_seconds,
-        check=False,
-    )
+    try:
+        completed = subprocess.run(
+            [python_executable or sys.executable, str(runner), str(local_payload)],
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=timeout_seconds,
+            check=False,
+        )
+    except subprocess.TimeoutExpired as exc:
+        # Mirror the real broker ``DockerExecutor.run`` timeout contract: a run that exceeds its
+        # timeout maps to ``DockerRunResult(timed_out=True)`` (returncode 124, partial output) so
+        # the mock and the real executor surface the same result shape to callers.
+        return DockerRunResult(
+            container_name=spec.name or "prism-cpu-reexec",
+            stdout=_as_text(exc.stdout),
+            stderr=_as_text(exc.stderr),
+            returncode=124,
+            timed_out=True,
+        )
     return DockerRunResult(
         container_name=spec.name or "prism-cpu-reexec",
         stdout=completed.stdout,

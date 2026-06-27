@@ -514,3 +514,51 @@ def test_real_docker_executor_run_is_not_invoked_in_tests():
     # Defense-in-depth: the CPU re-exec seam replaces DockerExecutor.run; the real method exists but
     # the mock path never touches a live broker/Docker. (Guards against accidental real dispatch.)
     assert hasattr(DockerExecutor, "run")
+
+
+# --- mock matches the real executor timeout contract: TimeoutExpired -> timed_out=True ------------
+
+
+def test_cpu_reexec_subprocess_timeout_maps_to_timed_out_result(tmp_path, monkeypatch):
+    import subprocess as _subprocess
+
+    from prism_challenge.evaluator import mock_reexec
+
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    (workspace / "runner.py").write_text("print('noop')\n", encoding="utf-8")
+    (workspace / "payload.json").write_text(json.dumps({"context": {}}), encoding="utf-8")
+    artifacts = tmp_path / "art"
+    artifacts.mkdir()
+    data_dir = _stage_train(tmp_path)
+
+    spec = DockerRunSpec(
+        image="img",
+        command=("python", "runner.py"),
+        mounts=(
+            DockerMount(workspace, "/workspace"),
+            DockerMount(artifacts, "/artifacts", read_only=False),
+        ),
+        limits=DockerLimits(network="none"),
+        name="prism-timeout",
+    )
+
+    def _raise_timeout(*args, **kwargs):
+        raise _subprocess.TimeoutExpired(
+            cmd=args[0] if args else kwargs.get("args"),
+            timeout=kwargs.get("timeout", 0.01),
+            output="partial-out",
+            stderr="partial-err",
+        )
+
+    monkeypatch.setattr(mock_reexec.subprocess, "run", _raise_timeout)
+
+    result = mock_reexec.run_cpu_reexec(spec, 0.01, train_data_dir=data_dir)
+
+    # Mirrors the real broker DockerExecutor: a timed-out run is a DockerRunResult(timed_out=True)
+    # with returncode 124 and the partial captured output, never a propagated TimeoutExpired.
+    assert result.timed_out is True
+    assert result.returncode == 124
+    assert result.container_name == "prism-timeout"
+    assert result.stdout == "partial-out"
+    assert result.stderr == "partial-err"

@@ -24,6 +24,7 @@ from prism_challenge.coordination import (
     list_pending_prism_work_units,
     prism_work_unit_id,
     pull_assigned_work_units,
+    work_unit_to_payload,
 )
 from prism_challenge.evaluator.mock_reexec import cpu_reexec_run
 from prism_challenge.models import SubmissionCreate
@@ -330,9 +331,65 @@ async def test_repost_completed_prism_assignment_is_idempotent(tmp_path, monkeyp
     # A direct re-execution of the completed unit is also an idempotent no-op.
     outcome = await execute_work_unit(
         app.state.worker,
-        PrismWorkUnit(work_unit_id=sub.id, submission_id=sub.id, submission_ref="hk-a"),
+        PrismWorkUnit(work_unit_id=sub.id, submission_id=sub.id, hotkey="hk-a"),
     )
     assert outcome.executed is False
     assert outcome.status == "completed"
     assert len(captured) == runs_after_first
     assert _score(sub.id) == pytest.approx(score_before)
+
+
+# --- Clarity: the work-unit hotkey is surfaced as the master's `submission_ref` contract key ------
+
+
+async def test_work_unit_payload_carries_hotkey_as_submission_ref(tmp_path):
+    app = await _make_app(tmp_path)
+    await _create_submission(app, "hk-ref")
+    units = await list_pending_prism_work_units(app.state.repository)
+
+    assert len(units) == 1
+    unit = units[0]
+    # The field is named for what it actually holds (the submitting miner hotkey).
+    assert unit.hotkey == "hk-ref"
+    # The wire payload preserves the master's `submission_ref` contract key (read by the platform
+    # HttpChallengeWorkSource), sourced from that hotkey.
+    payload = work_unit_to_payload(unit)
+    assert payload["submission_ref"] == "hk-ref"
+    assert payload["submission_id"] == unit.submission_id
+
+
+# --- Defense-in-depth: validator cycle enforces concurrency 1 against the REAL in-flight count ----
+
+
+async def test_validator_cycle_uses_real_in_flight_count(tmp_path):
+    app = await _make_app(tmp_path)
+    sub_a = await _create_submission(app, "hk-a")
+    sub_b = await _create_submission(app, "hk-b")
+
+    # Simulate a concurrent in-flight run: claim sub_a so it sits in `running` (not terminal).
+    claimed = await app.state.repository.claim_submission(sub_a.id)
+    assert claimed is not None
+    assert await app.state.repository.count_in_flight_submissions() == 1
+
+    # A cycle that does NOT pass in_flight resolves the true count (1) and, with concurrency 1,
+    # pulls nothing more -- the cap is enforced, not advisory. No broker is dispatched.
+    summary = await run_validator_cycle(worker=app.state.worker, work_unit_ids=[sub_b.id])
+    assert summary.pulled == 0
+    assert summary.executed == 0
+
+    # Passing in_flight=0 explicitly (ignoring reality) WOULD have pulled the pending unit, proving
+    # the default now reflects the validator's real concurrency draw.
+    forced = pull_assigned_work_units(
+        await list_pending_prism_work_units(app.state.repository),
+        work_unit_ids=[sub_b.id],
+        in_flight=0,
+    )
+    assert [u.work_unit_id for u in forced] == [sub_b.id]
+
+    # An explicit in_flight override is honored as-is (the cap is not recomputed): a saturated
+    # override pulls nothing and never dispatches the broker.
+    override = await run_validator_cycle(
+        worker=app.state.worker, work_unit_ids=[sub_b.id], in_flight=5
+    )
+    assert override.pulled == 0
+    assert override.executed == 0

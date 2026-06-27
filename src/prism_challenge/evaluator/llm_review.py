@@ -479,13 +479,21 @@ def _gateway_token(config: LlmReviewConfig) -> str | None:
 def _resolve_endpoint(config: LlmReviewConfig) -> tuple[str, str]:
     """Resolve ``(base_url, credential)`` for the chat client, preferring the master gateway.
 
-    When a gateway URL and a scoped gateway token are both resolvable the gate routes through the
-    MASTER OpenRouter gateway with the TOKEN: the gateway injects the provider key server-side, so
-    the challenge/validator never holds the raw provider key (VAL-PRISM-031/034). Only when no
-    gateway is configured does the gate fall back to a direct OpenRouter call with the provider key.
+    When a gateway URL is configured the gate routes through the MASTER OpenRouter gateway with the
+    SCOPED TOKEN: the gateway injects the provider key server-side, so the challenge/validator never
+    holds the raw provider key (VAL-PRISM-031/034). If a gateway URL is configured but its scoped
+    token is unresolvable the gate FAILS CLOSED rather than silently falling back to a direct
+    provider-key call -- a direct call would defeat the gateway boundary (and only happens to be
+    harmless today because validators hold no provider key). A direct OpenRouter call with the
+    provider key is used ONLY when no gateway URL is configured at all.
     """
-    gateway_token = _gateway_token(config)
-    if config.gateway_url and gateway_token:
+    if config.gateway_url:
+        gateway_token = _gateway_token(config)
+        if not gateway_token:
+            raise RuntimeError(
+                "prism LLM gateway URL is configured but its scoped token is unresolvable; "
+                "refusing to fall back to a direct provider-key call"
+            )
         return config.gateway_url, gateway_token
     api_key = _api_key(config)
     if not api_key:

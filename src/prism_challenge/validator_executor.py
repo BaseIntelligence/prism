@@ -84,7 +84,7 @@ async def run_validator_cycle(
     worker: PrismWorker,
     work_unit_ids: Iterable[str] | None = None,
     capabilities: Iterable[str] = (PRISM_WORK_UNIT_CAPABILITY,),
-    in_flight: int = 0,
+    in_flight: int | None = None,
     max_concurrency: int = PRISM_DEFAULT_CONCURRENCY,
 ) -> PrismValidatorCycleSummary:
     """Run one decentralized validator cycle: pull -> execute (own broker) -> post.
@@ -93,8 +93,14 @@ async def run_validator_cycle(
     ``max_concurrency - in_flight`` of them, so a busy validator runs one submission at a time),
     executes each on the validator's own broker, and reports which submissions completed. The pull
     and assignment are execution-free; only :func:`execute_work_unit` dispatches the broker.
+
+    ``in_flight`` defaults to the validator's REAL in-flight draw (the count of currently-running
+    submissions) so the concurrency-1 cap is enforced against reality rather than a static zero; a
+    caller may override it (e.g. tests pinning a specific value).
     """
 
+    if in_flight is None:
+        in_flight = await worker.repository.count_in_flight_submissions()
     units = await list_pending_prism_work_units(worker.repository)
     pulled = pull_assigned_work_units(
         units,
