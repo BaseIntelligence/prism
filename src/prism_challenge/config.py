@@ -103,6 +103,23 @@ class PrismSettings(ChallengeSettings):
         default=Path("/run/secrets/openrouter_api_key"),
         validation_alias=AliasChoices("PRISM_OPENROUTER_API_KEY_FILE", "PRISM_CHUTES_API_KEY_FILE"),
     )
+    # The prism llm_review gpt-4o gate routes through the MASTER OpenRouter gateway: the gateway
+    # injects the provider key server-side, so the challenge/validator holds NO provider key -- only
+    # a scoped gateway token (architecture.md sections 5, 7; VAL-PRISM-031/034). When a gateway URL
+    # + token are configured they take precedence over a direct OpenRouter call.
+    llm_gateway_url: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("PRISM_LLM_GATEWAY_URL", "BASE_LLM_GATEWAY_URL"),
+    )
+    llm_gateway_token: str | None = Field(
+        default=None,
+        repr=False,
+        validation_alias=AliasChoices("PRISM_GATEWAY_TOKEN", "BASE_GATEWAY_TOKEN"),
+    )
+    llm_gateway_token_file: Path | None = Field(
+        default=Path("/run/secrets/base_gateway_token"),
+        validation_alias=AliasChoices("PRISM_GATEWAY_TOKEN_FILE", "BASE_GATEWAY_TOKEN_FILE"),
+    )
     hf_token: str | None = Field(
         default=None,
         repr=False,
@@ -375,6 +392,14 @@ class PrismSettings(ChallengeSettings):
             return self.openrouter_api_key
         if self.openrouter_api_key_file and self.openrouter_api_key_file.exists():
             token = self.openrouter_api_key_file.read_text(encoding="utf-8").strip()
+            return token or None
+        return None
+
+    def llm_gateway_token_value(self) -> str | None:
+        if self.llm_gateway_token:
+            return self.llm_gateway_token
+        if self.llm_gateway_token_file and self.llm_gateway_token_file.exists():
+            token = self.llm_gateway_token_file.read_text(encoding="utf-8").strip()
             return token or None
         return None
 

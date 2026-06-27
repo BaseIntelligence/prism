@@ -168,6 +168,12 @@ class LlmReviewConfig:
     model: str | None = "openai/gpt-4o"
     api_key: str | None = None
     api_key_file: str | Path | None = "/run/secrets/openrouter_api_key"
+    # Master OpenRouter gateway routing. When ``gateway_url`` + a resolvable ``gateway_token`` are
+    # set the gate calls the gateway with the SCOPED TOKEN (the challenge/validator holds no raw
+    # provider key); the gateway injects the provider key server-side (VAL-PRISM-031/034).
+    gateway_url: str | None = None
+    gateway_token: str | None = None
+    gateway_token_file: str | Path | None = None
     timeout_seconds: int = 60
     temperature: float = 0.0
     max_tokens: int = 512
@@ -260,7 +266,7 @@ def review_code(
             ),
         )
     except Exception as exc:
-        return _failed_closed_review(exc, reviewed_sha)
+        return _failed_closed_review(exc, reviewed_sha, secrets=_collect_secrets(config))
     # Bind the verdict to the EXACT reviewed bytes so an allow cannot be reused for a tampered
     # bundle (VAL-LLM-023); a tampered resubmission has a distinct fingerprint and its own review.
     review["reviewed_code_sha256"] = reviewed_sha
@@ -282,18 +288,23 @@ def review_code(
     )
 
 
-def _failed_closed_review(exc: Exception, reviewed_sha: str) -> LlmReview:
+def _failed_closed_review(
+    exc: Exception, reviewed_sha: str, *, secrets: tuple[str, ...] = ()
+) -> LlmReview:
     """Fail CLOSED on any LLM-call failure -- never a silent allow.
 
     A malformed / unparseable verdict (VAL-LLM-021) and a transient OpenRouter error
     (timeout / 429 / 5xx, VAL-LLM-016) both HOLD the submission (quarantine) rather than
     rejecting it terminally or allowing it: the miner is not at fault for an upstream blip,
-    and an out-of-vocabulary verdict must never be coerced to allow.
+    and an out-of-vocabulary verdict must never be coerced to allow. The provider key / gateway
+    token is scrubbed from the surfaced reason so an upstream error can never leak it
+    (VAL-PRISM-034).
     """
     if _is_verdict_parse_error(exc):
         reason = f"LLM review verdict parse failure (fail-closed hold): {exc}"
     else:
         reason = f"LLM review failed closed (fail-closed hold): {exc}"
+    reason = _redact_secrets(reason, secrets)
     return LlmReview(
         approved=False,
         reason=reason,
@@ -302,6 +313,17 @@ def _failed_closed_review(exc: Exception, reviewed_sha: str) -> LlmReview:
         raw={"reviewed_code_sha256": reviewed_sha},
         held=True,
     )
+
+
+def _collect_secrets(config: LlmReviewConfig) -> tuple[str, ...]:
+    return tuple(secret for secret in (_gateway_token(config), _api_key(config)) if secret)
+
+
+def _redact_secrets(text: str, secrets: tuple[str, ...]) -> str:
+    for secret in secrets:
+        if secret:
+            text = text.replace(secret, "[REDACTED]")
+    return text
 
 
 def _is_verdict_parse_error(exc: Exception) -> bool:
@@ -376,16 +398,14 @@ def _invoke_verdict(config: LlmReviewConfig, *, system: str, prompt: str) -> dic
 
 
 def _invoke_review_flow(config: LlmReviewConfig, *, system: str, prompt: str) -> dict[str, Any]:
-    api_key = _api_key(config)
-    if not api_key:
-        raise RuntimeError("OpenRouter API key is not configured")
+    base_url, credential = _resolve_endpoint(config)
     if not config.model:
         raise RuntimeError("OpenRouter model is not configured")
     chat_openai = _load_chat_openai()
     chat = chat_openai(
         model=config.model,
-        base_url=config.base_url,
-        api_key=api_key,
+        base_url=base_url,
+        api_key=credential,
         temperature=config.temperature,
         timeout=config.timeout_seconds,
         max_retries=config.max_retries,
@@ -443,6 +463,34 @@ def _api_key(config: LlmReviewConfig) -> str | None:
             token = path.read_text(encoding="utf-8").strip()
             return token or None
     return None
+
+
+def _gateway_token(config: LlmReviewConfig) -> str | None:
+    if config.gateway_token:
+        return config.gateway_token
+    if config.gateway_token_file:
+        path = Path(config.gateway_token_file)
+        if path.exists():
+            token = path.read_text(encoding="utf-8").strip()
+            return token or None
+    return None
+
+
+def _resolve_endpoint(config: LlmReviewConfig) -> tuple[str, str]:
+    """Resolve ``(base_url, credential)`` for the chat client, preferring the master gateway.
+
+    When a gateway URL and a scoped gateway token are both resolvable the gate routes through the
+    MASTER OpenRouter gateway with the TOKEN: the gateway injects the provider key server-side, so
+    the challenge/validator never holds the raw provider key (VAL-PRISM-031/034). Only when no
+    gateway is configured does the gate fall back to a direct OpenRouter call with the provider key.
+    """
+    gateway_token = _gateway_token(config)
+    if config.gateway_url and gateway_token:
+        return config.gateway_url, gateway_token
+    api_key = _api_key(config)
+    if not api_key:
+        raise RuntimeError("OpenRouter API key is not configured")
+    return config.base_url, api_key
 
 
 def _load_chat_openai() -> Any:
