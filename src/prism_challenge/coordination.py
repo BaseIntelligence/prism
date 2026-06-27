@@ -36,6 +36,8 @@ class SupportsPendingSubmissions(Protocol):
 
     async def list_pending_submissions(self) -> list[dict[str, object]]: ...
 
+    async def latest_checkpoint_ref(self, submission_id: str) -> str | None: ...
+
 
 @dataclass(frozen=True)
 class PrismWorkUnit:
@@ -67,17 +69,29 @@ def capability_can_run(required: str, capabilities: Iterable[str]) -> bool:
 async def list_pending_prism_work_units(
     repository: SupportsPendingSubmissions,
 ) -> list[PrismWorkUnit]:
-    """Expose each submission awaiting re-execution as exactly one pending gpu work unit."""
+    """Expose each submission awaiting re-execution as exactly one pending gpu work unit.
+
+    When a submission already has a published HF checkpoint (a prior attempt persisted one before
+    crashing), the unit payload carries it under ``resume_checkpoint_ref`` so the reassigned
+    validator resumes from the last public checkpoint rather than restarting (VAL-PRISM-023). A
+    first attempt with no published checkpoint carries no resume ref and starts fresh
+    (VAL-PRISM-024).
+    """
 
     rows = await repository.list_pending_submissions()
     units: list[PrismWorkUnit] = []
     for row in rows:
         submission_id = str(row["id"])
+        payload: dict[str, Any] = {}
+        resume_ref = await repository.latest_checkpoint_ref(submission_id)
+        if resume_ref:
+            payload[RESUME_CHECKPOINT_PAYLOAD_KEY] = resume_ref
         units.append(
             PrismWorkUnit(
                 work_unit_id=prism_work_unit_id(submission_id),
                 submission_id=submission_id,
                 submission_ref=str(row.get("hotkey") or ""),
+                payload=payload,
             )
         )
     return units

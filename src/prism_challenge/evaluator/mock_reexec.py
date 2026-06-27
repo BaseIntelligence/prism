@@ -95,6 +95,10 @@ def _localize_payload(
     context["artifacts_dir"] = str(artifacts_dir)
     if reference_tokenizer_dir is not None:
         context["reference_tokenizer_dir"] = str(reference_tokenizer_dir)
+    # The host has no ``/workspace`` mount, so redirect a staged resume checkpoint to its host path
+    # under the local workspace (the broker would otherwise expose it at the container path).
+    if context.get("resume_checkpoint_dir"):
+        context["resume_checkpoint_dir"] = str(workspace / "resume_checkpoint")
     context["world_size"] = LOCAL_WORLD_SIZE
     context["rank"] = 0
     context["local_rank"] = 0

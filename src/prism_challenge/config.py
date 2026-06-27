@@ -123,6 +123,12 @@ class PrismSettings(ChallengeSettings):
             "PRISM_CHECKPOINT_CADENCE_SECONDS", "PRISM_HF_CHECKPOINT_CADENCE_SECONDS"
         ),
     )
+    # HuggingFace model repo the master publishes crash-recovery checkpoints to (architecture.md
+    # section 7). The publisher is an interface (mocked in tests); this only names the deploy repo.
+    checkpoint_repo_id: str = Field(
+        default="baseintelligence/prism-checkpoints",
+        validation_alias=AliasChoices("PRISM_CHECKPOINT_REPO_ID", "PRISM_HF_CHECKPOINT_REPO_ID"),
+    )
     llm_review_timeout_seconds: int = 60
     held_review_timeout_seconds: int = 86400
     llm_review_temperature: float = 0.0

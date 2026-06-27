@@ -17,6 +17,7 @@ from ..sdk.executors.docker import (
     DockerMount,
     DockerRunSpec,
 )
+from .checkpoint_publisher import CheckpointPublisher
 from .heldout import HeldoutResult, compute_heldout_metrics
 from .interface import PrismContext
 from .modes import execution_mode_from_value
@@ -103,9 +104,18 @@ class PrismContainerEvaluator:
     manifest is ignored.
     """
 
-    def __init__(self, *, settings: PrismSettings, ctx: PrismContext) -> None:
+    def __init__(
+        self,
+        *,
+        settings: PrismSettings,
+        ctx: PrismContext,
+        checkpoint_publisher: CheckpointPublisher | None = None,
+    ) -> None:
         self.settings = settings
         self.ctx = ctx
+        # Used ONLY to DOWNLOAD a resume checkpoint on reassignment (publish happens on the master).
+        # Injected as a mock in tests; the real lazy HF client is built on demand at deploy.
+        self._checkpoint_publisher = checkpoint_publisher
 
     def evaluate(
         self,
@@ -123,6 +133,7 @@ class PrismContainerEvaluator:
         gpu_lease: GpuLease | None = None,
         execution_mode: ExecutionMode | str | None = None,
         attempt: int = 1,
+        resume_checkpoint_ref: str | None = None,
     ) -> ContainerEvaluationResult:
         payload_files = files or (SourceFile("architecture.py", code, code_hash),)
         mode = execution_mode_from_value(execution_mode)
@@ -133,6 +144,7 @@ class PrismContainerEvaluator:
             workspace = Path(tmp)
             artifact_output = self._fresh_artifact_output(submission_id, attempt)
             gpu_allocation = self._gpu_allocation(gpu_lease)
+            resume_checkpoint_dir = self._stage_resume_checkpoint(workspace, resume_checkpoint_ref)
             payload_path = workspace / "payload.json"
             runner_path = workspace / "runner.py"
             payload_path.write_text(
@@ -148,6 +160,8 @@ class PrismContainerEvaluator:
                         train_symbol=train_symbol,
                         gpu_allocation=gpu_allocation,
                         execution_mode=mode,
+                        attempt=attempt,
+                        resume_checkpoint_dir=resume_checkpoint_dir,
                     ),
                     separators=(",", ":"),
                 ),
@@ -235,9 +249,7 @@ class PrismContainerEvaluator:
             return ContainerEvaluationResult(
                 container_name=result.container_name,
                 metrics=(
-                    _metrics_from_manifest(manifest)
-                    if manifest
-                    else _parse_metrics(result.stdout)
+                    _metrics_from_manifest(manifest) if manifest else _parse_metrics(result.stdout)
                 ),
                 run_manifest=manifest,
                 artifact_output_path=str(artifact_output) if manifest else None,
@@ -258,6 +270,35 @@ class PrismContainerEvaluator:
                 pass
         artifact_output.mkdir(parents=True, exist_ok=True)
         return artifact_output
+
+    def _resolve_checkpoint_publisher(self) -> CheckpointPublisher:
+        if self._checkpoint_publisher is not None:
+            return self._checkpoint_publisher
+        # Deploy-time default; lazy so constructing never needs huggingface_hub or a real token.
+        from .checkpoint_publisher import HuggingFaceCheckpointPublisher
+
+        return HuggingFaceCheckpointPublisher(
+            repo_id=self.settings.checkpoint_repo_id, token=self.settings.hf_token_value()
+        )
+
+    def _stage_resume_checkpoint(
+        self, workspace: Path, resume_checkpoint_ref: str | None
+    ) -> str | None:
+        """Download the last public checkpoint into the (RO-mounted) workspace for resume.
+
+        With no ``resume_checkpoint_ref`` (a from-scratch first attempt) NOTHING is downloaded and
+        the runner starts a clean forced-random-init run at step 0 (VAL-PRISM-024). With a ref the
+        publisher (mock in tests) downloads it under ``workspace/resume_checkpoint`` so the
+        network=none container reads it at ``/workspace/resume_checkpoint`` and the run resumes from
+        the last PUBLIC checkpoint rather than restarting (VAL-PRISM-023). The secret val/test split
+        is never involved; only the public crash-recovery checkpoint is materialized.
+        """
+        if not resume_checkpoint_ref:
+            return None
+        resume_local = workspace / "resume_checkpoint"
+        resume_local.mkdir(parents=True, exist_ok=True)
+        self._resolve_checkpoint_publisher().download(resume_checkpoint_ref, resume_local)
+        return "/workspace/resume_checkpoint"
 
     def _augment_with_heldout(
         self,
@@ -375,6 +416,8 @@ class PrismContainerEvaluator:
         train_symbol: str,
         gpu_allocation: dict[str, Any],
         execution_mode: ExecutionMode,
+        attempt: int = 1,
+        resume_checkpoint_dir: str | None = None,
     ) -> dict[str, Any]:
         world_size = int(gpu_allocation["actual_gpu_count"])
         return {
@@ -411,6 +454,13 @@ class PrismContainerEvaluator:
                 "local_rank": 0,
                 "world_size": world_size,
                 "distributed_backend": "nccl" if world_size > 1 else None,
+                # Crash-recovery resume (architecture.md section 7). The challenge forces random
+                # init + step-0 anti-cheat + prequential scoring REGARDLESS of resume; this only
+                # exposes the downloaded public checkpoint to the miner's train(ctx) for warm-start,
+                # so smuggled pretrained weights still trip the step-0 anomaly (VAL-PRISM-025).
+                "resume_checkpoint_dir": resume_checkpoint_dir,
+                "is_resume": resume_checkpoint_dir is not None,
+                "attempt": attempt,
             },
             "gpu_allocation": gpu_allocation,
             "artifact_output": {
@@ -503,21 +553,15 @@ class PrismContainerEvaluator:
                 gpu_lease.gpu_count if gpu_lease else self.settings.base_eval_gpu_count
             ),
             "max_gpu_count": (
-                gpu_lease.max_gpu_count
-                if gpu_lease
-                else self.settings.base_eval_max_gpu_count
+                gpu_lease.max_gpu_count if gpu_lease else self.settings.base_eval_max_gpu_count
             ),
             "gpu_type": self.settings.base_eval_gpu_type,
             "target_id": gpu_lease.target_id if gpu_lease else None,
             "target_server": (
-                gpu_lease.target_server
-                if gpu_lease
-                else self.settings.base_eval_gpu_server
+                gpu_lease.target_server if gpu_lease else self.settings.base_eval_gpu_server
             ),
             "device_ids": list(
-                gpu_lease.device_ids
-                if gpu_lease
-                else self.settings.base_eval_gpu_device_ids
+                gpu_lease.device_ids if gpu_lease else self.settings.base_eval_gpu_device_ids
             ),
         }
 
@@ -539,13 +583,9 @@ def _existing_manifests(artifact_output: Path) -> list[Path]:
 
 def _runner_launch_command(gpu_count: Any) -> tuple[str, ...]:
     if not isinstance(gpu_count, int) or isinstance(gpu_count, bool):
-        raise ContainerEvaluationError(
-            "Prism container evaluation GPU count must be an integer"
-        )
+        raise ContainerEvaluationError("Prism container evaluation GPU count must be an integer")
     if gpu_count < 1:
-        raise ContainerEvaluationError(
-            "Prism container evaluation GPU count must be at least 1"
-        )
+        raise ContainerEvaluationError("Prism container evaluation GPU count must be at least 1")
     if gpu_count > 8:
         raise ContainerEvaluationError(
             "Prism container evaluation GPU count exceeds supported maximum of 8"
@@ -1242,6 +1282,13 @@ class PrismContext:
     world_size: int = 1
     distributed_backend: str | None = None
     device: str = "cpu"
+    # Crash-recovery resume (architecture.md section 7). ``resume_checkpoint_dir`` is the read-only
+    # path of the last PUBLIC checkpoint downloaded by the host; the miner's train(ctx) MAY warm
+    # start from it. Forced random init + step-0 anti-cheat + prequential scoring are unchanged, so
+    # exposing it cannot be used to inject pretrained weights that evade the step-0 anomaly.
+    resume_checkpoint_dir: str | None = None
+    is_resume: bool = False
+    attempt: int = 1
 
     @property
     def max_seq_len(self):
@@ -1395,6 +1442,9 @@ ctx = PrismContext(
     world_size=world_size,
     distributed_backend=context_data.get("distributed_backend"),
     device=str(device),
+    resume_checkpoint_dir=context_data.get("resume_checkpoint_dir"),
+    is_resume=bool(context_data.get("is_resume", False)),
+    attempt=int(context_data.get("attempt", 1) or 1),
 )
 
 _WATCHDOG_STOP = threading.Event()

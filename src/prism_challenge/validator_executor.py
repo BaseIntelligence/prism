@@ -20,6 +20,7 @@ from dataclasses import dataclass
 from .coordination import (
     PRISM_DEFAULT_CONCURRENCY,
     PRISM_WORK_UNIT_CAPABILITY,
+    RESUME_CHECKPOINT_PAYLOAD_KEY,
     PrismWorkUnit,
     list_pending_prism_work_units,
     pull_assigned_work_units,
@@ -58,10 +59,15 @@ async def execute_work_unit(worker: PrismWorker, unit: PrismWorkUnit) -> PrismWo
 
     Idempotent: :meth:`PrismWorker.process_submission` claims the submission only while it is
     pending, so a unit that already reached a terminal state is not re-dispatched and its recorded
-    result is left untouched.
+    result is left untouched. A reassigned unit carrying ``resume_checkpoint_ref`` in its payload
+    resumes from the last public HF checkpoint instead of restarting (VAL-PRISM-023).
     """
 
-    result_id = await worker.process_submission(unit.submission_id)
+    resume_ref = unit.payload.get(RESUME_CHECKPOINT_PAYLOAD_KEY)
+    result_id = await worker.process_submission(
+        unit.submission_id,
+        resume_checkpoint_ref=str(resume_ref) if resume_ref else None,
+    )
     executed = result_id is not None
     status = await worker.repository.submission_status(unit.submission_id)
     return PrismWorkUnitExecution(

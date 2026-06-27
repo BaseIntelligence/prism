@@ -13,6 +13,7 @@ from .config import PrismSettings
 from .db import dumps
 from .evaluator import llm_review, source_similarity
 from .evaluator.anti_cheat import evaluate_anti_cheat
+from .evaluator.checkpoint_publisher import CheckpointPublisher
 from .evaluator.component_signatures import (
     ComponentSemanticSignature,
     build_semantic_signature,
@@ -118,6 +119,7 @@ class PrismWorker:
         execution_backend: str = "base_gpu",
         settings: PrismSettings | None = None,
         evaluator_factory: EvaluatorFactory | None = None,
+        checkpoint_publisher: CheckpointPublisher | None = None,
     ) -> None:
         if execution_backend not in SUPPORTED_EXECUTION_BACKENDS:
             raise ValueError(f"Unsupported execution backend: {execution_backend}")
@@ -126,6 +128,7 @@ class PrismWorker:
         self.execution_backend = execution_backend
         self.settings = settings or PrismSettings()
         self._evaluator_factory = evaluator_factory or _default_evaluator_factory
+        self._checkpoint_publisher = checkpoint_publisher
 
     async def process_next(self) -> str | None:
         submission = await self.repository.claim_next()
@@ -133,21 +136,26 @@ class PrismWorker:
             return None
         return await self._process_claimed(submission)
 
-    async def process_submission(self, submission_id: str) -> str | None:
+    async def process_submission(
+        self, submission_id: str, *, resume_checkpoint_ref: str | None = None
+    ) -> str | None:
         """Process exactly the submission assigned by the coordination plane.
 
         Claims the SPECIFIC pending submission (CAS on status) and runs the same re-execution path
         as :meth:`process_next`. A submission that is not pending (already terminal, or in-flight on
         another validator) is a no-op returning ``None``, so a busy validator never starts a second
         run and re-posting a completed assignment never re-dispatches the broker or mutates the
-        recorded result.
+        recorded result. ``resume_checkpoint_ref`` (set on a reassignment) resumes the re-execution
+        from the last public HF checkpoint instead of from scratch.
         """
         submission = await self.repository.claim_submission(submission_id)
         if submission is None:
             return None
-        return await self._process_claimed(submission)
+        return await self._process_claimed(submission, resume_checkpoint_ref=resume_checkpoint_ref)
 
-    async def _process_claimed(self, submission: dict[str, Any]) -> str:
+    async def _process_claimed(
+        self, submission: dict[str, Any], *, resume_checkpoint_ref: str | None = None
+    ) -> str:
         submission_id = str(submission["id"])
         code = str(submission["code"])
         filename = str(submission.get("filename") or "model.py")
@@ -157,7 +165,13 @@ class PrismWorker:
         code_hash = str(submission.get("code_hash") or sha256(code.encode()).hexdigest())
         if self.execution_backend in CONTAINER_EXECUTION_BACKENDS:
             return await self._process_container(
-                submission_id, code, filename, metadata, hotkey, code_hash
+                submission_id,
+                code,
+                filename,
+                metadata,
+                hotkey,
+                code_hash,
+                resume_checkpoint_ref=resume_checkpoint_ref,
             )
         raise ValueError(f"Unsupported execution backend: {self.execution_backend}")
 
@@ -169,6 +183,8 @@ class PrismWorker:
         metadata: dict[str, Any],
         hotkey: str,
         code_hash: str,
+        *,
+        resume_checkpoint_ref: str | None = None,
     ) -> str:
         # Static gates run FIRST: a sandbox / param-cap / distributed-contract rejection precedes
         # and SKIPS the LLM review entirely -- no llm_reviews/llm_review_events row and no GPU
@@ -256,6 +272,10 @@ class PrismWorker:
             }
         )
         evaluator = self._evaluator_factory(effective_settings, self.ctx)
+        if self._checkpoint_publisher is not None and evaluator._checkpoint_publisher is None:
+            # The validator downloads a resume checkpoint via the same publisher the master uses;
+            # the default factory leaves it unset (lazy real HF client at deploy).
+            evaluator._checkpoint_publisher = self._checkpoint_publisher
         attempt = (
             await self.repository.container_job_attempt_count(submission_id, self.execution_backend)
             + 1
@@ -273,6 +293,7 @@ class PrismWorker:
                 gpu_lease=lease,
                 execution_mode=execution_mode,
                 attempt=attempt,
+                resume_checkpoint_ref=resume_checkpoint_ref,
             )
             await self._record_container_job(
                 submission_id=submission_id,
@@ -361,6 +382,7 @@ class PrismWorker:
         gpu_lease: GpuLease,
         execution_mode: Any,
         attempt: int,
+        resume_checkpoint_ref: str | None = None,
     ) -> Any:
         eval_call = asyncio.to_thread(
             evaluator.evaluate,
@@ -377,6 +399,7 @@ class PrismWorker:
             gpu_lease=gpu_lease,
             execution_mode=execution_mode,
             attempt=attempt,
+            resume_checkpoint_ref=resume_checkpoint_ref,
         )
         timeout = self.settings.resolved_orchestration_timeout_seconds
         try:

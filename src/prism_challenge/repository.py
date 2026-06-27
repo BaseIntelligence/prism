@@ -781,6 +781,67 @@ class PrismRepository:
             )
         return [dict(cast(Any, row)) for row in rows]
 
+    async def record_published_checkpoint(
+        self,
+        *,
+        submission_id: str,
+        attempt: int,
+        validator_hotkey: str,
+        checkpoint_ref: str,
+        arch_hash: str = "",
+    ) -> None:
+        """Record a published HF checkpoint ref on the submission's assignment row.
+
+        The validator persists a crash-recovery checkpoint and pushes it to the master, which
+        publishes it (mock publisher in tests) and stores the returned ``checkpoint_ref`` here so a
+        later reassignment of this submission resumes from the last PUBLIC checkpoint rather than
+        from scratch (architecture.md sections 3.3, 7; VAL-PRISM-022). Upserts the per-attempt
+        ``evaluation_assignments`` row so a re-push for the same attempt overwrites the ref.
+        """
+        timestamp = now_iso()
+        async with self.database.connect() as conn:
+            rows = await conn.execute_fetchall(
+                "UPDATE evaluation_assignments SET checkpoint_ref=?, validator_hotkey=?, "
+                "updated_at=? WHERE submission_id=? AND attempt=? RETURNING id",
+                (checkpoint_ref, validator_hotkey, timestamp, submission_id, attempt),
+            )
+            if not list(rows):
+                await conn.execute(
+                    "INSERT INTO evaluation_assignments("
+                    "id, submission_id, validator_hotkey, status, attempt, deadline_at, arch_hash,"
+                    " metrics, checkpoint_ref, created_at, updated_at) "
+                    "VALUES (?, ?, ?, 'running', ?, '', ?, '{}', ?, ?, ?)",
+                    (
+                        str(uuid4()),
+                        submission_id,
+                        validator_hotkey,
+                        attempt,
+                        arch_hash,
+                        checkpoint_ref,
+                        timestamp,
+                        timestamp,
+                    ),
+                )
+
+    async def latest_checkpoint_ref(self, submission_id: str) -> str | None:
+        """Return the most recent published checkpoint ref for ``submission_id`` (resume base).
+
+        Returns the highest-attempt non-null ``checkpoint_ref`` so a reassigned run resumes from the
+        last public checkpoint; ``None`` when no checkpoint was ever published (a from-scratch run).
+        """
+        async with self.database.connect() as conn:
+            rows = await conn.execute_fetchall(
+                "SELECT checkpoint_ref FROM evaluation_assignments "
+                "WHERE submission_id=? AND checkpoint_ref IS NOT NULL "
+                "ORDER BY attempt DESC, updated_at DESC LIMIT 1",
+                (submission_id,),
+            )
+        row_list = list(rows)
+        if not row_list:
+            return None
+        value = row_list[0]["checkpoint_ref"]
+        return str(value) if value is not None else None
+
     async def submission_status(self, submission_id: str) -> str | None:
         """Return the current status of ``submission_id`` (``None`` when it does not exist)."""
         async with self.database.connect() as conn:

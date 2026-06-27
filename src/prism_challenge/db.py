@@ -49,6 +49,7 @@ SCHEMA = (
     "id TEXT PRIMARY KEY, submission_id TEXT NOT NULL, validator_hotkey TEXT NOT NULL,"
     "status TEXT NOT NULL, attempt INTEGER NOT NULL, deadline_at TEXT NOT NULL,"
     "arch_hash TEXT NOT NULL, metrics TEXT NOT NULL DEFAULT '{}', error TEXT,"
+    "checkpoint_ref TEXT,"
     "created_at TEXT NOT NULL, updated_at TEXT NOT NULL);"
     "CREATE INDEX IF NOT EXISTS idx_eval_assignments_submission "
     "ON evaluation_assignments(submission_id, attempt);"
@@ -214,6 +215,11 @@ async def _run_migrations(conn: aiosqlite.Connection) -> None:
     )
     await _ensure_columns(
         conn,
+        "evaluation_assignments",
+        {"checkpoint_ref": "TEXT"},
+    )
+    await _ensure_columns(
+        conn,
         "architecture_families",
         {
             "canonical_graph_hash": "TEXT NOT NULL DEFAULT ''",
@@ -301,9 +307,7 @@ async def _run_migrations(conn: aiosqlite.Connection) -> None:
     )
 
 
-async def _ensure_columns(
-    conn: aiosqlite.Connection, table: str, columns: dict[str, str]
-) -> None:
+async def _ensure_columns(conn: aiosqlite.Connection, table: str, columns: dict[str, str]) -> None:
     existing_rows = await conn.execute_fetchall(f"PRAGMA table_info({table})")
     existing = {str(row[1]) for row in existing_rows}
     for column, definition in columns.items():
