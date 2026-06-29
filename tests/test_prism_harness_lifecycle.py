@@ -42,6 +42,7 @@ def _settings(tmp_path: Path, name: str) -> PrismSettings:
         plagiarism_enabled=False,
         # No OpenRouter key in the unit env; disable the gate (covered in test_*llm*).
         llm_review_enabled=False,
+        llm_review_required=False,
         # These doubles exercise runtime failure handling with single-process loops; the
         # multi-GPU static contract is covered in test_prism_distributed_contract.py.
         distributed_contract_policy="off",

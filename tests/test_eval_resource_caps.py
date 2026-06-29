@@ -73,17 +73,13 @@ def test_wall_time_overrun_force_kills_and_releases_lease(tmp_path, monkeypatch)
         # Model an eval that never returns on its own; only the orchestration reap unblocks it,
         # exactly as a force-killed container would unwind the worker thread.
         release_blocked_run.wait(timeout=10)
-        return DockerRunResult(
-            container_name="prism-eval", stdout="", stderr="", returncode=0
-        )
+        return DockerRunResult(container_name="prism-eval", stdout="", stderr="", returncode=0)
 
     def fake_reap(self, submission_id: str) -> None:
         reaped.append(submission_id)
         release_blocked_run.set()
 
-    monkeypatch.setattr(
-        "prism_challenge.evaluator.container.DockerExecutor.run", blocking_run
-    )
+    monkeypatch.setattr("prism_challenge.evaluator.container.DockerExecutor.run", blocking_run)
     monkeypatch.setattr(
         "prism_challenge.evaluator.container.PrismContainerEvaluator.reap_job", fake_reap
     )
@@ -93,6 +89,7 @@ def test_wall_time_overrun_force_kills_and_releases_lease(tmp_path, monkeypatch)
         shared_token="secret",
         allow_insecure_signatures=True,
         llm_review_enabled=False,
+        llm_review_required=False,
         plagiarism_enabled=False,
         distributed_contract_policy="off",
         execution_backend="base_gpu",

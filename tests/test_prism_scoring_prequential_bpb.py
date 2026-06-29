@@ -232,9 +232,7 @@ def test_container_path_scores_prequential_bpb_from_challenge_manifest(tmp_path,
             sum_nll_nats=sum_nll_nats,
             covered_bytes=covered_bytes,
         )
-        (artifact_dir / RUN_MANIFEST_V2_FILENAME).write_text(
-            json.dumps(manifest), encoding="utf-8"
-        )
+        (artifact_dir / RUN_MANIFEST_V2_FILENAME).write_text(json.dumps(manifest), encoding="utf-8")
         return DockerRunResult(
             container_name="prism-eval",
             stdout='PRISM_METRICS_JSON={"covered_bytes":250.0}\n',
@@ -257,6 +255,7 @@ def test_container_path_scores_prequential_bpb_from_challenge_manifest(tmp_path,
         plagiarism_enabled=False,
         # No OpenRouter key in the unit env; disable the gate (covered in test_*llm*).
         llm_review_enabled=False,
+        llm_review_required=False,
         # Single-process training double; the multi-GPU static contract (default reject) is
         # exercised explicitly in test_prism_distributed_contract.py.
         distributed_contract_policy="off",

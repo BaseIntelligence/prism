@@ -248,6 +248,7 @@ def _enforcing_client(tmp_path) -> TestClient:
         fineweb_sample_count=4,
         plagiarism_enabled=False,
         llm_review_enabled=False,
+        llm_review_required=False,
         base_gpu_targets="[]",
         distributed_contract_policy="reject",
     )
@@ -345,9 +346,7 @@ def test_distributed_contract_pipeline_compliant_advances(tmp_path) -> None:
 def test_single_node_bound_pipeline_gpu_count_over_eight_rejected(tmp_path) -> None:
     with _enforcing_client(tmp_path) as client:
         code = _zip_bundle({"architecture.py": COMPLIANT_ARCH, "training.py": COMPLIANT_TRAIN})
-        submission_id = _submit(
-            client, code, nonce="dist-bound-1", metadata={"gpu_count": 9}
-        )
+        submission_id = _submit(client, code, nonce="dist-bound-1", metadata={"gpu_count": 9})
         _process(client)
         row = _row(client, submission_id)
         assert row["status"] == "rejected", row

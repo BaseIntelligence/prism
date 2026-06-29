@@ -50,6 +50,7 @@ def _settings(
         allow_insecure_signatures=allow_insecure,
         validator_hotkeys=validator_hotkeys,
         llm_review_enabled=False,
+        llm_review_required=False,
         distributed_contract_policy="off",
     )
 

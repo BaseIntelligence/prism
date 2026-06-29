@@ -142,6 +142,22 @@ def test_llm_allow_approves_without_hold(monkeypatch) -> None:
     assert review.reason == ALLOW_REASON
 
 
+def test_llm_disabled_but_required_rejects_fail_closed() -> None:
+    review = review_code("ok", config=LlmReviewConfig(enabled=False, required=True))
+
+    assert review.approved is False
+    assert review.held is False
+    assert review.violations == ["llm_review_disabled"]
+    assert "required but disabled" in review.reason
+
+
+def test_llm_disabled_and_not_required_allows() -> None:
+    review = review_code("ok", config=LlmReviewConfig(enabled=False, required=False))
+
+    assert review.approved is True
+    assert review.violations == []
+
+
 def test_safety_review_prompt_flags_indirection_coherence_both_scripts() -> None:
     from prism_challenge.evaluator.llm_review import (
         SAFETY_REVIEW_SYSTEM,
@@ -178,9 +194,7 @@ def test_submit_llm_verdict_reject_without_evidence_is_terminal_rejected(tmp_pat
         )
         submission_id = created.id
 
-        await repo.submit_llm_mermaid(
-            submission_id=submission_id, mermaid="flowchart LR\n  A-->B"
-        )
+        await repo.submit_llm_mermaid(submission_id=submission_id, mermaid="flowchart LR\n  A-->B")
         await repo.submit_llm_verdict(
             submission_id=submission_id,
             approved=False,

@@ -66,6 +66,7 @@ def secure_client(tmp_path: Path) -> TestClient:
         allow_insecure_signatures=False,
         fineweb_sample_count=4,
         llm_review_enabled=False,
+        llm_review_required=False,
         distributed_contract_policy="off",
     )
     with TestClient(create_app(settings)) as test_client:

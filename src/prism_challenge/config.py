@@ -83,7 +83,10 @@ class PrismSettings(ChallengeSettings):
     component_eval_seed_count: int = Field(default=1, ge=1)
     component_eval_repeat_count: int = Field(default=1, ge=1)
     llm_review_enabled: bool = True
-    llm_review_required: bool = False
+    # Fail-closed default (architecture.md sec 8, H4): when the LLM safety gate is disabled or
+    # absent, the disabled-but-required branch in evaluator/llm_review.py rejects (approved=False)
+    # rather than silently allowing every submission after only deterministic static checks.
+    llm_review_required: bool = True
     # OpenRouter LLM hard-gate wiring (architecture.md section 7). Legacy PRISM_CHUTES_* env names
     # remain accepted so an already-running deployment keeps resolving until it is redeployed.
     openrouter_base_url: str = Field(

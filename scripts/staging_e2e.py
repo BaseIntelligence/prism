@@ -105,6 +105,7 @@ def build_settings(db_path: Path, *, public_flag: bool) -> PrismSettings:
         fineweb_sample_count=4,
         # No OpenRouter key locally -> disable the LLM hard gate (covered in test_*llm*).
         llm_review_enabled=False,
+        llm_review_required=False,
         # The minimal training double is single-process; skip the multi-GPU static contract
         # (covered in test_prism_distributed_contract.py).
         distributed_contract_policy="off",
@@ -159,9 +160,7 @@ def scores_row_present(db_path: Path, submission_id: str) -> bool:
     """Inspect the raw SQLite DB for a scores row (no public endpoint exists)."""
     conn = sqlite3.connect(str(db_path))
     try:
-        cur = conn.execute(
-            "SELECT COUNT(*) FROM scores WHERE submission_id=?", (submission_id,)
-        )
+        cur = conn.execute("SELECT COUNT(*) FROM scores WHERE submission_id=?", (submission_id,))
         return cur.fetchone()[0] > 0
     finally:
         conn.close()
@@ -270,9 +269,7 @@ def main() -> int:
         with TestClient(create_app(settings)) as client:
             log("STEP app_startup=ok (migrations applied to fresh DB)")
             if not public_flag:
-                code, _ = submit(
-                    client, hotkey=MINER_HOTKEY, nonce="off-n1", exec_mode=exec_mode
-                )
+                code, _ = submit(client, hotkey=MINER_HOTKEY, nonce="off-n1", exec_mode=exec_mode)
                 log(f"STEP flag_off submit -> {code} (expect 404 'submission route disabled')")
                 return 0
             run_happy_path(client, db_path, exec_mode)

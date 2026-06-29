@@ -365,6 +365,7 @@ def test_submission_completes_scored_on_bpb_alone_when_val_absent(tmp_path, monk
         base_eval_val_data_dir=str(tmp_path / "does-not-exist"),
         plagiarism_enabled=False,
         llm_review_enabled=False,
+        llm_review_required=False,
         distributed_contract_policy="off",
     )
     with TestClient(create_app(settings)) as client:

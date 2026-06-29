@@ -407,9 +407,9 @@ def test_anticheat_fake_reported_loss_does_not_change_score(tmp_path: Path) -> N
     # The fabricated stdout value never reaches the score; the instrumented capture is identical
     # to the benign twin that ran the same loop without the bogus print.
     assert fake_manifest["metrics"]["online_loss"] == benign_manifest["metrics"]["online_loss"]
-    assert fake_manifest["metrics"]["prequential_bpb"] == benign_manifest["metrics"][
-        "prequential_bpb"
-    ]
+    assert (
+        fake_manifest["metrics"]["prequential_bpb"] == benign_manifest["metrics"]["prequential_bpb"]
+    )
     assert fake_manifest["score"]["final_score"] != 1.0
     assert fake_manifest["metrics"]["prequential_bpb"] != 0.0000001
 
@@ -541,6 +541,7 @@ def test_anticheat_rejection_reason_reproducible_across_resubmissions(tmp_path: 
         fineweb_sample_count=4,
         # No OpenRouter key in the unit env; disable the gate (covered in test_*llm*).
         llm_review_enabled=False,
+        llm_review_required=False,
         distributed_contract_policy="off",
         plagiarism_enabled=False,
     )

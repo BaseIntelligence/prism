@@ -90,9 +90,7 @@ def test_ensure_compute_block_uses_leased_gpu_count(tmp_path) -> None:
     (tmp_path / RUN_MANIFEST_V2_FILENAME).write_text(json.dumps(manifest), encoding="utf-8")
     before = score_prequential_bpb(manifest).final_score
 
-    _ensure_compute_block(
-        manifest, {"actual_gpu_count": 1, "max_gpu_count": 8}, tmp_path
-    )
+    _ensure_compute_block(manifest, {"actual_gpu_count": 1, "max_gpu_count": 8}, tmp_path)
 
     compute = manifest["compute"]
     parsed = ComputeBlock.model_validate(compute)
@@ -148,9 +146,7 @@ def test_scored_pipeline_manifest_compute_gpu_count_matches_db(tmp_path, monkeyp
             sum_nll_nats=sum_nll_nats,
             covered_bytes=covered_bytes,
         )
-        (artifact_dir / RUN_MANIFEST_V2_FILENAME).write_text(
-            json.dumps(manifest), encoding="utf-8"
-        )
+        (artifact_dir / RUN_MANIFEST_V2_FILENAME).write_text(json.dumps(manifest), encoding="utf-8")
         return DockerRunResult(
             container_name="prism-eval",
             stdout='PRISM_METRICS_JSON={"covered_bytes":250.0}\n',
@@ -173,6 +169,7 @@ def test_scored_pipeline_manifest_compute_gpu_count_matches_db(tmp_path, monkeyp
         plagiarism_enabled=False,
         # No OpenRouter key in the unit env; disable the gate (covered in test_*llm*).
         llm_review_enabled=False,
+        llm_review_required=False,
         distributed_contract_policy="off",
     )
     with TestClient(create_app(settings)) as client:

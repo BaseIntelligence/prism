@@ -38,6 +38,8 @@ def test_prism_settings_default_to_openrouter_enabled(monkeypatch: pytest.Monkey
     settings = PrismSettings()
 
     assert settings.llm_review_enabled is True
+    # Fail-closed default: a deploy without a wired gateway must NOT silently allow submissions.
+    assert settings.llm_review_required is True
     assert settings.openrouter_base_url == OPENROUTER_BASE_URL
     assert settings.openrouter_model == STRONG_MODEL
     assert settings.openrouter_model != DEAD_MODEL

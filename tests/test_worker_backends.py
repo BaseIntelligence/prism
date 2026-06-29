@@ -97,6 +97,7 @@ def test_base_gpu_worker_runs_submission_in_container(tmp_path, monkeypatch):
         allow_insecure_signatures=True,
         # No OpenRouter key in the unit env; disable the gate (covered in test_*llm*).
         llm_review_enabled=False,
+        llm_review_required=False,
         execution_backend="base_gpu",
         docker_enabled=True,
         docker_backend="broker",
@@ -135,9 +136,7 @@ def test_base_gpu_worker_runs_submission_in_container(tmp_path, monkeypatch):
     assert spec.limits.cpus == 3.0
     assert spec.limits.memory == "12g"
     arch_file = next(
-        item
-        for item in captured["payload"]["files"]
-        if item["path"].endswith("architecture.py")
+        item for item in captured["payload"]["files"] if item["path"].endswith("architecture.py")
     )
     assert arch_file["content"] == REMOTE_ONLY_CODE
     assert captured["payload"]["architecture_entrypoint"].endswith("architecture.py")
@@ -177,6 +176,7 @@ def get_recipe(ctx):
         allow_insecure_signatures=True,
         # No OpenRouter key in the unit env; disable the gate (covered in test_*llm*).
         llm_review_enabled=False,
+        llm_review_required=False,
         execution_backend="base_gpu",
         docker_enabled=True,
         docker_backend="broker",
@@ -282,6 +282,7 @@ def test_base_gpu_accepts_custom_training_and_inference_hooks(tmp_path, monkeypa
         allow_insecure_signatures=True,
         # No OpenRouter key in the unit env; disable the gate (covered in test_*llm*).
         llm_review_enabled=False,
+        llm_review_required=False,
         execution_backend="base_gpu",
         docker_enabled=True,
         docker_backend="broker",
