@@ -665,6 +665,33 @@ class PrismRepository:
             )
         return [dict(row) for row in rows]
 
+    async def best_architecture(self) -> dict[str, object] | None:
+        """Return the single global (cross-epoch) best architecture family, or ``None`` if empty.
+
+        The crown is persistent and NOT epoch-scoped: ranking by ``q_arch_best DESC`` then
+        earliest-created then id makes the all-time best hold the crown until a strictly higher
+        score beats it (the tiebreak keeps the crown stable across epochs).
+        """
+        async with self.database.connect() as conn:
+            rows = await conn.execute_fetchall(
+                "SELECT id, owner_hotkey, q_arch_best, family_hash FROM architecture_families "
+                "ORDER BY q_arch_best DESC, created_at ASC, id ASC LIMIT 1",
+            )
+        row_list = list(rows)
+        return dict(row_list[0]) if row_list else None
+
+    async def best_training_variant(self, architecture_id: str) -> dict[str, object] | None:
+        """Return the single best training variant for ``architecture_id``, or ``None`` if none."""
+        async with self.database.connect() as conn:
+            rows = await conn.execute_fetchall(
+                "SELECT id, owner_hotkey, q_recipe, is_current_best FROM training_variants "
+                "WHERE architecture_id=? "
+                "ORDER BY is_current_best DESC, q_recipe DESC, created_at ASC, id ASC LIMIT 1",
+                (architecture_id,),
+            )
+        row_list = list(rows)
+        return dict(row_list[0]) if row_list else None
+
     async def get_submission_curve(self, submission_id: str) -> dict[str, Any] | None:
         """Return the persisted loss curve + reconciled compute + bpb scalars for a submission.
 

@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
-
 import pytest
 from test_prism_scoring_leaderboard_determinism import _manifest
 
@@ -11,8 +9,7 @@ from prism_challenge.evaluator.scoring import (
     bpb_to_final_score,
     score_prequential_bpb,
 )
-from prism_challenge.repository import PrismRepository, epoch_id_for
-from prism_challenge.weights import _normalize, get_weights
+from prism_challenge.repository import PrismRepository
 
 EPOCH_SECONDS = 60
 
@@ -65,78 +62,6 @@ async def _insert_completed(
             "penalty, final_score, metrics, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (submission_id, final_score, 0.0, 1.0, 0.0, 0.0, final_score, "{}", created_at),
         )
-
-
-# --- weights._normalize: BEST (max) per hotkey, never the SUM -------------------------------------
-
-
-def test_weights_normalize_uses_best_per_hotkey_not_sum() -> None:
-    # Two same-hotkey rows for "a" (worse 0.2 + better 0.8) plus a distinct hotkey "b" (1.0).
-    # SUM would give a=1.0,b=1.0 (0.5/0.5). MAX (best-per-miner) gives a=0.8,b=1.0 (0.8/1.8 each).
-    rows: list[dict[str, object]] = [
-        {"hotkey": "a", "id": "a-worse", "final_score": 0.2},
-        {"hotkey": "a", "id": "a-better", "final_score": 0.8},
-        {"hotkey": "b", "id": "b-only", "final_score": 1.0},
-    ]
-    weights = _normalize(rows)
-    assert weights["a"] == pytest.approx(0.8 / 1.8)
-    assert weights["b"] == pytest.approx(1.0 / 1.8)
-    # The worse same-hotkey submission never inflates the hotkey above the distinct better miner.
-    assert weights["a"] < weights["b"]
-
-
-def test_weights_normalize_distinct_hotkeys_renormalize_to_one() -> None:
-    rows: list[dict[str, object]] = [
-        {"hotkey": "a", "id": "a", "final_score": 0.3},
-        {"hotkey": "b", "id": "b", "final_score": 0.7},
-        {"hotkey": "c", "id": "c", "final_score": 1.0},
-    ]
-    weights = _normalize(rows)
-    assert set(weights) == {"a", "b", "c"}
-    assert sum(weights.values()) == pytest.approx(1.0)
-
-
-# --- get_weights end-to-end: best-per-miner + dry-run, distinct hotkeys sum to 1.0 ---------------
-
-
-async def test_get_weights_uses_best_per_miner_pair(repository: PrismRepository) -> None:
-    # get_weights resolves the CURRENT epoch, so stage the rows under that epoch id.
-    epoch_id = epoch_id_for(datetime.now(UTC), EPOCH_SECONDS)
-    base = "2024-01-01T00:00:00+00:00"
-    await _insert_completed(
-        repository,
-        submission_id="alice-worse",
-        hotkey="alice",
-        final_score=0.2,
-        created_at=base,
-        epoch_id=epoch_id,
-    )
-    await _insert_completed(
-        repository,
-        submission_id="alice-better",
-        hotkey="alice",
-        final_score=0.8,
-        created_at="2024-01-01T00:01:00+00:00",
-        epoch_id=epoch_id,
-    )
-    await _insert_completed(
-        repository,
-        submission_id="bob-only",
-        hotkey="bob",
-        final_score=1.0,
-        created_at=base,
-        epoch_id=epoch_id,
-    )
-
-    weights = await get_weights(repository, EPOCH_SECONDS)
-
-    # The hotkey appears once, driven by its BEST submission (0.8), not the worse+better sum (1.0).
-    assert set(weights) == {"alice", "bob"}
-    assert weights["alice"] == pytest.approx(0.8 / 1.8)
-    assert weights["bob"] == pytest.approx(1.0 / 1.8)
-    # Distinct hotkeys renormalize to sum 1.0; the map is a plain dry-run dict (no side effects).
-    assert sum(weights.values()) == pytest.approx(1.0)
-    assert all(0.0 <= value <= 1.0 for value in weights.values())
 
 
 # --- repository.score_rows(): exactly one surviving submission per hotkey (the leaderboard-best) --

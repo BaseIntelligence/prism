@@ -7,7 +7,9 @@ Covers VAL-PRISM-030..036 (architecture.md sections 5, 6, 7, 11):
   032 - an LLM reject is TERMINAL and pre-eval (no container eval / GPU lease / checkpoint publish).
   033 - a gateway failure / unparseable verdict fails CLOSED (hold); oversized source rejected.
   034 - the validator/eval runtime holds NO provider key (gateway token only); secrets redacted.
-  035 - get_weights = best-score-per-hotkey normalized to sum 1 over positive scorers ({} if empty).
+  035 - get_weights = two-tier split of prism's emission between the cross-epoch best architecture's
+        owner (architecture_weight) and the best training-variant owner on it (training_weight),
+        renormalized to sum 1 ({} when no crown exists or its all-time best is non-positive).
   036 - /internal/v1/get_weights keeps the {challenge_slug, epoch, weights{hotkey: float}} shape.
 
 External systems are mocked: the chat client is stubbed (no real provider), the broker executor and
@@ -17,7 +19,6 @@ checkpoint publisher are monkeypatched, and the held-out runs the tiny CPU twin 
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -38,8 +39,8 @@ from prism_challenge.evaluator.container import (
 )
 from prism_challenge.evaluator.interface import PrismContext
 from prism_challenge.evaluator.llm_review import LlmReviewConfig, review_code, review_plagiarism
-from prism_challenge.repository import PrismRepository, epoch_id_for
-from prism_challenge.weights import _normalize, get_weights
+from prism_challenge.repository import PrismRepository
+from prism_challenge.weights import get_weights
 
 GATEWAY_OPENROUTER_URL = "http://base-master:18080/llm/openrouter"
 GATEWAY_TOKEN = "gw-scoped-token-abc123"
@@ -364,49 +365,142 @@ def test_redact_detail_scrubs_sensitive_lines() -> None:
     assert "step 2 ok" in redacted
 
 
-# --- VAL-PRISM-035: best-per-hotkey normalized to sum 1; {} when zero/empty -----------------------
+# --- VAL-PRISM-035: two-tier emission split (architecture owner + training owner) -----------------
 
 
-def test_normalize_zero_and_empty_scores_yield_empty() -> None:
-    assert _normalize([]) == {}
-    assert _normalize([{"hotkey": "a", "final_score": 0.0}]) == {}
-    assert _normalize([{"hotkey": "a", "final_score": -3.0}]) == {}
-
-
-def test_normalize_best_per_hotkey_sums_to_one() -> None:
-    rows: list[dict[str, object]] = [
-        {"hotkey": "a", "final_score": 0.2},
-        {"hotkey": "a", "final_score": 0.8},
-        {"hotkey": "b", "final_score": 1.0},
-    ]
-    weights = _normalize(rows)
-    assert weights["a"] == pytest.approx(0.8 / 1.8)
-    assert weights["b"] == pytest.approx(1.0 / 1.8)
-    assert sum(weights.values()) == pytest.approx(1.0)
+async def _new_repository(tmp_path: Path, name: str) -> PrismRepository:
+    database = Database(tmp_path / name)
+    await database.init()
+    return PrismRepository(database, epoch_seconds=EPOCH_SECONDS)
 
 
 async def test_get_weights_empty_store_returns_empty(tmp_path: Path) -> None:
-    database = Database(tmp_path / "weights-empty.sqlite3")
-    await database.init()
-    repository = PrismRepository(database, epoch_seconds=EPOCH_SECONDS)
+    repository = await _new_repository(tmp_path, "weights-empty.sqlite3")
+    # No architecture has ever scored -> no crown -> BURN ({}).
     assert await get_weights(repository, EPOCH_SECONDS) == {}
 
 
-async def test_get_weights_best_per_hotkey_normalized(tmp_path: Path) -> None:
-    database = Database(tmp_path / "weights-best.sqlite3")
-    await database.init()
-    repository = PrismRepository(database, epoch_seconds=EPOCH_SECONDS)
-    epoch_id = epoch_id_for(datetime.now(UTC), EPOCH_SECONDS)
-    base = "2024-01-01T00:00:00+00:00"
-    await _insert_completed_score(repository, "a-worse", "a", 0.2, base, epoch_id)
-    await _insert_completed_score(repository, "a-better", "a", 0.8, base, epoch_id)
-    await _insert_completed_score(repository, "b-only", "b", 1.0, base, epoch_id)
+async def test_get_weights_splits_between_distinct_owners(tmp_path: Path) -> None:
+    repository = await _new_repository(tmp_path, "weights-split.sqlite3")
+    await _seed_architecture(
+        repository, architecture_id="arch-1", owner_hotkey="arch-owner",
+        q_arch_best=0.9, created_at="2024-01-01T00:00:00+00:00",
+    )
+    await _seed_training_variant(
+        repository, variant_id="var-1", architecture_id="arch-1",
+        owner_hotkey="train-owner", q_recipe=0.8, created_at="2024-01-01T00:00:00+00:00",
+    )
 
     weights = await get_weights(repository, EPOCH_SECONDS)
-    assert set(weights) == {"a", "b"}
-    assert weights["a"] == pytest.approx(0.8 / 1.8)
-    assert weights["b"] == pytest.approx(1.0 / 1.8)
+
+    assert weights["arch-owner"] == pytest.approx(0.60)
+    assert weights["train-owner"] == pytest.approx(0.40)
     assert sum(weights.values()) == pytest.approx(1.0)
+
+
+async def test_get_weights_same_owner_takes_full_pool(tmp_path: Path) -> None:
+    repository = await _new_repository(tmp_path, "weights-same.sqlite3")
+    await _seed_architecture(
+        repository, architecture_id="arch-1", owner_hotkey="solo",
+        q_arch_best=0.9, created_at="2024-01-01T00:00:00+00:00",
+    )
+    await _seed_training_variant(
+        repository, variant_id="var-1", architecture_id="arch-1",
+        owner_hotkey="solo", q_recipe=0.8, created_at="2024-01-01T00:00:00+00:00",
+    )
+
+    weights = await get_weights(repository, EPOCH_SECONDS)
+
+    assert weights == {"solo": pytest.approx(1.0)}
+
+
+async def test_get_weights_honors_db_configured_custom_split(tmp_path: Path) -> None:
+    repository = await _new_repository(tmp_path, "weights-custom.sqlite3")
+    await _seed_architecture(
+        repository, architecture_id="arch-1", owner_hotkey="arch-owner",
+        q_arch_best=0.9, created_at="2024-01-01T00:00:00+00:00",
+    )
+    await _seed_training_variant(
+        repository, variant_id="var-1", architecture_id="arch-1",
+        owner_hotkey="train-owner", q_recipe=0.8, created_at="2024-01-01T00:00:00+00:00",
+    )
+    await repository.store_runtime_config(
+        config_key="reward_pools",
+        value={"architecture": 0.7, "training": 0.3},
+        updated_by="ops",
+    )
+
+    runtime_config = await repository.runtime_config(PrismSettings(), official=True)
+    weights = await get_weights(
+        repository,
+        EPOCH_SECONDS,
+        architecture_weight=runtime_config.reward_pools.architecture,
+        training_weight=runtime_config.reward_pools.training,
+    )
+
+    assert weights["arch-owner"] == pytest.approx(0.70)
+    assert weights["train-owner"] == pytest.approx(0.30)
+    assert sum(weights.values()) == pytest.approx(1.0)
+
+
+async def test_get_weights_crown_is_cross_epoch(tmp_path: Path) -> None:
+    # An OLDER, higher-scoring architecture keeps the crown over a NEWER, lower-scoring one: the
+    # crown is global/all-time, not scoped to the current epoch.
+    repository = await _new_repository(tmp_path, "weights-crossepoch.sqlite3")
+    await _seed_architecture(
+        repository, architecture_id="arch-old", owner_hotkey="old-owner",
+        q_arch_best=0.95, created_at="2023-01-01T00:00:00+00:00",
+    )
+    await _seed_training_variant(
+        repository, variant_id="var-old", architecture_id="arch-old",
+        owner_hotkey="old-train", q_recipe=0.9, created_at="2023-01-01T00:00:00+00:00",
+    )
+    await _seed_architecture(
+        repository, architecture_id="arch-new", owner_hotkey="new-owner",
+        q_arch_best=0.50, created_at="2025-06-01T00:00:00+00:00",
+    )
+    await _seed_training_variant(
+        repository, variant_id="var-new", architecture_id="arch-new",
+        owner_hotkey="new-train", q_recipe=0.4, created_at="2025-06-01T00:00:00+00:00",
+    )
+
+    weights = await get_weights(repository, EPOCH_SECONDS)
+
+    assert set(weights) == {"old-owner", "old-train"}
+    assert weights["old-owner"] == pytest.approx(0.60)
+    assert weights["old-train"] == pytest.approx(0.40)
+
+
+async def test_get_weights_no_architecture_families_burns(tmp_path: Path) -> None:
+    repository = await _new_repository(tmp_path, "weights-burn.sqlite3")
+    assert await get_weights(repository, EPOCH_SECONDS) == {}
+
+
+async def test_get_weights_nonpositive_crown_burns(tmp_path: Path) -> None:
+    # A crown holder whose all-time best is non-positive is not a real learner -> BURN.
+    repository = await _new_repository(tmp_path, "weights-zero-crown.sqlite3")
+    await _seed_architecture(
+        repository, architecture_id="arch-1", owner_hotkey="arch-owner",
+        q_arch_best=0.0, created_at="2024-01-01T00:00:00+00:00",
+    )
+    await _seed_training_variant(
+        repository, variant_id="var-1", architecture_id="arch-1",
+        owner_hotkey="train-owner", q_recipe=0.0, created_at="2024-01-01T00:00:00+00:00",
+    )
+    assert await get_weights(repository, EPOCH_SECONDS) == {}
+
+
+async def test_get_weights_missing_training_variant_gives_arch_owner_full(tmp_path: Path) -> None:
+    # Crowned architecture exists but has NO training variant -> arch owner takes the whole pool.
+    repository = await _new_repository(tmp_path, "weights-no-variant.sqlite3")
+    await _seed_architecture(
+        repository, architecture_id="arch-1", owner_hotkey="arch-owner",
+        q_arch_best=0.9, created_at="2024-01-01T00:00:00+00:00",
+    )
+
+    weights = await get_weights(repository, EPOCH_SECONDS)
+
+    assert weights == {"arch-owner": pytest.approx(1.0)}
 
 
 # --- VAL-PRISM-036: /internal/v1/get_weights response shape unchanged -----------------------------
@@ -521,43 +615,64 @@ def _db_state(tmp_path: Path, name: str, submission_id: str) -> dict[str, Any]:
     return anyio.run(fetch)
 
 
-async def _insert_completed_score(
+async def _seed_architecture(
     repository: PrismRepository,
-    submission_id: str,
-    hotkey: str,
-    final_score: float,
+    *,
+    architecture_id: str,
+    owner_hotkey: str,
+    q_arch_best: float,
     created_at: str,
-    epoch_id: int,
+    family_hash: str | None = None,
 ) -> None:
     async with repository.database.connect() as conn:
         await conn.execute(
-            "INSERT OR IGNORE INTO epochs(id, starts_at, ends_at, status) VALUES (?, ?, ?, ?)",
-            (epoch_id, created_at, created_at, "open"),
-        )
-        await conn.execute(
-            "INSERT OR IGNORE INTO miners(hotkey, first_seen, last_seen) VALUES (?, ?, ?)",
-            (hotkey, created_at, created_at),
-        )
-        await conn.execute(
-            "INSERT INTO submissions("
-            "id, hotkey, epoch_id, filename, code, code_hash, metadata, status, "
-            "created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO architecture_families("
+            "id, family_hash, arch_fingerprint, behavior_fingerprint, owner_hotkey, "
+            "owner_submission_id, canonical_submission_id, q_arch_best, display_name, "
+            "created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
-                submission_id,
-                hotkey,
-                epoch_id,
-                "project.zip",
-                "x",
-                submission_id,
-                "{}",
-                "completed",
+                architecture_id,
+                family_hash or f"fh-{architecture_id}",
+                f"fp-{architecture_id}",
+                f"bp-{architecture_id}",
+                owner_hotkey,
+                f"sub-{architecture_id}",
+                f"sub-{architecture_id}",
+                q_arch_best,
+                f"arch-{architecture_id}",
                 created_at,
                 created_at,
             ),
         )
+
+
+async def _seed_training_variant(
+    repository: PrismRepository,
+    *,
+    variant_id: str,
+    architecture_id: str,
+    owner_hotkey: str,
+    q_recipe: float,
+    created_at: str,
+    is_current_best: int = 1,
+) -> None:
+    async with repository.database.connect() as conn:
         await conn.execute(
-            "INSERT INTO scores("
-            "submission_id, q_arch, q_recipe, anti_cheat_multiplier, diversity_bonus, "
-            "penalty, final_score, metrics, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (submission_id, final_score, 0.0, 1.0, 0.0, 0.0, final_score, "{}", created_at),
+            "INSERT INTO training_variants("
+            "id, architecture_id, training_hash, owner_hotkey, submission_id, q_recipe, "
+            "metric_mean, metric_std, is_current_best, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                variant_id,
+                architecture_id,
+                f"th-{variant_id}",
+                owner_hotkey,
+                f"sub-{variant_id}",
+                q_recipe,
+                q_recipe,
+                0.0,
+                is_current_best,
+                created_at,
+                created_at,
+            ),
         )
