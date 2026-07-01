@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import signal
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
+from fastapi import APIRouter
 from fastapi.testclient import TestClient
 
 from prism_challenge import worker as worker_module
@@ -24,6 +26,10 @@ def _settings(tmp_path: Path, **overrides: object) -> PrismSettings:
         shared_token="secret",
         **overrides,
     )
+
+
+async def _empty_weights() -> dict[str, float]:
+    return {}
 
 
 def test_combined_mode_default_is_off() -> None:
@@ -167,9 +173,12 @@ async def test_run_worker_loop_not_resilient_reraises(monkeypatch: pytest.Monkey
     assert process_next.await_count == 1
 
 
-async def test_log_unexpected_background_exit_logs_on_error(
-    caplog: pytest.LogCaptureFixture,
+async def test_log_unexpected_background_exit_logs_and_signals_on_error(
+    caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    raised: list[signal.Signals] = []
+    monkeypatch.setattr(signal, "raise_signal", lambda sig: raised.append(sig))
+
     async def boom() -> None:
         raise RuntimeError("worker died")
 
@@ -182,11 +191,15 @@ async def test_log_unexpected_background_exit_logs_on_error(
 
     assert any(r.levelno == logging.CRITICAL for r in caplog.records)
     assert any("exited unexpectedly" in r.message for r in caplog.records)
+    assert raised == [signal.SIGTERM]
 
 
-async def test_log_unexpected_background_exit_logs_on_clean_return(
-    caplog: pytest.LogCaptureFixture,
+async def test_log_unexpected_background_exit_logs_and_signals_on_clean_return(
+    caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    raised: list[signal.Signals] = []
+    monkeypatch.setattr(signal, "raise_signal", lambda sig: raised.append(sig))
+
     async def clean() -> None:
         return None
 
@@ -197,11 +210,15 @@ async def test_log_unexpected_background_exit_logs_on_clean_return(
         app_factory._log_unexpected_background_exit(task)
 
     assert any("without error" in r.message for r in caplog.records)
+    assert raised == [signal.SIGTERM]
 
 
 async def test_log_unexpected_background_exit_ignores_cancelled(
-    caplog: pytest.LogCaptureFixture,
+    caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    raised: list[signal.Signals] = []
+    monkeypatch.setattr(signal, "raise_signal", lambda sig: raised.append(sig))
+
     async def sleeper() -> None:
         await asyncio.sleep(3600)
 
@@ -215,3 +232,44 @@ async def test_log_unexpected_background_exit_ignores_cancelled(
         app_factory._log_unexpected_background_exit(task)
 
     assert not [r for r in caplog.records if r.levelno == logging.CRITICAL]
+    assert raised == []
+
+
+def test_combined_shutdown_no_double_log_when_task_fails(
+    caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A background task that dies just before shutdown is surfaced exactly once.
+
+    The done-callback logs CRITICAL + raises SIGTERM; the lifespan shutdown then consumes the
+    already-failed task without re-logging it (no cosmetic double-log).
+    """
+    raised: list[signal.Signals] = []
+    monkeypatch.setattr(signal, "raise_signal", lambda sig: raised.append(sig))
+
+    class _DB:
+        async def init(self) -> None:
+            return None
+
+        async def close(self) -> None:
+            return None
+
+    async def _boom(app: object) -> None:
+        raise RuntimeError("drainer died")
+
+    app = app_factory.create_challenge_app(
+        settings=PrismSettings(shared_token="x"),
+        database=_DB(),
+        public_router=APIRouter(),
+        get_weights_fn=_empty_weights,
+        background_tasks=(_boom,),
+    )
+
+    with caplog.at_level(logging.CRITICAL, logger="prism.sdk.app_factory"):
+        with TestClient(app) as client:
+            assert client.get("/health").status_code == 200
+
+    critical = [r for r in caplog.records if r.levelno == logging.CRITICAL]
+    assert len(critical) == 1
+    assert "exited unexpectedly" in critical[0].message
+    assert "crashed during shutdown" not in caplog.text
+    assert raised == [signal.SIGTERM]

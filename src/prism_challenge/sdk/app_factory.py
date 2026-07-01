@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import signal
 from collections.abc import Awaitable, Callable, Coroutine, Sequence
 from contextlib import asynccontextmanager
 from time import time
@@ -26,11 +27,13 @@ class ChallengeDatabase(Protocol):
 
 
 def _log_unexpected_background_exit(task: asyncio.Task[None]) -> None:
-    """Surface an UNEXPECTED background-task exit loudly (never silently swallowed).
+    """Fail loud on an UNEXPECTED background-task exit (never silently swallowed).
 
-    A task cancelled during shutdown is expected (no log). A task that finishes on its own while
-    the service is still up -- with or without an exception -- means the drainer died under a live
-    API (a silent eval outage), so it is logged CRITICAL.
+    A task cancelled during shutdown is expected -> silent no-op. Any other completion --
+    whether it RAISED or RETURNED normally -- means the sole eval-queue drainer died while the
+    co-hosted API keeps serving ``/health`` 200 (a silent eval outage), so we log CRITICAL AND
+    raise SIGTERM so uvicorn runs graceful shutdown and Swarm restarts the single combined
+    service (mirrors agent-challenge's ``_handle_worker_task_done``).
     """
     if task.cancelled():
         return
@@ -39,6 +42,7 @@ def _log_unexpected_background_exit(task: asyncio.Task[None]) -> None:
         _logger.critical("background task exited unexpectedly", exc_info=exc)
     else:
         _logger.critical("background task exited unexpectedly without error")
+    signal.raise_signal(signal.SIGTERM)
 
 
 def create_challenge_app(
@@ -62,13 +66,12 @@ def create_challenge_app(
         finally:
             for task in tasks:
                 task.cancel()
-            for task in tasks:
-                try:
-                    await task
-                except asyncio.CancelledError:
-                    pass
-                except Exception:
-                    _logger.exception("background task crashed during shutdown")
+            if tasks:
+                # gather(return_exceptions=True) awaits every task and consumes its outcome
+                # (CancelledError on clean shutdown, or an error already surfaced by the
+                # done-callback) without re-raising -- so a task that failed just before shutdown
+                # is not logged a second time.
+                await asyncio.gather(*tasks, return_exceptions=True)
             await database.close()
 
     app = FastAPI(title=settings.name, version=settings.version, lifespan=lifespan)
