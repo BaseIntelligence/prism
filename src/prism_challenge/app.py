@@ -3,7 +3,8 @@ from __future__ import annotations
 import base64
 import binascii
 import json
-from typing import Annotated
+from collections.abc import Callable, Coroutine
+from typing import Annotated, Any
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, status
 
@@ -67,11 +68,30 @@ def create_app(
             training_weight=runtime_config.reward_pools.training,
         )
 
+    # Combined mode (single-service deploy): the API process also drains the eval queue. The
+    # worker loop is launched by the app-factory lifespan AFTER database.init() and cancelled +
+    # awaited before database.close(), reusing this SAME PrismWorker via app.state.worker (no
+    # second app/DB).
+    background_tasks: tuple[Callable[[FastAPI], Coroutine[Any, Any, None]], ...] = ()
+    if app_settings.combined_mode:
+
+        async def _run_combined_worker(app: FastAPI) -> None:
+            from .worker import run_worker_loop
+
+            await run_worker_loop(
+                app.state.worker,
+                interval_seconds=app_settings.combined_worker_interval_seconds,
+                resilient=True,
+            )
+
+        background_tasks = (_run_combined_worker,)
+
     app = create_challenge_app(
         settings=app_settings,
         database=database,
         public_router=router,
         get_weights_fn=get_weights_fn,
+        background_tasks=background_tasks,
     )
     app.state.settings = app_settings
     app.state.database = database

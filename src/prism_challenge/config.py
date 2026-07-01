@@ -52,6 +52,16 @@ class PrismSettings(ChallengeSettings):
     prism_role: str = "master"
     public_submissions_enabled: bool = True
     worker_claim_timeout_seconds: int = 900
+    # Combined mode (single-service deploy): when True the uvicorn API process ALSO runs the
+    # evaluation worker loop as a background asyncio task, so ONE ``challenge-prism`` service both
+    # serves the API and drains the eval queue. Enabled by the exact env var ``PRISM_COMBINED_MODE``
+    # (env_prefix PRISM_ + field name). Default OFF preserves the separate ``prism-worker`` deploy
+    # and every existing test. The worker only ORCHESTRATES GPU work via the broker
+    # (docker_backend="broker"), so the combined service needs no local GPU; it does need the
+    # broker URL + token env (PRISM_DOCKER_BROKER_URL + PRISM_DOCKER_BROKER_TOKEN[_FILE]) or
+    # nothing drains.
+    combined_mode: bool = False
+    combined_worker_interval_seconds: float = Field(default=5.0, ge=0.0)
     l2_top_k: int = 200
     l3_top_k: int = 20
     kendall_tau_min: float = 0.4
