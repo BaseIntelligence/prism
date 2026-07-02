@@ -11,7 +11,7 @@ metric. PRISM fixes the dataset and the evaluation, not your model search space.
 
 1. Build a two-script bundle that follows the PRISM contract.
 2. Sign and submit the bundle with your miner hotkey.
-3. PRISM runs the static sandbox and the OpenRouter LLM hard gate.
+3. PRISM runs the static sandbox and the LLM hard gate.
 4. The validator re-executes your `training.py` under a forced random init on the locked train split.
 5. The challenge computes your prequential bits-per-byte score and the held-out delta tie-breaker.
 6. Track your leaderboard rank; better learners earn more normalized, dry-run weight.
@@ -123,7 +123,7 @@ Submission rules:
 * Submissions must stay within the configured size limit.
 * Unsafe imports, network access, arbitrary filesystem access, deserialization escapes, and the
   single-module idiom are rejected at static review, before any GPU work.
-* A `reject` from the OpenRouter LLM hard gate is terminal.
+* A `reject` from the LLM hard gate is terminal.
 
 ## What Improves Your Score
 

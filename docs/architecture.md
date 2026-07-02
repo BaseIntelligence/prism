@@ -15,7 +15,7 @@ flowchart LR
     Bridge --> DB[(SQLite)]
     Bridge --> Queue[Worker Queue]
     Queue --> Static[Static Sandbox + Param Cap + Distributed Contract]
-    Static --> LLM[OpenRouter Hard Gate]
+    Static --> LLM[LLM Hard Gate]
     LLM --> Broker[Docker Broker]
     Broker --> Reexec[Forced-Init Re-Execution Runner]
     Reexec --> Score[Prequential bpb + Held-out Delta]
@@ -31,7 +31,7 @@ flowchart LR
 | Worker | Claims pending submissions, runs static + LLM gates, dispatches re-execution, finalizes scores |
 | Component resolver | Resolves the two-script contract (`architecture.py`/`build_model` + `training.py`/`train`) and computes fingerprints |
 | Static sandbox | AST hard-blocks over both scripts, the forced-seed parameter-cap instantiation, and the multi-GPU static contract |
-| LLM hard gate | OpenRouter review of both scripts; a `reject` is terminal before any GPU work |
+| LLM hard gate | Master-gateway LLM review of both scripts; a `reject` is terminal before any GPU work |
 | Container runner | Challenge-owned forced-init re-execution that captures the online loss stream |
 | Scoring | Prequential bits-per-byte plus the held-out delta tie-breaker and anti-memorization gap |
 | Weights module | Converts normalized completed scores into dry-run BASE weights |

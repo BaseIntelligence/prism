@@ -21,7 +21,7 @@ PRISM is designed to answer questions such as:
 
 - Miners submit two scripts: a model `architecture.py` and a custom `training.py` loop.
 - BASE verifies miner identity and forwards the submission.
-- PRISM runs a static AST sandbox and an OpenRouter LLM hard gate over both scripts.
+- PRISM runs a static AST sandbox and an LLM hard gate over both scripts.
 - The validator re-executes the training loop under a forced random init on the locked FineWeb-Edu
   train split, capturing the online loss stream itself.
 - PRISM computes a prequential bits-per-byte score with a held-out delta tie-breaker.

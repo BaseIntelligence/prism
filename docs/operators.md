@@ -76,17 +76,23 @@ PRISM_BASE_EVAL_ARTIFACTS_QUOTA_BYTES=2147483648
 
 ## LLM Hard Gate Configuration
 
-The OpenRouter LLM hard gate is enabled by default and reviews both scripts before any GPU work:
+The LLM hard gate is enabled by default and reviews both scripts before any GPU work. It routes
+**only** through the BASE master LLM gateway: PRISM holds no raw provider key and pins no model. The
+gateway selects the provider and model server-side (a `master.yaml` config choice, keyed by the
+scoped token) and injects them into every request, so the challenge stays provider-agnostic.
 
 ```bash
 PRISM_LLM_REVIEW_ENABLED=true
-PRISM_OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
-PRISM_OPENROUTER_MODEL=anthropic/claude-opus-4.8
-PRISM_OPENROUTER_API_KEY_FILE=/run/secrets/openrouter_api_key
+PRISM_LLM_GATEWAY_URL=http://base-master-proxy:19080/llm/v1
+PRISM_GATEWAY_TOKEN_FILE=/run/secrets/base_gateway_token
 ```
 
-A `reject` from the gate is terminal. The eval container carries no OpenRouter key (the gate runs
-host-side before the container is launched).
+The gate authenticates to the gateway with the scoped token (sent as the `X-Gateway-Token` header)
+and posts to `{gateway}/chat/completions`. In a BASE deployment the master injects the equivalent
+`BASE_LLM_GATEWAY_URL` (=`{gateway_root}/llm/v1`) and `BASE_GATEWAY_TOKEN` into the challenge
+container, so operators normally do not set these by hand. A `reject` from the gate is terminal.
+The eval container carries no gateway token or provider key (the gate runs host-side before the
+container is launched).
 
 ## Multi-GPU Static Contract
 

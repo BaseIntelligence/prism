@@ -38,9 +38,9 @@ the whole curve, single-checkpoint gaming fails.
 
 1. A miner submits a two-script bundle (`architecture.py` + `training.py`).
 2. PRISM validates the two-script contract and runs the static AST sandbox.
-3. A strong **OpenRouter** LLM (`anthropic/claude-opus-4.8`) reviews both scripts as a hard gate and can reject
-   before any GPU work. The gate runs on the master through the OpenRouter gateway (temperature 0);
-   validators hold no provider keys.
+3. A strong LLM reviews both scripts as a hard gate and can reject before any GPU work. The gate
+   runs on the master through the LLM gateway (temperature 0); the gateway selects the provider and
+   model server-side (a `master.yaml` config choice) and validators hold no provider keys.
 4. The master coordination plane assigns the submission's single GPU work unit to one online
    validator, which re-executes the training loop on its own broker under a forced random init on
    the locked FineWeb-Edu train split (concurrency 1 per validator).
@@ -71,9 +71,10 @@ the whole curve, single-checkpoint gaming fails.
   `resume_checkpoint_ref`) rather than restarting.
 - **Prequential bits-per-byte scoring**: the primary, tokenizer-agnostic, compute-normalized metric,
   with a held-out delta-over-random-init tie-breaker and an anti-memorization gap penalty.
-- **OpenRouter LLM hard gate**: `anthropic/claude-opus-4.8` reviews both scripts on the master through the
-  OpenRouter gateway (temperature 0); a `reject` is terminal. Validators hold no provider keys, and
-  `llm_review` fails closed when a gateway URL is configured but its scoped token is unresolvable.
+- **LLM hard gate**: a strong LLM reviews both scripts on the master through the LLM gateway
+  (temperature 0); a `reject` is terminal. The gateway selects the provider and model server-side (a
+  `master.yaml` config choice), validators hold no provider keys, and `llm_review` fails closed when
+  a gateway URL is configured but its scoped token is unresolvable.
 - **Single-node multi-GPU contract**: the miner's loop scales across 1-8 GPUs; the scored run uses
   `nproc=1` (one physical GPU); correctness is validated with static checks and a gloo multi-rank test.
 - **Two-tier dry-run weights**: the master computes scores from validator-reported results and
@@ -118,7 +119,7 @@ For the sandbox, LLM gate, and anti-cheat model, see the [Security model](docs/s
 flowchart LR
     Miner[Miner] --> Master[Master Coordination Plane]
     Master --> Static[Static Sandbox]
-    Static --> LLM[OpenRouter Gateway Gate]
+    Static --> LLM[LLM Gateway Gate]
     LLM --> Assign[Assign GPU Work Unit]
     Assign --> Validator[Validator Broker]
     Validator --> Reexec[Forced-Init Re-Execution]
@@ -136,7 +137,7 @@ sequenceDiagram
     participant HF as HuggingFace
     M->>Mst: signed two-script bundle upload
     Mst->>Mst: AST sandbox + param cap + distributed contract
-    Mst->>Mst: OpenRouter LLM hard gate via gateway (allow/reject)
+    Mst->>Mst: LLM hard gate via gateway (allow/reject)
     Mst->>V: assign GPU work unit (concurrency 1, resume_checkpoint_ref)
     V->>D: forced-init re-execution on locked train split
     V->>HF: publish hourly crash-recovery checkpoint
@@ -182,7 +183,7 @@ prism/
     dataset.py               # Locked FineWeb-Edu loader (pinned splits + MANIFEST)
     scoring.py               # Prequential bits-per-byte scoring
     heldout.py               # Master-side held-out delta (RCE-safe trained-state load)
-    llm_review.py            # OpenRouter LLM hard gate via the master gateway
+    llm_review.py            # LLM hard gate via the master gateway
     checkpoint_publisher.py  # HuggingFace checkpoint publisher interface (mocked in tests)
     checkpoint_intake.py     # Master-side checkpoint intake, HF publish, and ref recording
     checkpoint_push.py       # Validator-side checkpoint cadence and push client

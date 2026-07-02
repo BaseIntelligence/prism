@@ -105,7 +105,7 @@ not exist; an empty `variants` array is valid.
 
 ### `GET /v1/architectures/{architecture_id}/report`
 
-Returns the cached LLM auto-report, generated lazily and non-blockingly through the OpenRouter
+Returns the cached LLM auto-report, generated lazily and non-blockingly through the master LLM
 gateway and grounded only in measured facts. `report.status` is `ready`, `pending`, or
 `unavailable`; `content` may be `null` when not `ready`. `404` if the architecture does not exist.
 
@@ -162,5 +162,5 @@ The body can be raw ZIP bytes or JSON matching `SubmissionCreate`.
 
 ### `POST /internal/v1/worker/process-next`
 
-Claims and processes one pending submission through the full pipeline: static gates, the OpenRouter
-LLM hard gate, the forced-init re-execution, and prequential bits-per-byte scoring.
+Claims and processes one pending submission through the full pipeline: static gates, the LLM
+hard gate, the forced-init re-execution, and prequential bits-per-byte scoring.

@@ -1,7 +1,7 @@
 # Security Model
 
 PRISM evaluates untrusted miner code. Its security model assumes submissions may be malicious and
-layers identity verification, a static AST sandbox, an OpenRouter LLM hard gate, a duplicate check,
+layers identity verification, a static AST sandbox, an LLM hard gate, a duplicate check,
 and a forced-init re-execution that makes the common cheats inert rather than merely detected.
 
 ## Identity and Upload Security
@@ -59,13 +59,15 @@ records the online loss itself. This neutralizes the three cheat classes:
 - **No memorization**: the `val`/`test` splits are secret and **never exposed** to the miner script;
   an excessive train-vs-held-out gap penalizes the score.
 
-## OpenRouter LLM Hard Gate
+## LLM Hard Gate
 
-After the static gates pass, a strong LLM reviews both scripts as a **hard gate**. The reviewer runs
-on OpenRouter with `anthropic/claude-opus-4.8` by default, using the key from the Docker secret mounted at
-`/run/secrets/openrouter_api_key`. It checks architecture-to-training coherence, cheating and
-obfuscation (smuggled weights, hidden network, dead/no-op loops, metric gaming), and dangerous
-operations the static sandbox might miss.
+After the static gates pass, a strong LLM reviews both scripts as a **hard gate**. The review routes
+**only** through the BASE master LLM gateway at `{root}/llm/v1`, authenticating with a scoped token
+(the `X-Gateway-Token` header) read from the Docker secret mounted at `/run/secrets/base_gateway_token`.
+PRISM holds no raw provider key and pins no model: the gateway selects the provider and model
+server-side (a `master.yaml` config choice) and injects them into every request. It checks
+architecture-to-training coherence, cheating and obfuscation (smuggled weights, hidden network,
+dead/no-op loops, metric gaming), and dangerous operations the static sandbox might miss.
 
 The verdict is parsed as structured JSON. A `reject` is terminal: the pipeline stops **before any GPU
 work**, and the submission ends `rejected`. A transient error or an ambiguous result fails closed to
@@ -117,5 +119,5 @@ Weights are normalized per hotkey from the bits-per-byte `final_score` and expos
 * Use real secret files in production, not inline tokens.
 * Keep public submissions disabled when PRISM is deployed only behind BASE.
 * Keep the eval container on `network=none` and the rootfs read-only except `artifacts_dir`.
-* Keep the OpenRouter LLM hard gate enabled for production operation.
+* Keep the LLM hard gate enabled for production operation.
 * Monitor rejected, held, failed, and completed submissions separately.
