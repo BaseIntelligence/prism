@@ -3,7 +3,7 @@
 This suite pins the public docs (README + ``docs/**``) to the ACTUAL v2 system: the two-script
 submission contract (``architecture.py``/``build_model`` + ``training.py``/``train``), the locked
 FineWeb-Edu data plane (read-only, no network), the forced random-init validator re-execution, the
-challenge-computed prequential bits-per-byte score with a held-out delta tie-breaker, the OpenRouter
+challenge-computed prequential bits-per-byte score with a held-out delta tie-breaker, a gateway-only
 LLM hard gate, the single-node multi-GPU contract, and dry-run weights. It also asserts the docs no
 longer reference the decommissioned v1-NAS machinery (component-review holds, ownership events, the
 retired ``prism_run_manifest.v1.json``, or the removed ``local_cpu_smoke`` execution mode).
@@ -122,9 +122,11 @@ def test_llm_hard_gate_is_documented() -> None:
     operators = read_doc("docs/operators.md")
     combined = f"{security}\n{operators}"
 
-    assert "OpenRouter" in combined
-    assert "anthropic/claude-opus-4.8" in combined
     assert "hard gate" in combined.lower()
+    # Provider-agnostic, gateway-only: no raw provider key, no pinned model in docs.
+    assert "/llm/v1" in combined
+    assert "X-Gateway-Token" in combined
+    assert "provider-agnostic" in combined.lower() or "no raw provider key" in combined.lower()
     # A reject is terminal and stops the pipeline before any GPU work.
     assert "reject" in combined.lower()
     assert "before any gpu" in combined.lower() or "before gpu" in combined.lower()
@@ -208,7 +210,7 @@ def test_readme_describes_the_v2_product() -> None:
         "FineWeb-Edu",
         "prequential",
         "bits-per-byte",
-        "OpenRouter",
+        "LLM gateway",
         "dry-run",
     ):
         assert expected.lower() in readme_lower, f"README missing v2 concept: {expected}"
