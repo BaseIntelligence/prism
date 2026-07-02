@@ -32,7 +32,7 @@ from prism_challenge.validator_dispatch import (
 )
 
 GATEWAY_BASE_URL = "http://master:8081"
-GATEWAY_OPENROUTER_URL = f"{GATEWAY_BASE_URL}/llm/openrouter"
+GATEWAY_V1_URL = f"{GATEWAY_BASE_URL}/llm/v1"
 GATEWAY_TOKEN = "scoped-token"
 BROKER_URL = "http://broker-val:8082"
 BROKER_TOKEN = "val-secret"
@@ -120,7 +120,7 @@ def _settings(tmp_path: Path) -> PrismSettings:
 def _payload(*, with_token: bool = True) -> dict[str, Any]:
     payload: dict[str, Any] = {
         "gateway_url": GATEWAY_BASE_URL,
-        "OPENROUTER_BASE_URL": GATEWAY_OPENROUTER_URL,
+        "BASE_LLM_GATEWAY_URL": GATEWAY_V1_URL,
     }
     if with_token:
         payload["gateway_token"] = GATEWAY_TOKEN
@@ -226,29 +226,27 @@ async def test_dispatch_enforces_concurrency_one(tmp_path, monkeypatch):
     assert captured == []
 
 
-def test_gateway_scoped_settings_strips_provider_key(tmp_path):
-    settings = _settings(tmp_path).model_copy(update={"openrouter_api_key": "raw-provider-key"})
+def test_gateway_scoped_settings_binds_gateway_token(tmp_path):
     effective = gateway_scoped_settings(
-        settings, _payload(), broker_url=BROKER_URL, broker_token=BROKER_TOKEN
+        _settings(tmp_path), _payload(), broker_url=BROKER_URL, broker_token=BROKER_TOKEN
     )
 
-    # The prism LLM review routes through the master gateway scoped token; the raw
-    # provider key is stripped so it never reaches the validator/eval host.
+    # The prism LLM review routes ONLY through the master gateway /llm/v1 with the scoped token;
+    # the challenge/validator holds no raw provider key (the field no longer exists).
     assert effective.llm_gateway_token == GATEWAY_TOKEN
-    assert effective.llm_gateway_url == GATEWAY_OPENROUTER_URL
-    assert effective.openrouter_api_key is None
-    assert effective.openrouter_api_key_file is None
+    assert effective.llm_gateway_url == GATEWAY_V1_URL
+    assert not hasattr(effective, "openrouter_api_key")
     # The re-execution is dispatched to the validator's OWN broker.
     assert effective.docker_broker_url == BROKER_URL
     assert effective.docker_broker_token == BROKER_TOKEN
 
 
-def test_gateway_scoped_settings_derives_openrouter_url_from_base(tmp_path):
-    # A payload carrying only the gateway base URL still yields the openrouter
-    # route (never gateway=None).
+def test_gateway_scoped_settings_derives_v1_url_from_base(tmp_path):
+    # A payload carrying only the gateway base URL still yields the /llm/v1 route (never
+    # gateway=None).
     payload = {"gateway_token": GATEWAY_TOKEN, "gateway_url": GATEWAY_BASE_URL}
     effective = gateway_scoped_settings(_settings(tmp_path), payload, broker_url=BROKER_URL)
-    assert effective.llm_gateway_url == GATEWAY_OPENROUTER_URL
+    assert effective.llm_gateway_url == GATEWAY_V1_URL
 
 
 async def test_dispatch_missing_gateway_token_never_reaches_broker(tmp_path, monkeypatch):

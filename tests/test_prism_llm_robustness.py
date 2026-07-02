@@ -23,6 +23,8 @@ from prism_challenge.sdk.executors.docker import DockerRunResult
 
 ALLOW_REASON = "architecture and training loop are coherent; real from-scratch learning procedure"
 REJECT_REASON = "training.py never steps the optimizer; dead no-op loop cannot learn the model"
+GATEWAY_URL = "http://base-master:18080/llm/v1"
+GATEWAY_TOKEN = "scoped-gateway-token"
 
 # A sandbox violation NOT matched by the deterministic llm_review prefilter (REJECTION_PATTERNS),
 # so reaching the LLM call requires the static AST sandbox to have been (wrongly) skipped.
@@ -92,7 +94,8 @@ def _settings(tmp_path, name: str, **overrides: Any) -> PrismSettings:
         shared_token="secret",
         allow_insecure_signatures=True,
         llm_review_enabled=True,
-        openrouter_api_key="sk-or-test",
+        llm_gateway_url=GATEWAY_URL,
+        llm_gateway_token=GATEWAY_TOKEN,
         execution_backend="base_gpu",
         docker_enabled=True,
         docker_backend="broker",
@@ -198,11 +201,13 @@ def _db_state(tmp_path, name: str, submission_id: str) -> dict[str, Any]:
 
 def test_llm_transient_error_fails_closed_to_held(monkeypatch) -> None:
     def boom(config, *, system, prompt):
-        raise TimeoutError("openrouter upstream 503 (transient)")
+        raise TimeoutError("master gateway upstream 503 (transient)")
 
     monkeypatch.setattr(llm, "_invoke_review_flow", boom)
 
-    review = review_code("ok learner", config=LlmReviewConfig(api_key="sk-or-test"))
+    review = review_code(
+        "ok learner", config=LlmReviewConfig(gateway_url=GATEWAY_URL, gateway_token=GATEWAY_TOKEN)
+    )
 
     assert review.approved is False
     assert review.held is True
@@ -212,7 +217,7 @@ def test_llm_transient_error_fails_closed_to_held(monkeypatch) -> None:
 
 def test_pipeline_transient_llm_error_holds_no_gpu(tmp_path, monkeypatch) -> None:
     def boom(config, *, system, prompt):
-        raise TimeoutError("openrouter upstream 503 (transient)")
+        raise TimeoutError("master gateway upstream 503 (transient)")
 
     monkeypatch.setattr(llm, "_invoke_review_flow", boom)
 
@@ -344,7 +349,9 @@ def test_llm_malformed_verdict_fails_closed(monkeypatch) -> None:
         llm, "_load_chat_openai", lambda: _fake_chat_class(_verdict("banana", "n/a"))
     )
 
-    review = review_code("ok", config=LlmReviewConfig(api_key="sk-or-test"))
+    review = review_code(
+        "ok", config=LlmReviewConfig(gateway_url=GATEWAY_URL, gateway_token=GATEWAY_TOKEN)
+    )
 
     assert review.approved is False
     assert review.held is True
@@ -356,7 +363,9 @@ def test_llm_missing_verdict_field_fails_closed(monkeypatch) -> None:
         llm, "_load_chat_openai", lambda: _fake_chat_class({"reason": "no verdict key"})
     )
 
-    review = review_code("ok", config=LlmReviewConfig(api_key="sk-or-test"))
+    review = review_code(
+        "ok", config=LlmReviewConfig(gateway_url=GATEWAY_URL, gateway_token=GATEWAY_TOKEN)
+    )
 
     assert review.approved is False
     assert review.held is True
@@ -394,7 +403,12 @@ def test_llm_oversized_source_bounded_skips_call(monkeypatch) -> None:
     monkeypatch.setattr(llm, "_invoke_review_flow", must_not_call)
 
     big = "x = 1  # " + ("A" * 5000) + "\n"
-    review = review_code(big, config=LlmReviewConfig(api_key="sk-or-test", max_source_chars=500))
+    review = review_code(
+        big,
+        config=LlmReviewConfig(
+            gateway_url=GATEWAY_URL, gateway_token=GATEWAY_TOKEN, max_source_chars=500
+        ),
+    )
 
     assert review.approved is False
     assert "large" in review.reason.lower() or "too large" in review.reason.lower()
@@ -431,13 +445,17 @@ def test_llm_allow_binds_reviewed_bytes_fingerprint(monkeypatch) -> None:
     )
 
     code = "def build_model(ctx):\n    return None\n"
-    review = review_code(code, config=LlmReviewConfig(api_key="sk-or-test"))
+    review = review_code(
+        code, config=LlmReviewConfig(gateway_url=GATEWAY_URL, gateway_token=GATEWAY_TOKEN)
+    )
 
     assert review.approved is True
     assert review.raw.get("reviewed_code_sha256") == sha256(code.encode("utf-8")).hexdigest()
 
     tampered = code + "# tamper\n"
-    review2 = review_code(tampered, config=LlmReviewConfig(api_key="sk-or-test"))
+    review2 = review_code(
+        tampered, config=LlmReviewConfig(gateway_url=GATEWAY_URL, gateway_token=GATEWAY_TOKEN)
+    )
     assert review2.raw.get("reviewed_code_sha256") == sha256(tampered.encode("utf-8")).hexdigest()
     assert review.raw["reviewed_code_sha256"] != review2.raw["reviewed_code_sha256"]
 

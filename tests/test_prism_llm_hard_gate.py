@@ -18,6 +18,8 @@ from prism_challenge.sdk.executors.docker import DockerRunResult
 
 REJECT_REASON = "training.py never steps the optimizer; dead no-op loop cannot learn the model"
 ALLOW_REASON = "architecture and training loop are coherent; real from-scratch learning procedure"
+GATEWAY_URL = "http://base-master:18080/llm/v1"
+GATEWAY_TOKEN = "scoped-gateway-token"
 
 
 def _fake_chat_class(
@@ -103,7 +105,8 @@ def _hard_gate_settings(tmp_path, name: str) -> PrismSettings:
         shared_token="secret",
         allow_insecure_signatures=True,
         llm_review_enabled=True,
-        openrouter_api_key="sk-or-test",
+        llm_gateway_url=GATEWAY_URL,
+        llm_gateway_token=GATEWAY_TOKEN,
         execution_backend="base_gpu",
         docker_enabled=True,
         docker_backend="broker",
@@ -121,7 +124,7 @@ def test_llm_reject_without_evidence_is_terminal_not_held(monkeypatch) -> None:
 
     review = review_code(
         "# file: architecture.py\n# file: training.py\n",
-        config=LlmReviewConfig(api_key="sk-or-test"),
+        config=LlmReviewConfig(gateway_url=GATEWAY_URL, gateway_token=GATEWAY_TOKEN),
     )
 
     assert review.approved is False
@@ -135,7 +138,9 @@ def test_llm_allow_approves_without_hold(monkeypatch) -> None:
         llm, "_load_chat_openai", lambda: _fake_chat_class(_verdict(True, ALLOW_REASON))
     )
 
-    review = review_code("ok", config=LlmReviewConfig(api_key="sk-or-test"))
+    review = review_code(
+        "ok", config=LlmReviewConfig(gateway_url=GATEWAY_URL, gateway_token=GATEWAY_TOKEN)
+    )
 
     assert review.approved is True
     assert review.held is False

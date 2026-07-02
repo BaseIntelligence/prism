@@ -68,19 +68,19 @@ def test_settings_still_accept_field_names() -> None:
 def test_secret_file_helpers(tmp_path) -> None:
     shared = tmp_path / "shared-token"
     shared.write_text("shared\n", encoding="utf-8")
-    openrouter = tmp_path / "openrouter-token"
-    openrouter.write_text("openrouter\n", encoding="utf-8")
+    gateway = tmp_path / "gateway-token"
+    gateway.write_text("gateway\n", encoding="utf-8")
 
     settings = PrismSettings(
         database_url="postgresql://db/prism",
         database_path=tmp_path / "fallback.sqlite3",
         shared_token_file=str(shared),
-        openrouter_api_key_file=openrouter,
+        llm_gateway_token_file=gateway,
     )
 
     assert settings.internal_token() == "shared"
     assert settings.resolved_database_path == tmp_path / "fallback.sqlite3"
-    assert settings.openrouter_api_key_value() == "openrouter"
+    assert settings.llm_gateway_token_value() == "gateway"
 
 
 def test_internal_token_requires_secret() -> None:
@@ -122,8 +122,9 @@ def test_example_config_parses_with_nas_defaults() -> None:
     assert settings.docker_enabled is False
     assert settings.docker_backend == "cli"
     assert settings.shared_token is None
-    assert settings.openrouter_api_key is None
+    assert settings.llm_gateway_token is None
     assert settings.docker_broker_token is None
+    assert not hasattr(settings, "openrouter_api_key")
     assert "shared_token" not in payload
     assert "openrouter_api_key" not in payload
     assert "docker_broker_token" not in payload

@@ -547,6 +547,10 @@ def test_route_report_stale_cache_is_not_served(client: TestClient) -> None:
     assert report["content"] is None
 
 
+REPORT_GATEWAY_URL = "http://base-master:18080/llm/v1"
+REPORT_GATEWAY_TOKEN = "scoped-report-token"
+
+
 @pytest.fixture
 def report_client(tmp_path: Path):
     settings = PrismSettings(
@@ -554,7 +558,8 @@ def report_client(tmp_path: Path):
         shared_token="secret",
         allow_insecure_signatures=True,
         fineweb_sample_count=4,
-        openrouter_api_key="test-key",
+        llm_gateway_url=REPORT_GATEWAY_URL,
+        llm_gateway_token=REPORT_GATEWAY_TOKEN,
         llm_review_enabled=True,
         llm_review_required=False,
         distributed_contract_policy="off",
@@ -601,7 +606,7 @@ def test_route_report_generation_error_then_unavailable(
     report_client: TestClient, monkeypatch
 ) -> None:
     def boom(facts, *, config):
-        raise RuntimeError("openrouter exploded")
+        raise RuntimeError("gateway exploded")
 
     monkeypatch.setattr("prism_challenge.routes.generate_report_content", boom)
 
@@ -620,11 +625,10 @@ def test_route_report_generation_error_then_unavailable(
 
 
 # --------------------------------------------------------------------------------------------------
-# Report generator module (prompt building + OpenRouter client reuse), no network.
+# Report generator module (prompt building + master gateway client reuse), no network.
 # --------------------------------------------------------------------------------------------------
 def _bare_settings(**overrides) -> PrismSettings:
     base = {
-        "openrouter_api_key_file": None,
         "llm_gateway_token_file": None,
         "llm_gateway_url": None,
         "llm_gateway_token": None,
@@ -639,14 +643,20 @@ def test_report_generation_available_reflects_credentials() -> None:
         report_generation_available,
     )
 
-    with_key = llm_report_config(_bare_settings(openrouter_api_key="test-key"))
-    assert report_generation_available(with_key) is True
+    with_gateway = llm_report_config(
+        _bare_settings(llm_gateway_url=REPORT_GATEWAY_URL, llm_gateway_token=REPORT_GATEWAY_TOKEN)
+    )
+    assert report_generation_available(with_gateway) is True
 
-    no_key = llm_report_config(_bare_settings(openrouter_api_key=None))
-    assert report_generation_available(no_key) is False
+    # A gateway URL but no resolvable token -> unavailable (no direct-provider fallback).
+    no_token = llm_report_config(
+        _bare_settings(llm_gateway_url=REPORT_GATEWAY_URL, llm_gateway_token=None)
+    )
+    assert report_generation_available(no_token) is False
 
-    no_model = llm_report_config(_bare_settings(openrouter_api_key="k", openrouter_model=""))
-    assert report_generation_available(no_model) is False
+    # No gateway URL at all -> unavailable.
+    no_gateway = llm_report_config(_bare_settings(llm_gateway_url=None))
+    assert report_generation_available(no_gateway) is False
 
 
 def test_build_report_prompt_grounds_only_in_facts() -> None:
@@ -691,14 +701,17 @@ def test_generate_report_content_uses_resolved_client(monkeypatch) -> None:
             return _FakeMessage()
 
     monkeypatch.setattr(report_mod, "_load_chat_openai", lambda: _FakeChat)
-    config = report_mod.llm_report_config(_bare_settings(openrouter_api_key="test-key"))
+    config = report_mod.llm_report_config(
+        _bare_settings(llm_gateway_url=REPORT_GATEWAY_URL, llm_gateway_token=REPORT_GATEWAY_TOKEN)
+    )
     content, model = report_mod.generate_report_content({"name": "A", "compute": {}}, config=config)
     assert content == "## Summary\nfrom fake client"
-    assert model == config.model
-    # The reused client is constructed with the resolved OpenRouter endpoint + credential.
-    assert captured["init"]["model"] == config.model
-    assert captured["init"]["api_key"] == "test-key"
-    assert captured["init"]["base_url"] == config.base_url
+    # The gateway injects the model server-side, so the reported model is the placeholder.
+    assert model == report_mod.GATEWAY_MODEL_PLACEHOLDER
+    # The reused client is constructed against the master gateway endpoint + scoped token.
+    assert captured["init"]["model"] == report_mod.GATEWAY_MODEL_PLACEHOLDER
+    assert captured["init"]["api_key"] == REPORT_GATEWAY_TOKEN
+    assert captured["init"]["base_url"] == config.gateway_url
 
 
 def test_generate_report_content_rejects_empty_completion(monkeypatch) -> None:
@@ -715,6 +728,8 @@ def test_generate_report_content_rejects_empty_completion(monkeypatch) -> None:
             return _EmptyMessage()
 
     monkeypatch.setattr(report_mod, "_load_chat_openai", lambda: _FakeChat)
-    config = report_mod.llm_report_config(_bare_settings(openrouter_api_key="test-key"))
+    config = report_mod.llm_report_config(
+        _bare_settings(llm_gateway_url=REPORT_GATEWAY_URL, llm_gateway_token=REPORT_GATEWAY_TOKEN)
+    )
     with pytest.raises(RuntimeError):
         report_mod.generate_report_content({"compute": {}}, config=config)

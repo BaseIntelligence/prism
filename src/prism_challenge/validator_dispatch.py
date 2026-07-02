@@ -36,8 +36,9 @@ from .validator_executor import run_validator_cycle
 CHALLENGE_SLUG = "prism"
 
 _GATEWAY_TOKEN_PAYLOAD_KEYS = ("gateway_token", "BASE_GATEWAY_TOKEN")
-_OPENROUTER_BASE_URL_PAYLOAD_KEY = "OPENROUTER_BASE_URL"
+_GATEWAY_URL_PAYLOAD_KEY = "BASE_LLM_GATEWAY_URL"
 _GATEWAY_BASE_URL_PAYLOAD_KEYS = ("gateway_url", "gateway_base_url")
+_LLM_GATEWAY_PATH = "/llm/v1"
 
 
 class PrismGatewayConfigError(ValueError):
@@ -106,11 +107,11 @@ def gateway_scoped_settings(
     token = _first_present(payload, _GATEWAY_TOKEN_PAYLOAD_KEYS)
     if not token:
         raise PrismGatewayConfigError("prism assignment payload is missing a scoped gateway token")
-    gateway_url = payload.get(_OPENROUTER_BASE_URL_PAYLOAD_KEY)
+    gateway_url = payload.get(_GATEWAY_URL_PAYLOAD_KEY)
     if not gateway_url:
         base = _first_present(payload, _GATEWAY_BASE_URL_PAYLOAD_KEYS)
         if base:
-            gateway_url = f"{str(base).rstrip('/')}/llm/openrouter"
+            gateway_url = f"{str(base).rstrip('/')}{_LLM_GATEWAY_PATH}"
     if not gateway_url:
         raise PrismGatewayConfigError(
             "prism assignment payload is missing the master gateway base URL"
@@ -123,8 +124,6 @@ def gateway_scoped_settings(
             "llm_gateway_url": str(gateway_url),
             "llm_gateway_token": str(token),
             "llm_gateway_token_file": None,
-            "openrouter_api_key": None,
-            "openrouter_api_key_file": None,
         }
     )
 

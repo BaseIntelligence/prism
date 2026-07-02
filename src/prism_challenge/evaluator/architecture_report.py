@@ -1,11 +1,11 @@
 """Grounded LLM auto-report generator for the architecture lab.
 
-Reuses the existing OpenRouter wiring in :mod:`prism_challenge.evaluator.llm_review` (the same
+Reuses the existing gateway wiring in :mod:`prism_challenge.evaluator.llm_review` (the same
 ``LlmReviewConfig`` model, endpoint/credential resolution, and ``ChatOpenAI`` loader) so reports go
-through the SAME gateway/provider-key boundary as the safety gate -- no new HTTP client and no
-hardcoded keys. The prompt is built ONLY from persisted facts (name, owner, best final score,
-prequential bpb, the reconciled compute profile, the loss-curve trend, and the variant count) so the
-model has nothing to hallucinate from.
+through the SAME master LLM gateway boundary as the safety gate -- no new HTTP client, no hardcoded
+provider key, and no pinned model (the gateway injects both). The prompt is built ONLY from
+persisted facts (name, owner, best final score, prequential bpb, the reconciled compute profile, the
+loss-curve trend, and the variant count) so the model has nothing to hallucinate from.
 """
 
 from __future__ import annotations
@@ -13,7 +13,12 @@ from __future__ import annotations
 from typing import Any
 
 from ..config import PrismSettings
-from .llm_review import LlmReviewConfig, _load_chat_openai, _resolve_endpoint
+from .llm_review import (
+    GATEWAY_MODEL_PLACEHOLDER,
+    LlmReviewConfig,
+    _load_chat_openai,
+    _resolve_endpoint,
+)
 
 REPORT_SYSTEM = (
     "You are a concise, rigorous ML systems analyst writing a short scientific note about ONE "
@@ -27,16 +32,13 @@ REPORT_SYSTEM = (
 
 
 def llm_report_config(settings: PrismSettings) -> LlmReviewConfig:
-    """Build the OpenRouter config for report generation from the same settings the gate uses."""
+    """Build the gateway config for report generation from the same settings the gate uses."""
     return LlmReviewConfig(
         enabled=settings.llm_review_enabled,
         required=settings.llm_review_required,
-        base_url=settings.openrouter_base_url,
-        model=settings.openrouter_model,
-        api_key=settings.openrouter_api_key_value(),
-        api_key_file=settings.openrouter_api_key_file,
         gateway_url=settings.llm_gateway_url,
         gateway_token=settings.llm_gateway_token_value(),
+        gateway_token_file=settings.llm_gateway_token_file,
         timeout_seconds=settings.llm_review_timeout_seconds,
         temperature=settings.llm_review_temperature,
         max_tokens=settings.llm_review_max_tokens,
@@ -45,14 +47,12 @@ def llm_report_config(settings: PrismSettings) -> LlmReviewConfig:
 
 
 def report_generation_available(config: LlmReviewConfig) -> bool:
-    """True when a report can be generated (a model is set and an endpoint/credential resolves).
+    """True when a report can be generated (the master gateway endpoint/token resolves).
 
     Independent of the safety-gate ``enabled`` toggle: report availability is purely a function of
-    whether the OpenRouter gateway/provider credential is resolvable, so a local/dev deployment
-    without a key degrades cleanly to ``unavailable`` instead of raising.
+    whether the master LLM gateway URL + scoped token are resolvable, so a local/dev deployment
+    without a wired gateway degrades cleanly to ``unavailable`` instead of raising.
     """
-    if not config.model:
-        return False
     try:
         _resolve_endpoint(config)
     except RuntimeError:
@@ -90,17 +90,16 @@ def build_report_prompt(facts: dict[str, Any]) -> str:
 
 
 def generate_report_content(facts: dict[str, Any], *, config: LlmReviewConfig) -> tuple[str, str]:
-    """Synchronously call OpenRouter to produce the markdown report; returns (content, model).
+    """Call the master gateway to produce the markdown report; returns (content, model).
 
-    Raises on any failure (no model, unresolvable endpoint, empty completion); callers run this in
-    a worker thread and treat any exception as a generation error.
+    Raises on any failure (unresolvable gateway endpoint/token, empty completion); callers run this
+    in a worker thread and treat any exception as a generation error. The model is injected by the
+    gateway server-side, so the placeholder is what is reported/recorded.
     """
     base_url, credential = _resolve_endpoint(config)
-    if not config.model:
-        raise RuntimeError("OpenRouter model is not configured")
     chat_openai = _load_chat_openai()
     chat = chat_openai(
-        model=config.model,
+        model=GATEWAY_MODEL_PLACEHOLDER,
         base_url=base_url,
         api_key=credential,
         temperature=config.temperature,
@@ -108,13 +107,11 @@ def generate_report_content(facts: dict[str, Any], *, config: LlmReviewConfig) -
         max_retries=config.max_retries,
         max_tokens=config.max_tokens,
     )
-    message = chat.invoke(
-        [("system", REPORT_SYSTEM), ("user", build_report_prompt(facts))]
-    )
+    message = chat.invoke([("system", REPORT_SYSTEM), ("user", build_report_prompt(facts))])
     content = getattr(message, "content", "")
     if isinstance(content, list):
         content = "".join(str(part) for part in content)
     text = str(content).strip()
     if not text:
-        raise RuntimeError("OpenRouter returned an empty report")
-    return text, config.model
+        raise RuntimeError("master gateway returned an empty report")
+    return text, GATEWAY_MODEL_PLACEHOLDER

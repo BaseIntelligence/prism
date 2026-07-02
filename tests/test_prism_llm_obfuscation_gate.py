@@ -31,6 +31,8 @@ GENUINE_ALLOW_REASON = (
     "Architecture and training loop are coherent; a real from-scratch learning procedure with no "
     "obfuscation or evasion."
 )
+GATEWAY_URL = "http://base-master:18080/llm/v1"
+GATEWAY_TOKEN = "scoped-gateway-token"
 
 
 def _fake_chat_class(
@@ -101,7 +103,8 @@ def _settings(tmp_path, name: str) -> PrismSettings:
         shared_token="secret",
         allow_insecure_signatures=True,
         llm_review_enabled=True,
-        openrouter_api_key="sk-or-test",
+        llm_gateway_url=GATEWAY_URL,
+        llm_gateway_token=GATEWAY_TOKEN,
         execution_backend="base_gpu",
         docker_enabled=True,
         docker_backend="broker",
@@ -172,7 +175,7 @@ def test_obfuscation_verdict_is_terminal_reject_not_held() -> None:
     try:
         review = review_code(
             "# file: architecture.py\n# file: training.py\n",
-            config=LlmReviewConfig(api_key="sk-or-test"),
+            config=LlmReviewConfig(gateway_url=GATEWAY_URL, gateway_token=GATEWAY_TOKEN),
         )
     finally:
         module._load_chat_openai = original

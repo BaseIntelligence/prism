@@ -97,29 +97,11 @@ class PrismSettings(ChallengeSettings):
     # absent, the disabled-but-required branch in evaluator/llm_review.py rejects (approved=False)
     # rather than silently allowing every submission after only deterministic static checks.
     llm_review_required: bool = True
-    # OpenRouter LLM hard-gate wiring (architecture.md section 7). Legacy PRISM_CHUTES_* env names
-    # remain accepted so an already-running deployment keeps resolving until it is redeployed.
-    openrouter_base_url: str = Field(
-        default="https://openrouter.ai/api/v1",
-        validation_alias=AliasChoices("PRISM_OPENROUTER_BASE_URL", "PRISM_CHUTES_BASE_URL"),
-    )
-    openrouter_model: str = Field(
-        default="anthropic/claude-opus-4.8",
-        validation_alias=AliasChoices("PRISM_OPENROUTER_MODEL", "PRISM_CHUTES_MODEL"),
-    )
-    openrouter_api_key: str | None = Field(
-        default=None,
-        repr=False,
-        validation_alias=AliasChoices("PRISM_OPENROUTER_API_KEY", "PRISM_CHUTES_API_KEY"),
-    )
-    openrouter_api_key_file: Path | None = Field(
-        default=Path("/run/secrets/openrouter_api_key"),
-        validation_alias=AliasChoices("PRISM_OPENROUTER_API_KEY_FILE", "PRISM_CHUTES_API_KEY_FILE"),
-    )
-    # The prism llm_review gate routes through the MASTER OpenRouter gateway: the gateway
-    # injects the provider key server-side, so the challenge/validator holds NO provider key -- only
-    # a scoped gateway token (architecture.md sections 5, 7; VAL-PRISM-031/034). When a gateway URL
-    # + token are configured they take precedence over a direct OpenRouter call.
+    # The prism llm_review gate routes ONLY through the MASTER LLM gateway (yunwu-only,
+    # provider-agnostic; architecture.md sec 10 + library/llm-yunwu-contract.md). The gateway
+    # injects the provider key AND the model server-side keyed by the token ``source`` claim, so
+    # the challenge/validator holds NO provider key and pins NO model -- only a scoped gateway
+    # token routed at ``{root}/llm/v1``. There is no direct-provider fallback.
     llm_gateway_url: str | None = Field(
         default=None,
         validation_alias=AliasChoices("PRISM_LLM_GATEWAY_URL", "BASE_LLM_GATEWAY_URL"),
@@ -402,14 +384,6 @@ class PrismSettings(ChallengeSettings):
         if self.database_url.startswith("sqlite+aiosqlite:///"):
             return Path(self.database_url.removeprefix("sqlite+aiosqlite:///"))
         return self.database_path
-
-    def openrouter_api_key_value(self) -> str | None:
-        if self.openrouter_api_key:
-            return self.openrouter_api_key
-        if self.openrouter_api_key_file and self.openrouter_api_key_file.exists():
-            token = self.openrouter_api_key_file.read_text(encoding="utf-8").strip()
-            return token or None
-        return None
 
     def llm_gateway_token_value(self) -> str | None:
         if self.llm_gateway_token:

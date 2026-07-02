@@ -1,3 +1,11 @@
+"""prism llm_review gateway config contract (milestone llm-yunwu; VAL-LLM-CODE-008).
+
+The prism safety gate routes ONLY through the master LLM gateway (``/llm/v1``) with a scoped token;
+the gateway injects the provider key AND the model server-side. There is NO ``openrouter_*`` /
+legacy ``CHUTES_*`` config, NO hardcoded provider base URL or model in code, and NO direct-provider
+fallback. These tests pin the removal + the gateway-only wiring.
+"""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -8,58 +16,62 @@ import pytest
 
 from prism_challenge.config import PrismSettings
 from prism_challenge.evaluator import llm_review as llm
-from prism_challenge.evaluator.llm_review import LlmReviewConfig, review_code
+from prism_challenge.evaluator.llm_review import (
+    GATEWAY_MODEL_PLACEHOLDER,
+    LlmReviewConfig,
+    review_code,
+)
 from prism_challenge.queue import PrismWorker
 from prism_challenge.runtime_config import resolve_runtime_policy, runtime_policy_defaults
 
-OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
-STRONG_MODEL = "anthropic/claude-opus-4.8"
-DEAD_MODEL = "anthropic/claude-3.5-sonnet"
-SECRET_PATH = Path("/run/secrets/openrouter_api_key")
+GATEWAY_URL = "http://base-master:18080/llm/v1"
+GATEWAY_TOKEN = "scoped-gateway-token"
+GATEWAY_SECRET_PATH = Path("/run/secrets/base_gateway_token")
 
 
 def _clear_llm_env(monkeypatch: pytest.MonkeyPatch) -> None:
     for name in (
         "PRISM_LLM_REVIEW_ENABLED",
-        "PRISM_OPENROUTER_BASE_URL",
-        "PRISM_OPENROUTER_MODEL",
-        "PRISM_OPENROUTER_API_KEY",
-        "PRISM_OPENROUTER_API_KEY_FILE",
-        "PRISM_CHUTES_BASE_URL",
-        "PRISM_CHUTES_MODEL",
-        "PRISM_CHUTES_API_KEY",
-        "PRISM_CHUTES_API_KEY_FILE",
+        "PRISM_LLM_GATEWAY_URL",
+        "BASE_LLM_GATEWAY_URL",
+        "PRISM_GATEWAY_TOKEN",
+        "BASE_GATEWAY_TOKEN",
+        "PRISM_GATEWAY_TOKEN_FILE",
+        "BASE_GATEWAY_TOKEN_FILE",
     ):
         monkeypatch.delenv(name, raising=False)
 
 
-def test_prism_settings_default_to_openrouter_enabled(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_prism_settings_default_to_gateway_only(monkeypatch: pytest.MonkeyPatch) -> None:
     _clear_llm_env(monkeypatch)
     settings = PrismSettings()
 
     assert settings.llm_review_enabled is True
     # Fail-closed default: a deploy without a wired gateway must NOT silently allow submissions.
     assert settings.llm_review_required is True
-    assert settings.openrouter_base_url == OPENROUTER_BASE_URL
-    assert settings.openrouter_model == STRONG_MODEL
-    assert settings.openrouter_model != DEAD_MODEL
-    assert settings.openrouter_api_key_file == SECRET_PATH
+    # The scoped gateway token is sourced from the docker secret; no provider key/base URL/model.
+    assert settings.llm_gateway_token_file == GATEWAY_SECRET_PATH
     assert settings.llm_review_temperature == 0.0
+    assert not hasattr(settings, "openrouter_base_url")
+    assert not hasattr(settings, "openrouter_model")
+    assert not hasattr(settings, "openrouter_api_key")
+    assert not hasattr(settings, "openrouter_api_key_file")
+    assert not hasattr(settings, "openrouter_api_key_value")
 
 
-def test_openrouter_key_only_sourced_from_secret_file(
+def test_gateway_token_only_sourced_from_secret_file(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     _clear_llm_env(monkeypatch)
-    secret = tmp_path / "openrouter_api_key"
-    secret.write_text("sk-or-secret\n", encoding="utf-8")
+    secret = tmp_path / "base_gateway_token"
+    secret.write_text("scoped-secret\n", encoding="utf-8")
 
-    settings = PrismSettings(openrouter_api_key_file=secret)
-    assert settings.openrouter_api_key_value() == "sk-or-secret"
+    settings = PrismSettings(llm_gateway_token_file=secret)
+    assert settings.llm_gateway_token_value() == "scoped-secret"
 
-    # With no inline key and a missing file, no key is resolved (fails closed).
-    missing = PrismSettings(openrouter_api_key=None, openrouter_api_key_file=tmp_path / "nope")
-    assert missing.openrouter_api_key_value() is None
+    # With no inline token and a missing file, nothing is resolved (fails closed).
+    missing = PrismSettings(llm_gateway_token=None, llm_gateway_token_file=tmp_path / "nope")
+    assert missing.llm_gateway_token_value() is None
 
 
 def test_hf_token_only_sourced_from_secret_file(tmp_path: Path) -> None:
@@ -74,42 +86,48 @@ def test_hf_token_only_sourced_from_secret_file(tmp_path: Path) -> None:
     assert missing.hf_token_value() is None
 
 
-def test_legacy_chutes_env_alias_still_resolves(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_legacy_chutes_env_alias_no_longer_recognized(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The legacy PRISM_CHUTES_* / PRISM_OPENROUTER_* env aliases are gone (extra=ignore), so they
+    # cannot re-introduce a provider base URL / model onto settings.
     _clear_llm_env(monkeypatch)
     monkeypatch.setenv("PRISM_CHUTES_MODEL", "openai/gpt-4o-mini")
+    monkeypatch.setenv("PRISM_OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
     settings = PrismSettings()
-    assert settings.openrouter_model == "openai/gpt-4o-mini"
+    assert not hasattr(settings, "openrouter_model")
+    assert not hasattr(settings, "openrouter_base_url")
 
 
-def test_llm_review_config_defaults_to_openrouter_temperature_zero() -> None:
+def test_llm_review_config_defaults_are_gateway_only() -> None:
     config = LlmReviewConfig()
 
     assert config.enabled is True
-    assert config.base_url == OPENROUTER_BASE_URL
-    assert config.model == STRONG_MODEL
-    assert config.model != DEAD_MODEL
+    assert config.gateway_url is None
+    assert config.gateway_token is None
     assert config.temperature == 0.0
-    assert str(config.api_key_file) == str(SECRET_PATH)
+    # No hardcoded provider base URL / model / api key remains on the config.
+    assert not hasattr(config, "base_url")
+    assert not hasattr(config, "model")
+    assert not hasattr(config, "api_key")
+    assert not hasattr(config, "api_key_file")
 
 
-def test_worker_llm_config_maps_openrouter_settings(
+def test_worker_llm_config_maps_gateway_settings(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     _clear_llm_env(monkeypatch)
-    secret = tmp_path / "openrouter_api_key"
-    secret.write_text("sk-or-worker\n", encoding="utf-8")
-    settings = PrismSettings(openrouter_api_key_file=secret)
+    secret = tmp_path / "base_gateway_token"
+    secret.write_text("scoped-worker\n", encoding="utf-8")
+    settings = PrismSettings(llm_gateway_url=GATEWAY_URL, llm_gateway_token_file=secret)
 
     config = PrismWorker._llm_config(SimpleNamespace(settings=settings))
 
     assert config.enabled is True
-    assert config.base_url == OPENROUTER_BASE_URL
-    assert config.model == STRONG_MODEL
+    assert config.gateway_url == GATEWAY_URL
+    assert config.gateway_token == "scoped-worker"
     assert config.temperature == 0.0
-    assert config.api_key == "sk-or-worker"
 
 
-def test_runtime_policy_reports_openrouter_base_url_and_model(
+def test_runtime_policy_llm_review_has_no_provider_base_url_or_model(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _clear_llm_env(monkeypatch)
@@ -118,17 +136,17 @@ def test_runtime_policy_reports_openrouter_base_url_and_model(
 
     policy = defaults["llm_review_policy"]
     assert policy["enabled"] is True
-    assert policy["base_url"] == OPENROUTER_BASE_URL
-    assert policy["model"] == STRONG_MODEL
+    # The gateway injects provider + model, so the runtime policy pins neither.
+    assert "base_url" not in policy
+    assert "model" not in policy
 
-    # The typed model must accept and surface the new fields (extra='forbid').
     model = resolve_runtime_policy(settings, [])
     assert model.llm_review_policy.enabled is True
-    assert model.llm_review_policy.base_url == OPENROUTER_BASE_URL
-    assert model.llm_review_policy.model == STRONG_MODEL
+    assert not hasattr(model.llm_review_policy, "base_url")
+    assert not hasattr(model.llm_review_policy, "model")
 
 
-def test_invoke_review_flow_makes_real_openrouter_call_at_temperature_zero() -> None:
+def test_invoke_review_flow_targets_gateway_with_placeholder_model() -> None:
     captured: dict[str, Any] = {}
 
     class _FakeMessage:
@@ -159,16 +177,17 @@ def test_invoke_review_flow_makes_real_openrouter_call_at_temperature_zero() -> 
     try:
         review = review_code(
             "def build_model(ctx):\n    return None\n",
-            config=LlmReviewConfig(api_key="sk-or-test"),
+            config=LlmReviewConfig(gateway_url=GATEWAY_URL, gateway_token=GATEWAY_TOKEN),
         )
     finally:
         monkeypatch_target._load_chat_openai = original  # type: ignore[assignment]
 
-    assert captured["base_url"] == OPENROUTER_BASE_URL
-    assert captured["model"] == STRONG_MODEL
-    assert captured["model"] != DEAD_MODEL
+    # The gate targets the master gateway /llm/v1 with the scoped token; the model is a placeholder
+    # (the gateway overwrites it server-side), never a hardcoded provider model.
+    assert captured["base_url"] == GATEWAY_URL
+    assert captured["model"] == GATEWAY_MODEL_PLACEHOLDER
     assert captured["temperature"] == 0.0
-    assert captured["api_key"] == "sk-or-test"
+    assert captured["api_key"] == GATEWAY_TOKEN
     assert review.approved is True
 
 

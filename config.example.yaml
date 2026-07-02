@@ -51,9 +51,8 @@ component_eval_seed_count: 1
 component_eval_repeat_count: 1
 llm_review_enabled: true
 llm_review_required: true
-openrouter_base_url: https://openrouter.ai/api/v1
-openrouter_model: anthropic/claude-opus-4.8
-openrouter_api_key_file: /run/secrets/openrouter_api_key
+llm_gateway_url: null
+llm_gateway_token_file: /run/secrets/base_gateway_token
 llm_review_timeout_seconds: 60
 llm_review_temperature: 0.0
 llm_review_max_tokens: 4096

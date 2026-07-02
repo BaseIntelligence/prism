@@ -683,12 +683,9 @@ class PrismWorker:
         return llm_review.LlmReviewConfig(
             enabled=self.settings.llm_review_enabled,
             required=self.settings.llm_review_required,
-            base_url=self.settings.openrouter_base_url,
-            model=self.settings.openrouter_model,
-            api_key=self.settings.openrouter_api_key_value(),
-            api_key_file=self.settings.openrouter_api_key_file,
             gateway_url=self.settings.llm_gateway_url,
             gateway_token=self.settings.llm_gateway_token_value(),
+            gateway_token_file=self.settings.llm_gateway_token_file,
             timeout_seconds=self.settings.llm_review_timeout_seconds,
             temperature=self.settings.llm_review_temperature,
             max_tokens=self.settings.llm_review_max_tokens,

@@ -65,7 +65,7 @@ def test_wellformed_approval_passes_review(monkeypatch):
 
     review = review_code(
         _SAFE_CODE,
-        config=LlmReviewConfig(enabled=True, model="gpt-4o-mini", api_key="test"),
+        config=LlmReviewConfig(enabled=True),
     )
 
     assert review.approved is True
@@ -93,7 +93,7 @@ def test_deterministic_evidence_still_rejects(monkeypatch):
 
     review = review_code(
         _SAFE_CODE,
-        config=LlmReviewConfig(enabled=True, model="gpt-4o-mini", api_key="test"),
+        config=LlmReviewConfig(enabled=True),
     )
 
     assert review.approved is False
@@ -122,7 +122,7 @@ def test_reject_without_deterministic_evidence_is_terminal(monkeypatch):
 
     review = review_code(
         _SAFE_CODE,
-        config=LlmReviewConfig(enabled=True, model="gpt-4o-mini", api_key="test"),
+        config=LlmReviewConfig(enabled=True),
     )
 
     assert review.approved is False

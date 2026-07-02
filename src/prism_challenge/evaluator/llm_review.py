@@ -160,17 +160,20 @@ class SubmitVerdict(BaseModel):
     )
 
 
+#: Placeholder model sent to the gateway; the gateway OVERWRITES it server-side with the model it
+#: resolves from the token ``source`` claim (library/llm-yunwu-contract.md sec 3), so the
+#: challenge/validator never pins a provider model.
+GATEWAY_MODEL_PLACEHOLDER = "gateway-default"
+
+
 @dataclass(frozen=True)
 class LlmReviewConfig:
     enabled: bool = True
     required: bool = False
-    base_url: str = "https://openrouter.ai/api/v1"
-    model: str | None = "anthropic/claude-opus-4.8"
-    api_key: str | None = None
-    api_key_file: str | Path | None = "/run/secrets/openrouter_api_key"
-    # Master OpenRouter gateway routing. When ``gateway_url`` + a resolvable ``gateway_token`` are
-    # set the gate calls the gateway with the SCOPED TOKEN (the challenge/validator holds no raw
-    # provider key); the gateway injects the provider key server-side (VAL-PRISM-031/034).
+    # Master LLM gateway routing (yunwu-only, provider-agnostic). The gate calls the gateway
+    # ``/llm/v1`` with the SCOPED TOKEN; the gateway injects the provider key AND the model
+    # server-side, so the challenge/validator holds NO raw provider key and pins NO model. There is
+    # no direct-provider fallback: an unresolvable gateway URL/token fails the gate closed.
     gateway_url: str | None = None
     gateway_token: str | None = None
     gateway_token_file: str | Path | None = None
@@ -316,7 +319,8 @@ def _failed_closed_review(
 
 
 def _collect_secrets(config: LlmReviewConfig) -> tuple[str, ...]:
-    return tuple(secret for secret in (_gateway_token(config), _api_key(config)) if secret)
+    token = _gateway_token(config)
+    return (token,) if token else ()
 
 
 def _redact_secrets(text: str, secrets: tuple[str, ...]) -> str:
@@ -400,11 +404,9 @@ def _invoke_verdict(config: LlmReviewConfig, *, system: str, prompt: str) -> dic
 
 def _invoke_review_flow(config: LlmReviewConfig, *, system: str, prompt: str) -> dict[str, Any]:
     base_url, credential = _resolve_endpoint(config)
-    if not config.model:
-        raise RuntimeError("OpenRouter model is not configured")
     chat_openai = _load_chat_openai()
     chat = chat_openai(
-        model=config.model,
+        model=GATEWAY_MODEL_PLACEHOLDER,
         base_url=base_url,
         api_key=credential,
         temperature=config.temperature,
@@ -431,7 +433,7 @@ def _invoke_review_flow(config: LlmReviewConfig, *, system: str, prompt: str) ->
 
 
 def _forced_tool_call(chat: Any, tool: type[BaseModel], messages: list[tuple[str, str]]) -> Any:
-    # The OpenRouter chat model emits one tool call per turn, so the two tools are forced
+    # The gateway chat model emits one tool call per turn, so the two tools are forced
     # sequentially via tool_choice; strict=False keeps ReviewEvidence's tolerant optionals
     # provider-valid.
     bound = chat.bind_tools([tool], tool_choice=tool.__name__, strict=False)
@@ -455,17 +457,6 @@ def _tool_args(call: Any) -> Any:
     return getattr(call, "args", None) or {}
 
 
-def _api_key(config: LlmReviewConfig) -> str | None:
-    if config.api_key:
-        return config.api_key
-    if config.api_key_file:
-        path = Path(config.api_key_file)
-        if path.exists():
-            token = path.read_text(encoding="utf-8").strip()
-            return token or None
-    return None
-
-
 def _gateway_token(config: LlmReviewConfig) -> str | None:
     if config.gateway_token:
         return config.gateway_token
@@ -478,28 +469,22 @@ def _gateway_token(config: LlmReviewConfig) -> str | None:
 
 
 def _resolve_endpoint(config: LlmReviewConfig) -> tuple[str, str]:
-    """Resolve ``(base_url, credential)`` for the chat client, preferring the master gateway.
+    """Resolve ``(base_url, credential)`` for the chat client via the master gateway.
 
-    When a gateway URL is configured the gate routes through the MASTER OpenRouter gateway with the
-    SCOPED TOKEN: the gateway injects the provider key server-side, so the challenge/validator never
-    holds the raw provider key (VAL-PRISM-031/034). If a gateway URL is configured but its scoped
-    token is unresolvable the gate FAILS CLOSED rather than silently falling back to a direct
-    provider-key call -- a direct call would defeat the gateway boundary (and only happens to be
-    harmless today because validators hold no provider key). A direct OpenRouter call with the
-    provider key is used ONLY when no gateway URL is configured at all.
+    The gate routes ONLY through the master LLM gateway (``/llm/v1``) with the SCOPED TOKEN: the
+    gateway injects the provider key AND the model server-side, so the challenge/validator never
+    holds a raw provider key or pins a model (library/llm-yunwu-contract.md sec 7). There is no
+    direct-provider fallback -- an unresolvable gateway URL/token FAILS CLOSED (raises) so the gate
+    never silently calls a provider directly.
     """
-    if config.gateway_url:
-        gateway_token = _gateway_token(config)
-        if not gateway_token:
-            raise RuntimeError(
-                "prism LLM gateway URL is configured but its scoped token is unresolvable; "
-                "refusing to fall back to a direct provider-key call"
-            )
-        return config.gateway_url, gateway_token
-    api_key = _api_key(config)
-    if not api_key:
-        raise RuntimeError("OpenRouter API key is not configured")
-    return config.base_url, api_key
+    if not config.gateway_url:
+        raise RuntimeError("prism LLM gateway URL is not configured")
+    gateway_token = _gateway_token(config)
+    if not gateway_token:
+        raise RuntimeError(
+            "prism LLM gateway URL is configured but its scoped token is unresolvable"
+        )
+    return config.gateway_url, gateway_token
 
 
 def _load_chat_openai() -> Any:

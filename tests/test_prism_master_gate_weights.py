@@ -3,7 +3,8 @@
 Covers VAL-PRISM-030..036 (architecture.md sections 5, 6, 7, 11):
   030 - trained_state loaded ONLY when the challenge manifest recorded that exact artifact as a
         regular file under the run dir (no traversal/symlink), with weights_only=True.
-  031 - the llm_review gate targets anthropic/claude-opus-4.8 via the master gateway at temp 0.
+  031 - the llm_review gate routes through the master gateway /llm/v1 at temp 0; the gateway injects
+        the model (the client sends a placeholder), so no provider model is pinned in code.
   032 - an LLM reject is TERMINAL and pre-eval (no container eval / GPU lease / checkpoint publish).
   033 - a gateway failure / unparseable verdict fails CLOSED (hold); oversized source rejected.
   034 - the validator/eval runtime holds NO provider key (gateway token only); secrets redacted.
@@ -38,14 +39,18 @@ from prism_challenge.evaluator.container import (
     _resolve_recorded_trained_state,
 )
 from prism_challenge.evaluator.interface import PrismContext
-from prism_challenge.evaluator.llm_review import LlmReviewConfig, review_code, review_plagiarism
+from prism_challenge.evaluator.llm_review import (
+    GATEWAY_MODEL_PLACEHOLDER,
+    LlmReviewConfig,
+    review_code,
+    review_plagiarism,
+)
 from prism_challenge.repository import PrismRepository
 from prism_challenge.weights import get_weights
 
-GATEWAY_OPENROUTER_URL = "http://base-master:18080/llm/openrouter"
-GATEWAY_TOKEN = "gw-scoped-token-abc123"
+GATEWAY_URL = "http://base-master:18080/llm/v1"
+GATEWAY_TOKEN = "**********************"
 PROVIDER_KEY = "sk-or-raw-provider-key-must-not-leak"
-CLAUDE_OPUS = "anthropic/claude-opus-4.8"
 EPOCH_SECONDS = 60
 
 _ALLOW_ARGS: dict[str, dict[str, Any]] = {
@@ -138,67 +143,39 @@ def test_recorded_trained_state_returns_none_for_missing_file(tmp_path: Path) ->
     assert _resolve_recorded_trained_state(artifacts, TRAINED_STATE_ARTIFACT) is None
 
 
-# --- VAL-PRISM-031: claude-opus-4.8 via the master OpenRouter gateway at temperature 0 -----------
+# --- VAL-PRISM-031 / VAL-LLM-CODE-008: gate routes via the master /llm/v1 gateway at temp 0 ------
 
 
 def test_llm_gate_routes_through_master_gateway_with_token(monkeypatch) -> None:
     captured: dict[str, Any] = {}
     monkeypatch.setattr(llm, "_load_chat_openai", lambda: _fake_chat_class(captured))
 
-    config = LlmReviewConfig(
-        gateway_url=GATEWAY_OPENROUTER_URL,
-        gateway_token=GATEWAY_TOKEN,
-        # A provider key is ALSO present, but the gateway token must win and the key not be sent.
-        api_key=PROVIDER_KEY,
-    )
+    config = LlmReviewConfig(gateway_url=GATEWAY_URL, gateway_token=GATEWAY_TOKEN)
     review = review_code("def build_model(ctx):\n    return None\n", config=config)
 
     assert review.approved is True
-    assert captured["model"] == CLAUDE_OPUS
-    assert captured["base_url"] == GATEWAY_OPENROUTER_URL
+    # The gateway injects the model server-side, so the client sends only a placeholder (no
+    # hardcoded provider model), targets /llm/v1, and authenticates with the scoped token.
+    assert captured["model"] == GATEWAY_MODEL_PLACEHOLDER
+    assert captured["base_url"] == GATEWAY_URL
     assert captured["temperature"] == 0.0
-    # The scoped gateway token authenticates the call, NOT the raw provider key.
     assert captured["api_key"] == GATEWAY_TOKEN
-    assert captured["api_key"] != PROVIDER_KEY
 
 
-def test_llm_gate_falls_back_to_direct_openrouter_without_gateway(monkeypatch) -> None:
-    captured: dict[str, Any] = {}
-    monkeypatch.setattr(llm, "_load_chat_openai", lambda: _fake_chat_class(captured))
-
-    review = review_code(
-        "def build_model(ctx):\n    return None\n",
-        config=LlmReviewConfig(api_key=PROVIDER_KEY),
-    )
-
-    assert review.approved is True
-    assert captured["base_url"] == "https://openrouter.ai/api/v1"
-    assert captured["model"] == CLAUDE_OPUS
-    assert captured["api_key"] == PROVIDER_KEY
-
-
-def test_resolve_endpoint_fails_closed_when_gateway_token_unresolvable() -> None:
-    # A gateway URL is explicitly configured but its scoped token is unresolvable: the gate MUST
-    # refuse rather than fall back to a direct provider-key call (the validator holds no provider
-    # key; a direct call would defeat the gateway boundary).
+def test_resolve_endpoint_fails_closed_without_gateway() -> None:
+    # A gateway URL is configured but its scoped token is unresolvable: the gate MUST refuse (there
+    # is NO direct-provider fallback).
     with pytest.raises(RuntimeError, match="gateway"):
-        llm._resolve_endpoint(
-            LlmReviewConfig(
-                gateway_url=GATEWAY_OPENROUTER_URL,
-                gateway_token=None,
-                api_key=PROVIDER_KEY,
-            )
-        )
+        llm._resolve_endpoint(LlmReviewConfig(gateway_url=GATEWAY_URL, gateway_token=None))
 
-    # With no gateway URL configured at all, the direct provider-key path still resolves.
-    base_url, credential = llm._resolve_endpoint(LlmReviewConfig(api_key=PROVIDER_KEY))
-    assert base_url == "https://openrouter.ai/api/v1"
-    assert credential == PROVIDER_KEY
+    # With no gateway URL configured at all, the gate also fails closed (no direct-provider path).
+    with pytest.raises(RuntimeError, match="gateway"):
+        llm._resolve_endpoint(LlmReviewConfig())
 
 
 def test_gateway_configured_without_token_holds_no_direct_provider_call(monkeypatch) -> None:
     # End-to-end: review_code with a gateway URL but no resolvable token fails closed (HOLD) and
-    # never constructs a chat client / makes a direct provider call. The provider key never leaks.
+    # never constructs a chat client / makes a direct provider call.
     def must_not_build_client() -> None:
         raise AssertionError("no chat client may be built when the gateway token is unresolvable")
 
@@ -206,11 +183,7 @@ def test_gateway_configured_without_token_holds_no_direct_provider_call(monkeypa
 
     review = review_code(
         "def build_model(ctx):\n    return None\n",
-        config=LlmReviewConfig(
-            gateway_url=GATEWAY_OPENROUTER_URL,
-            gateway_token=None,
-            api_key=PROVIDER_KEY,
-        ),
+        config=LlmReviewConfig(gateway_url=GATEWAY_URL, gateway_token=None),
     )
 
     assert review.approved is False
@@ -222,7 +195,7 @@ def test_gateway_configured_without_token_holds_no_direct_provider_call(monkeypa
 def test_settings_gateway_token_only_sourced_from_secret_file(tmp_path: Path) -> None:
     secret = tmp_path / "base_gateway_token"
     secret.write_text(GATEWAY_TOKEN + "\n", encoding="utf-8")
-    settings = PrismSettings(llm_gateway_url=GATEWAY_OPENROUTER_URL, llm_gateway_token_file=secret)
+    settings = PrismSettings(llm_gateway_url=GATEWAY_URL, llm_gateway_token_file=secret)
     assert settings.llm_gateway_token_value() == GATEWAY_TOKEN
 
     missing = PrismSettings(llm_gateway_token=None, llm_gateway_token_file=tmp_path / "nope")
@@ -263,7 +236,7 @@ def test_gateway_failure_fails_closed_to_hold(monkeypatch) -> None:
 
     review = review_code(
         "ok learner",
-        config=LlmReviewConfig(gateway_url=GATEWAY_OPENROUTER_URL, gateway_token=GATEWAY_TOKEN),
+        config=LlmReviewConfig(gateway_url=GATEWAY_URL, gateway_token=GATEWAY_TOKEN),
     )
     assert review.approved is False
     assert review.held is True
@@ -276,7 +249,7 @@ def test_unparseable_verdict_fails_closed_to_hold(monkeypatch) -> None:
 
     review = review_code(
         "ok",
-        config=LlmReviewConfig(gateway_url=GATEWAY_OPENROUTER_URL, gateway_token=GATEWAY_TOKEN),
+        config=LlmReviewConfig(gateway_url=GATEWAY_URL, gateway_token=GATEWAY_TOKEN),
     )
     assert review.approved is False
     assert review.held is True
@@ -304,7 +277,6 @@ def test_oversized_source_rejected_before_any_model_call(monkeypatch) -> None:
 def test_eval_container_env_carries_no_provider_key(tmp_path: Path) -> None:
     settings = PrismSettings(
         base_eval_artifact_root=tmp_path / "artifacts",
-        openrouter_api_key=PROVIDER_KEY,
         llm_gateway_token=GATEWAY_TOKEN,
     )
     ctx = PrismContext(vocab_size=128, sequence_length=16, seed=1337, max_parameters=5_000_000)
@@ -325,7 +297,7 @@ def test_failed_closed_reason_redacts_secrets(monkeypatch) -> None:
 
     review = review_code(
         "ok",
-        config=LlmReviewConfig(gateway_token=GATEWAY_TOKEN, api_key=PROVIDER_KEY),
+        config=LlmReviewConfig(gateway_url=GATEWAY_URL, gateway_token=GATEWAY_TOKEN),
     )
     assert review.held is True
     assert GATEWAY_TOKEN not in review.reason
@@ -342,12 +314,11 @@ def test_plagiarism_failed_closed_reason_redacts_secrets(monkeypatch) -> None:
         current_code="def f():\n    return 1\n",
         candidate_code="def g():\n    return 2\n",
         comparison_report={"overlap": 0.0},
-        config=LlmReviewConfig(gateway_token=GATEWAY_TOKEN, api_key=PROVIDER_KEY),
+        config=LlmReviewConfig(gateway_url=GATEWAY_URL, gateway_token=GATEWAY_TOKEN),
     )
     assert review.copied is True
     assert "llm_review_failed" in review.violations
     assert GATEWAY_TOKEN not in review.reason
-    assert PROVIDER_KEY not in review.reason
     assert "[REDACTED]" in review.reason
 
 
@@ -556,7 +527,8 @@ def _pipeline_settings(tmp_path: Path, name: str, **overrides: Any) -> PrismSett
         shared_token="secret",
         allow_insecure_signatures=True,
         llm_review_enabled=True,
-        openrouter_api_key=PROVIDER_KEY,
+        llm_gateway_url=GATEWAY_URL,
+        llm_gateway_token=GATEWAY_TOKEN,
         execution_backend="base_gpu",
         docker_enabled=True,
         docker_backend="broker",
