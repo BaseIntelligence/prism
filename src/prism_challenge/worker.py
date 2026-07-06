@@ -5,7 +5,7 @@ import asyncio
 import logging
 
 from .app import create_app
-from .config import PrismSettings
+from .config import PrismSettings, configure_logging
 from .queue import PrismWorker
 
 logger = logging.getLogger("prism.worker")
@@ -56,8 +56,9 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Run the Prism evaluation worker")
     parser.add_argument("--interval-seconds", type=float, default=5.0)
     args = parser.parse_args()
-    logging.basicConfig(level=logging.INFO)
-    asyncio.run(run_worker(PrismSettings(), interval_seconds=args.interval_seconds))
+    worker_settings = PrismSettings()
+    configure_logging(worker_settings)
+    asyncio.run(run_worker(worker_settings, interval_seconds=args.interval_seconds))
 
 
 if __name__ == "__main__":

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Literal
 
@@ -116,6 +117,15 @@ class PrismSettings(ChallengeSettings):
     fineweb_sample_count: int = 128
     execution_backend: str = "base_gpu"
     prism_role: str = "master"
+    # Root stdlib log level applied by ``configure_logging`` on the deploy entrypoints (the uvicorn
+    # ``prism_challenge.app:app`` API/combined process and the standalone ``prism-worker`` CLI).
+    # Uvicorn configures only its own ``uvicorn.*`` loggers, so without this application INFO
+    # (queue drain, worker iterations, persisted eval-log paths) propagates to an unconfigured root
+    # and is swallowed. Default INFO; override with ``PRISM_LOG_LEVEL`` (e.g. DEBUG/WARNING).
+    log_level: str = Field(
+        default="INFO",
+        validation_alias=AliasChoices("PRISM_LOG_LEVEL", "CHALLENGE_LOG_LEVEL"),
+    )
     public_submissions_enabled: bool = True
     worker_claim_timeout_seconds: int = 900
     # Combined mode (single-service deploy): when True the uvicorn API process ALSO runs the
@@ -359,6 +369,15 @@ class PrismSettings(ChallengeSettings):
     base_eval_gpu_device_ids: tuple[str, ...] = ()
     base_eval_task: str = "architecture"
     base_eval_artifact_root: Path = Path("/tmp/prism-eval-artifacts")
+    # Persistent dir for the COMPLETE evaluated-agent (GPU training-run) stdout/stderr, written per
+    # attempt so the full run stream survives the destroyed eval container (the broker returns up
+    # to ~5MB per stream, which prism otherwise only parses for metrics / failure detail and then
+    # discards). Defaults (see ``resolved_eval_log_dir``) to an ``eval-logs`` subdir on the SAME
+    # persistent ``/data`` volume as the sqlite DB; override with ``PRISM_EVAL_LOG_DIR``.
+    eval_log_dir: Path | None = Field(
+        default=None,
+        validation_alias=AliasChoices("PRISM_EVAL_LOG_DIR", "CHALLENGE_EVAL_LOG_DIR"),
+    )
     # Read-only locked FineWeb-Edu train split mount (architecture.md section 3). The broker
     # bind-mounts the staged train shards here (RO); the challenge runner resolves ctx.data_dir to
     # this path and fails fast when it is missing/empty (no random-token fallback).
@@ -451,6 +470,18 @@ class PrismSettings(ChallengeSettings):
             return Path(self.database_url.removeprefix("sqlite+aiosqlite:///"))
         return self.database_path
 
+    @property
+    def resolved_eval_log_dir(self) -> Path:
+        """Persistent dir for full evaluated-agent stdout/stderr (same volume as the sqlite DB).
+
+        Defaults to an ``eval-logs`` subdir next to the DB on the persistent ``/data`` volume so the
+        complete GPU training-run stream outlives the (destroyed) eval container; overridable via
+        ``PRISM_EVAL_LOG_DIR``.
+        """
+        if self.eval_log_dir is not None:
+            return self.eval_log_dir
+        return self.resolved_database_path.parent / "eval-logs"
+
     def llm_gateway_token_value(self) -> str | None:
         if self.llm_gateway_token:
             return self.llm_gateway_token
@@ -469,3 +500,18 @@ class PrismSettings(ChallengeSettings):
 
 
 settings = PrismSettings()
+
+
+def configure_logging(app_settings: PrismSettings = settings) -> None:
+    """Configure stdlib root logging at the settings-driven level (default INFO).
+
+    Both deploy entrypoints -- the uvicorn ``prism_challenge.app:app`` API/combined process and the
+    standalone ``prism-worker`` CLI -- otherwise run with NO root logging config (uvicorn only sets
+    up its own ``uvicorn.*`` loggers), so application INFO propagating to the root logger is
+    swallowed by the WARNING-level last-resort handler. Adding a root handler at ``log_level`` makes
+    that INFO visible under uvicorn. ``basicConfig`` (no ``force``) is a no-op when the root logger
+    already has handlers, so this never displaces uvicorn's handlers nor a test harness's capture
+    handlers; it only installs one when the deploy entrypoint has none.
+    """
+    level = logging.getLevelNamesMapping().get(app_settings.log_level.strip().upper(), logging.INFO)
+    logging.basicConfig(level=level)

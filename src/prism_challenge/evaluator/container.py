@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -16,6 +17,7 @@ from ..sdk.executors.docker import (
     DockerExecutorError,
     DockerLimits,
     DockerMount,
+    DockerRunResult,
     DockerRunSpec,
 )
 from .checkpoint_publisher import CheckpointPublisher
@@ -25,6 +27,8 @@ from .modes import execution_mode_from_value
 from .schemas import RUN_MANIFEST_V2_FILENAME, DeterministicEvidence, ExecutionMode
 from .scoring import ScoreValidationError, build_compute_block, score_prequential_bpb
 from .source_similarity import SourceFile
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_MASTER_ADDR = "127.0.0.1"
 DEFAULT_MASTER_PORT = 29500
@@ -218,6 +222,10 @@ class PrismContainerEvaluator:
                 raise InfrastructureEvaluationError(
                     f"Docker broker returned malformed response: {exc}"
                 ) from exc
+            # Durably persist the COMPLETE evaluated-agent stdout/stderr for THIS attempt before any
+            # branching (timeout / non-zero / success), so the full GPU training-run stream is kept
+            # for every terminal outcome even though scoring only parses metrics / failure detail.
+            self._persist_eval_logs(submission_id, attempt, result)
             if result.timed_out:
                 # The graceful budget + watchdog should normally fire first; reaching the outer
                 # docker/broker cap means the loop hung past every inner budget. Stop it here.
@@ -267,6 +275,45 @@ class PrismContainerEvaluator:
                 started_at=started_at,
                 ended_at=ended_at,
             )
+
+    def _persist_eval_logs(
+        self, submission_id: str, attempt: int, result: DockerRunResult
+    ) -> tuple[Path, Path] | None:
+        """Durably persist the evaluated agent's COMPLETE stdout/stderr for one attempt.
+
+        The broker returns effectively-full (up to ~5MB) stdout/stderr from the GPU training run;
+        prism otherwise only ``_parse_metrics(result.stdout)`` + reads ``result.stderr`` for failure
+        detail and then the container is destroyed, so the full stream is lost. Both streams are
+        written verbatim to the persistent data volume keyed by ``<submission_id>.attempt-<n>`` (NO
+        DB migration) IN ADDITION to parsing, so scoring/metrics behavior is unchanged. Best-effort:
+        a write failure is logged and never fails the evaluation. Returns the written paths (or
+        ``None`` when the write failed).
+        """
+        log_dir = self.settings.resolved_eval_log_dir
+        stem = f"{submission_id}.attempt-{attempt}"
+        stdout_path = log_dir / f"{stem}.stdout.log"
+        stderr_path = log_dir / f"{stem}.stderr.log"
+        try:
+            log_dir.mkdir(parents=True, exist_ok=True)
+            stdout_path.write_text(result.stdout or "", encoding="utf-8")
+            stderr_path.write_text(result.stderr or "", encoding="utf-8")
+        except OSError as exc:
+            logger.warning(
+                "failed to persist eval logs for submission=%s attempt=%s: %s",
+                submission_id,
+                attempt,
+                exc,
+            )
+            return None
+        logger.info(
+            "persisted eval logs submission=%s attempt=%s returncode=%s stdout=%s stderr=%s",
+            submission_id,
+            attempt,
+            result.returncode,
+            stdout_path,
+            stderr_path,
+        )
+        return stdout_path, stderr_path
 
     def _fresh_artifact_output(self, submission_id: str, attempt: int) -> Path:
         """A fresh artifacts dir per run; never reuse a prior run's manifest/artifacts."""

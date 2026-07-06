@@ -11,7 +11,7 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Request, status
 from .admission import enforce_admission
 from .audit import audit_sampler_from_config, resolve_audit_unit
 from .auth import authenticate_internal, authenticate_validator
-from .config import PrismSettings, settings
+from .config import PrismSettings, configure_logging, settings
 from .coordination import (
     audit_work_unit_to_payload,
     list_pending_prism_work_units,
@@ -42,6 +42,10 @@ def create_app(
     *,
     checkpoint_publisher: CheckpointPublisher | None = None,
 ) -> FastAPI:
+    # Deploy entrypoint (uvicorn ``prism_challenge.app:app``, incl. combined mode which drains the
+    # eval queue in-process) runs with no root logging config, so configure it here at import time
+    # to surface application + worker-loop INFO under uvicorn (idempotent; see configure_logging).
+    configure_logging(app_settings)
     database = Database(app_settings.resolved_database_path)
     repository = PrismRepository(
         database,
