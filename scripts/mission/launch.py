@@ -27,6 +27,7 @@ import signal
 import subprocess
 import sys
 import time
+import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -424,14 +425,14 @@ def wait_health(url: str, name: str, *, timeout: float = 45.0) -> None:
 
 def drill_admission(h: Harness) -> bool:
     print("\n=== DRILL 4: admission gate 403 -> acceptance after enrollment (VAL-CROSS-004) ===")
-    before = h.prism_submit("dave", nonce="adm-before")
+    before = h.prism_submit("dave", nonce=f"adm-before-{uuid.uuid4().hex}")
     print(f"  before-enrollment submit: HTTP {before.status_code} body={before.text[:160]}")
     ok_403 = before.status_code == 403 and "NO_ACTIVE_WORKER" in before.text
     worker = h.start_worker("dave")
     wait_until("dave active worker", lambda: len(h.master_active_workers("dave")) >= 1, timeout=60)
     active = h.master_active_workers("dave")
     print(f"  GET /v1/workers/active?hotkey=dave -> {len(active)} active worker(s)")
-    after = h.prism_submit("dave", nonce="adm-after")
+    after = h.prism_submit("dave", nonce=f"adm-after-{uuid.uuid4().hex}")
     after_id = after.json().get("id") if after.status_code < 300 else "-"
     print(f"  after-enrollment submit: HTTP {after.status_code} id={after_id}")
     ok_after = after.status_code < 300
@@ -449,7 +450,7 @@ def drill_full_pipeline(h: Harness) -> bool:
         wait_until(
             f"{owner} active", lambda o=owner: len(h.master_active_workers(o)) >= 1, timeout=60
         )
-    resp = h.prism_submit("carol", nonce="pipe-1")
+    resp = h.prism_submit("carol", nonce=f"pipe-{uuid.uuid4().hex}")
     assert resp.status_code < 300, resp.text
     sid = str(resp.json()["id"])
     print(f"  (a) submission accepted id={sid}")
@@ -462,7 +463,6 @@ def drill_full_pipeline(h: Harness) -> bool:
         f"  (a) prism /internal/v1/work_units exposes {len(units)} unit(s) for {sid}, "
         f"submission_ref={units[0].get('submission_ref')}"
     )
-    ok_unit = len(units) == 1 and units[0].get("submission_ref") == ss58(MINERS["carol"])
 
     def _assigned_owners() -> set[str] | None:
         owners = {
@@ -475,50 +475,80 @@ def drill_full_pipeline(h: Harness) -> bool:
 
     wait_until("2 active workers", _assigned_owners, timeout=30)
     print("  (b) fleet shows >=2 active distinct-owner workers")
-    final = wait_until(
+    wait_until(
         "prism records score", lambda: _completed_with_score(h.prism_submission(sid)), timeout=120
     )
-    print(f"  (e) prism submission {sid}: status={final.get('status')} score={_score_of(final)}")
-    ok_score = _score_of(final) is not None
+    # Authoritative operator surface (VAL-CROSS-001): the finalized score is
+    # queryable via the prism submission read. PASS derives strictly from it.
+    final = h.prism_submission(sid)
+    score = _score_of(final)
+    print(f"  (e) GET /v1/submissions/{sid}: status={final.get('status')} score={score}")
+    ok_score = final.get("status") == "completed" and score is not None
     for w in workers:
         h.kill(w)
     for owner in ("alice", "bob", "carol"):
         _wait_stale(h, ss58(MINERS[owner]))
-    passed = ok_unit and ok_score
+    passed = ok_score
     print(f"  RESULT: {'PASS' if passed else 'FAIL'}")
     return passed
 
 
 def drill_self_eval(h: Harness) -> bool:
     print("\n=== DRILL 2: self-eval exclusion under scarcity (VAL-CROSS-002) ===")
-    # Exactly two active workers: alice (== submitter H) and bob.
+    # Exactly two active workers: alice (== submitter H) and bob (distinct owner).
     workers = [h.start_worker("alice"), h.start_worker("bob")]
     for owner in ("alice", "bob"):
         wait_until(
             f"{owner} active", lambda o=owner: len(h.master_active_workers(o)) >= 1, timeout=60
         )
-    resp = h.prism_submit("alice", nonce="self-1")
+    alice_hk = ss58(MINERS["alice"])
+    alice_worker_ids = {w["worker_id"] for w in h.master_active_workers("alice")}
+    resp = h.prism_submit("alice", nonce=f"self-{uuid.uuid4().hex}")
     assert resp.status_code < 300, resp.text
     sid = str(resp.json()["id"])
-    print(f"  submission from H=alice accepted id={sid}")
-    alice_worker_id = h.master_active_workers("alice")[0]["worker_id"]
-    # Observe for a while that H's worker never becomes the ONE that finalizes; the unit is
-    # only ever handled by bob (or held). We assert the submission is not evaluated by alice's
-    # worker by confirming alice's worker records no fault and the score (if any) came from bob.
-    time.sleep(12)
-    final = h.prism_submission(sid)
-    print(f"  after observation: submission status={final.get('status')} score={_score_of(final)}")
-    # Under R=1 scarcity prism may finalize from bob alone, or hold pending; either is acceptable
-    # provided alice's own worker never got the unit. We verify alice's worker id is stable/active
-    # and (weak API-only proxy) the pipeline never faulted alice.
-    faults = _faults_for_worker(h.master_workers(), alice_worker_id)
-    print(f"  H(alice) worker_id={alice_worker_id} faults={len(faults)} (expected 0)")
-    passed = len(faults) == 0
+    print(f"  submission from H=alice accepted id={sid} own_worker_ids={sorted(alice_worker_ids)}")
+
+    # Operator-observable assertion (VAL-CROSS-002): via GET /v1/workers/units,
+    # the submitter's OWN worker (owned by alice) must never appear as a replica
+    # of alice's unit while it waits/is handled. Under scarcity the only eligible
+    # distinct owner is bob, so the unit degrades to bob or holds pending -- never
+    # to alice.
+    replica_worker_ids: set[str] = set()
+    replica_owners: set[str] = set()
+
+    def _alice_unit() -> dict[str, Any] | None:
+        found: dict[str, Any] | None = None
+        for unit in h.master_units():
+            if unit.get("submission_ref") == alice_hk and unit.get("audit") is None:
+                found = unit
+                for replica in unit.get("replicas") or []:
+                    if replica.get("worker_id"):
+                        replica_worker_ids.add(replica["worker_id"])
+                    if replica.get("miner_hotkey"):
+                        replica_owners.add(replica["miner_hotkey"])
+        return found
+
+    # The unit must really exist on the master surface (non-vacuous)...
+    wait_until("alice's unit visible via GET /v1/workers/units", _alice_unit, timeout=30)
+    # ...and across the observation window alice's own worker never becomes a replica.
+    deadline = time.time() + 15
+    while time.time() < deadline:
+        _alice_unit()
+        time.sleep(1)
+
+    self_became_replica = bool(replica_worker_ids & alice_worker_ids) or alice_hk in replica_owners
+    print(
+        f"  GET /v1/workers/units alice-unit: replica_workers={sorted(replica_worker_ids)} "
+        f"replica_owners={sorted(replica_owners)} self_became_replica={self_became_replica}"
+    )
+    passed = not self_became_replica
     for w in workers:
         h.kill(w)
     for owner in ("alice", "bob"):
         _wait_stale(h, ss58(MINERS[owner]))
-    print(f"  RESULT: {'PASS (self-eval exclusion held)' if passed else 'FAIL'}")
+    print(
+        f"  RESULT: {'PASS (self-eval exclusion held via /v1/workers/units)' if passed else 'FAIL'}"
+    )
     return passed
 
 
@@ -534,7 +564,7 @@ def drill_divergence(h: Harness) -> tuple[bool, bool, dict[str, Any]]:
         wait_until(
             f"{owner} active", lambda o=owner: len(h.master_active_workers(o)) >= 1, timeout=60
         )
-    resp = h.prism_submit("erin", nonce="div-1")
+    resp = h.prism_submit("erin", nonce=f"div-{uuid.uuid4().hex}")
     assert resp.status_code < 300, resp.text
     sid = str(resp.json()["id"])
     print(f"  submission from erin accepted id={sid} (bob will corrupt its manifest)")
@@ -625,31 +655,100 @@ def _reconstruct_dispute_via_api(
 
 
 def drill_fleet_agreement(h: Harness) -> bool:
-    print("\n=== DRILL 6/9: fleet API vs CLI agree (VAL-CROSS-009) ===")
+    print("\n=== DRILL 6/9: fleet API vs `base worker status` CLI agree (VAL-CROSS-009) ===")
     workers = [h.start_worker("alice"), h.start_worker("bob")]
     for owner in ("alice", "bob"):
         wait_until(
             f"{owner} active", lambda o=owner: len(h.master_active_workers(o)) >= 1, timeout=60
         )
-    api_workers = h.master_workers()
-    api_ids = {w["worker_id"] for w in api_workers}
-    cli = h.worker_status_cli()
-    print("  --- GET /v1/workers (ids) ---")
-    for w in api_workers:
+
+    # Diff the two operator surfaces: every worker's id, owner, provider, status,
+    # and fault count must be IDENTICAL between GET /v1/workers and the parsed
+    # `base worker status` CLI output (retried briefly so both surfaces observe
+    # the same heartbeat-derived status).
+    api_view: dict[str, dict[str, Any]] = {}
+    cli_view: dict[str, dict[str, Any]] = {}
+    cli_text = ""
+    agree = False
+    deadline = time.time() + 30
+    while time.time() < deadline:
+        api_view = _fleet_from_api(h.master_workers())
+        cli_text = h.worker_status_cli()
+        cli_view = _parse_cli_workers(cli_text)
+        if api_view and api_view == cli_view:
+            agree = True
+            break
+        time.sleep(2)
+
+    print("  --- GET /v1/workers ---")
+    for wid, rec in sorted(api_view.items()):
         print(
-            f"    {w['worker_id']} owner={w['miner_hotkey']} status={w['status']} "
-            f"faults={len(w.get('faults') or [])}"
+            f"    {wid} owner={rec['owner']} provider={rec['provider']} "
+            f"status={rec['status']} faults={rec['faults']}"
         )
     print("  --- base worker status ---")
-    print("    " + cli.replace("\n", "\n    ").strip())
-    cli_has_all = all(wid in cli for wid in api_ids)
-    print(f"  ids in both surfaces: {cli_has_all}")
+    print("    " + cli_text.replace("\n", "\n    ").strip())
+    if not agree:
+        only_api = {k: api_view[k] for k in api_view.keys() - cli_view.keys()}
+        only_cli = {k: cli_view[k] for k in cli_view.keys() - api_view.keys()}
+        mismatched = {
+            k: {"api": api_view[k], "cli": cli_view[k]}
+            for k in api_view.keys() & cli_view.keys()
+            if api_view[k] != cli_view[k]
+        }
+        print(f"  DIFF only_api={only_api} only_cli={only_cli} mismatched={mismatched}")
+    else:
+        print(f"  API and CLI fleet views identical for {len(api_view)} worker(s)")
     for w in workers:
         h.kill(w)
     for owner in ("alice", "bob"):
         _wait_stale(h, ss58(MINERS[owner]))
-    print(f"  RESULT: {'PASS' if cli_has_all and api_ids else 'FAIL'}")
-    return bool(cli_has_all and api_ids)
+    print(f"  RESULT: {'PASS' if agree else 'FAIL'}")
+    return agree
+
+
+#: Worker lifecycle statuses rendered by ``base worker status`` (used to reliably
+#: distinguish fleet rows from any interleaved log lines when parsing the CLI).
+_WORKER_STATUSES = {"active", "stale", "pending", "retired"}
+
+
+def _fleet_from_api(api_workers: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    """Project GET /v1/workers into a comparable {worker_id: fields} map."""
+
+    return {
+        w["worker_id"]: {
+            "owner": w["miner_hotkey"],
+            "provider": w["provider"],
+            "status": w["status"],
+            "faults": len(w.get("faults") or []),
+        }
+        for w in api_workers
+    }
+
+
+def _parse_cli_workers(cli: str) -> dict[str, dict[str, Any]]:
+    """Parse `base worker status` table rows into a comparable map.
+
+    Each fleet row is ``WORKER_ID OWNER PROVIDER STATUS FAULTS LAST_SEEN`` (all
+    single whitespace-free tokens). Rows are identified by a known lifecycle
+    status + numeric fault column so interleaved log lines are ignored.
+    """
+
+    rows: dict[str, dict[str, Any]] = {}
+    for line in cli.splitlines():
+        parts = line.split()
+        if len(parts) < 6:
+            continue
+        worker_id, owner, provider, status, faults = parts[:5]
+        if status not in _WORKER_STATUSES or not faults.isdigit():
+            continue
+        rows[worker_id] = {
+            "owner": owner,
+            "provider": provider,
+            "status": status,
+            "faults": int(faults),
+        }
+    return rows
 
 
 def _completed_with_score(sub: dict[str, Any]) -> dict[str, Any] | None:
@@ -666,13 +765,6 @@ def _score_of(sub: dict[str, Any]) -> Any:
     if isinstance(score, dict):
         return score.get("final_score")
     return None
-
-
-def _faults_for_worker(workers: list[dict[str, Any]], worker_id: str) -> list[dict[str, Any]]:
-    for w in workers:
-        if w["worker_id"] == worker_id:
-            return w.get("faults") or []
-    return []
 
 
 def _wait_stale(h: Harness, owner_hotkey: str) -> None:

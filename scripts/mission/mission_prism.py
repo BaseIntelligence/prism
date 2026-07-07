@@ -16,7 +16,9 @@ CONFIG-DRIVEN (JSON path in ``argv[1]`` / ``$MISSION_PRISM_CONFIG``). NOT for pr
 
 from __future__ import annotations
 
+import atexit
 import json
+import logging
 import sys
 from pathlib import Path
 from typing import Any
@@ -73,14 +75,49 @@ def build_settings(config: dict[str, Any]) -> PrismSettings:
     )
 
 
+def _flush_streams() -> None:
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.flush()
+        except (ValueError, OSError):
+            pass
+
+
+def _configure_harness_logging(level: int = logging.INFO) -> None:
+    """Line-buffer stdout/stderr and route logs there so drill logs are
+    inspectable after teardown.
+
+    The harness redirects each spawned process' stdout/stderr to a log file and
+    tears it down with SIGTERM; block-buffered output would be lost on kill,
+    leaving a 0-byte log. Line-buffering flushes every completed log line
+    immediately, and an ``atexit`` flush covers the graceful-shutdown path.
+    """
+
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is not None:
+            try:
+                reconfigure(line_buffering=True)
+            except (ValueError, OSError):
+                pass
+    logging.basicConfig(
+        level=level,
+        format="%(asctime)s %(levelname)s %(name)s %(message)s",
+        stream=sys.stdout,
+        force=True,
+    )
+    atexit.register(_flush_streams)
+
+
 def main() -> None:
+    _configure_harness_logging()
     config = _load_config()
     settings = build_settings(config)
     uvicorn.run(
         create_app(settings),
         host=str(config.get("host", "127.0.0.1")),
         port=int(config["port"]),
-        log_level=str(config.get("log_level", "warning")),
+        log_level=str(config.get("log_level", "info")),
     )
 
 

@@ -38,6 +38,7 @@ import argparse
 import sqlite3
 import sys
 import time
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -211,7 +212,9 @@ def run(workdir: Path) -> bool:
         time.sleep(5)  # let it register + heartbeat before work exists
 
         print("\n=== (1) admission OFF: submission accepted with no NO_ACTIVE_WORKER 403 ===")
-        resp = h.submit(nonce="legacy-1")
+        # Fresh nonce per run so re-running against a reused --workdir (persistent
+        # sqlite nonce store) is not rejected as a replay before routing.
+        resp = h.submit(nonce=f"legacy-{uuid.uuid4().hex}")
         print(f"  POST /v1/submissions -> HTTP {resp.status_code} body={resp.text[:160]}")
         ok_accept = resp.status_code < 300 and "NO_ACTIVE_WORKER" not in resp.text
         results["(1) submission accepted, no admission 403"] = ok_accept
