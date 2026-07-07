@@ -14,10 +14,12 @@ that neither re-dispatches the broker nor mutates the recorded result (VAL-PRISM
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 from .coordination import (
@@ -55,6 +57,9 @@ class PrismWorkUnitExecution:
     #: The serialized ExecutionProof emitted for this unit's result payload, when the worker plane
     #: is enabled and a fresh successful finalization produced a manifest to bind (else ``None``).
     execution_proof: dict[str, Any] | None = None
+    #: The canonical run manifest whose bytes back ``execution_proof.manifest_sha256``, forwarded so
+    #: the accepting plane can reject a tampered manifest (VAL-PRISM-007); ``None`` when no proof.
+    execution_manifest: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -67,6 +72,8 @@ class PrismValidatorCycleSummary:
     completed_submissions: tuple[str, ...]
     #: ExecutionProofs emitted this cycle, keyed by ``work_unit_id`` (empty when the plane is off).
     execution_proofs: dict[str, dict[str, Any]] = field(default_factory=dict)
+    #: Run manifests backing the emitted proofs, keyed by ``work_unit_id`` (empty when off).
+    execution_manifests: dict[str, dict[str, Any]] = field(default_factory=dict)
 
 
 async def execute_work_unit(
@@ -95,8 +102,9 @@ async def execute_work_unit(
     executed = result_id is not None
     status = await worker.repository.submission_status(unit.submission_id)
     execution_proof: dict[str, Any] | None = None
+    execution_manifest: dict[str, Any] | None = None
     if executed and status == "completed":
-        execution_proof = await _emit_execution_proof(
+        execution_proof, execution_manifest = await _emit_execution_proof(
             worker, unit, signer=proof_signer, env=proof_env
         )
     return PrismWorkUnitExecution(
@@ -106,6 +114,7 @@ async def execute_work_unit(
         executed=executed,
         posted=executed,
         execution_proof=execution_proof,
+        execution_manifest=execution_manifest,
     )
 
 
@@ -115,16 +124,17 @@ async def _emit_execution_proof(
     *,
     signer: WorkerSigner | None,
     env: Mapping[str, str] | None,
-) -> dict[str, Any] | None:
-    """Build the ExecutionProof for a freshly finalized unit, or ``None`` when not applicable.
+) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+    """Build the ExecutionProof + its backing manifest for a finalized unit (else ``(None, None)``).
 
     Gated on ``worker_plane.enabled``. The manifest hash is taken from the exact on-disk bytes of
     the run's ``prism_run_manifest.v2.json``; the provenance comes ONLY from the non-secret provider
-    env allowlist. Held-out split config and LLM keys are never read (VAL-PRISM-008).
+    env allowlist. Held-out split config and LLM keys are never read (VAL-PRISM-008). The manifest
+    content is returned with the proof so the accepting plane can recompute + verify the digest.
     """
 
     if not worker.settings.worker_plane.enabled:
-        return None
+        return None, None
     resolved_signer = _resolve_proof_signer(worker, signer)
     if resolved_signer is None:
         logger.warning(
@@ -132,19 +142,29 @@ async def _emit_execution_proof(
             "for work_unit=%s",
             unit.work_unit_id,
         )
-        return None
+        return None, None
     manifest_path = await worker.repository.latest_run_manifest_path(
         unit.submission_id, worker.execution_backend
     )
     if not manifest_path:
-        return None
+        return None, None
     proof = build_execution_proof_from_manifest(
         signer=resolved_signer,
         unit_id=unit.work_unit_id,
         manifest_path=manifest_path,
         env=os.environ if env is None else env,
     )
-    return proof.model_dump(mode="json")
+    return proof.model_dump(mode="json"), _load_manifest(manifest_path)
+
+
+def _load_manifest(manifest_path: str) -> dict[str, Any] | None:
+    """Load the run manifest JSON from ``manifest_path`` (``None`` when it cannot be parsed)."""
+
+    try:
+        parsed = json.loads(Path(manifest_path).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return parsed if isinstance(parsed, dict) else None
 
 
 def _resolve_proof_signer(
@@ -194,6 +214,7 @@ async def run_validator_cycle(
     skipped = 0
     completed: list[str] = []
     execution_proofs: dict[str, dict[str, Any]] = {}
+    execution_manifests: dict[str, dict[str, Any]] = {}
     for unit in pulled:
         outcome = await execute_work_unit(
             worker, unit, proof_signer=proof_signer, proof_env=proof_env
@@ -206,10 +227,13 @@ async def run_validator_cycle(
             completed.append(outcome.submission_id)
         if outcome.execution_proof is not None:
             execution_proofs[outcome.work_unit_id] = outcome.execution_proof
+        if outcome.execution_manifest is not None:
+            execution_manifests[outcome.work_unit_id] = outcome.execution_manifest
     return PrismValidatorCycleSummary(
         pulled=len(pulled),
         executed=executed,
         skipped=skipped,
         completed_submissions=tuple(completed),
         execution_proofs=execution_proofs,
+        execution_manifests=execution_manifests,
     )

@@ -27,6 +27,11 @@ class WorkerPlaneConfig(BaseModel):
     # master-side secret. Unset -> prism emits no signed proof (the base worker plane may still
     # stamp a tier-0 proof from the manifest hash).
     signing_key: str | None = Field(default=None, repr=False)
+    # Pinned evaluator/worker image digest (``sha256:<64hex>``) a claimed tier-1 proof is checked
+    # against at ingestion: a tier-1 claim whose ``image_digest`` does not match this value is not
+    # verifiable, so its EFFECTIVE tier is downgraded to 0 for audit sampling (architecture.md 3.4;
+    # VAL-PRISM-019). Unset -> no tier-1 claim is verifiable, so every tier-1 claim downgrades to 0.
+    pinned_image_digest: str | None = Field(default=None)
 
 
 class PrismSettings(ChallengeSettings):

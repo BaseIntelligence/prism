@@ -1034,6 +1034,57 @@ class PrismRepository:
             return None
         return str(row_list[0]["status"])
 
+    async def get_work_unit_result(self, work_unit_id: str) -> dict[str, object] | None:
+        """Return the accepted worker-plane result recorded for ``work_unit_id`` (else ``None``).
+
+        The row is the idempotency/conflict key for base->prism result ingestion: a redelivery of
+        the same ``manifest_sha256`` is a no-op, a different one for an already-accepted unit is a
+        conflict, and the persisted claimed/effective tier is the audit-sampling record.
+        """
+        async with self.database.connect() as conn:
+            rows = await conn.execute_fetchall(
+                "SELECT * FROM work_unit_results WHERE work_unit_id=?",
+                (work_unit_id,),
+            )
+        row_list = list(rows)
+        if not row_list:
+            return None
+        return dict(cast(Any, row_list[0]))
+
+    async def record_work_unit_result(
+        self,
+        *,
+        work_unit_id: str,
+        submission_id: str,
+        manifest_sha256: str,
+        claimed_tier: int,
+        effective_tier: int,
+        tier_downgraded: bool,
+        worker_pubkey: str | None,
+    ) -> None:
+        """Record the accepted worker-plane result for ``work_unit_id`` (first accept wins).
+
+        ``INSERT OR IGNORE`` keeps the FIRST accepted delivery authoritative: a later same-manifest
+        redelivery does not rewrite it and a conflicting one is refused upstream, so the accepted
+        digest + verified tier are stable for idempotency, conflict detection and audit sampling.
+        """
+        async with self.database.connect() as conn:
+            await conn.execute(
+                "INSERT OR IGNORE INTO work_unit_results("
+                "work_unit_id, submission_id, manifest_sha256, claimed_tier, effective_tier,"
+                "tier_downgraded, worker_pubkey, accepted_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    work_unit_id,
+                    submission_id,
+                    manifest_sha256,
+                    int(claimed_tier),
+                    int(effective_tier),
+                    1 if tier_downgraded else 0,
+                    worker_pubkey,
+                    now_iso(),
+                ),
+            )
+
     async def container_job_attempt_count(self, submission_id: str, level: str) -> int:
         async with self.database.connect() as conn:
             rows = await conn.execute_fetchall(

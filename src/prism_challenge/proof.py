@@ -43,6 +43,11 @@ EXECUTION_PROOF_VERSION = 1
 #: plane key so a proof prism emits is passed through unchanged by the base ``WorkerProofExecutor``.
 PROOF_PAYLOAD_KEY = "execution_proof"
 
+#: Result-payload key carrying the canonical run manifest (the full ``prism_run_manifest.v2`` dict)
+#: so the accepting side can recompute ``manifest_sha256`` from the FORWARDED content and reject a
+#: tampered manifest whose bytes no longer hash to the signed digest (VAL-PRISM-007).
+MANIFEST_PAYLOAD_KEY = "run_manifest"
+
 # Non-secret provider env vars the worker agent injects for the tier-1/2 fields (architecture 3.5).
 PROVIDER_NAME_ENV = "PRISM_PROVIDER_NAME"
 EXECUTOR_ID_ENV = "PRISM_EXECUTOR_ID"
@@ -360,6 +365,7 @@ __all__ = [
     "IMAGE_DIGEST_ENV",
     "MINER_HOTKEY_ENV",
     "POD_ID_ENV",
+    "MANIFEST_PAYLOAD_KEY",
     "PROOF_PAYLOAD_KEY",
     "PROVIDER_ENV_KEYS",
     "PROVIDER_NAME_ENV",

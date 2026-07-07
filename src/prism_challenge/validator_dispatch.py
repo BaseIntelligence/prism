@@ -31,7 +31,7 @@ from .app import create_app
 from .config import PrismSettings
 from .config import settings as default_settings
 from .evaluator.checkpoint_publisher import CheckpointPublisher
-from .proof import PROOF_PAYLOAD_KEY
+from .proof import MANIFEST_PAYLOAD_KEY, PROOF_PAYLOAD_KEY
 from .validator_executor import run_validator_cycle
 
 CHALLENGE_SLUG = "prism"
@@ -89,10 +89,14 @@ async def dispatch_assignment(
     }
     # Emit the ExecutionProof IN the work-unit result payload at successful finalization
     # (architecture.md 3.4; VAL-PRISM-001). Absent when the worker plane is off or the unit did not
-    # freshly finalize.
+    # freshly finalize. The backing run manifest is forwarded alongside so the accepting plane can
+    # recompute + verify the signed digest and reject a tampered manifest (VAL-PRISM-007).
     proof = summary.execution_proofs.get(work_unit_id)
     if proof is not None:
         result[PROOF_PAYLOAD_KEY] = proof
+        manifest = summary.execution_manifests.get(work_unit_id)
+        if manifest is not None:
+            result[MANIFEST_PAYLOAD_KEY] = manifest
     return result
 
 

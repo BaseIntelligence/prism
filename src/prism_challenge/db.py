@@ -178,6 +178,12 @@ SCHEMA = (
     "effective_from TEXT NOT NULL, enabled INTEGER NOT NULL DEFAULT 1);"
     "CREATE INDEX IF NOT EXISTS idx_runtime_config_active "
     "ON runtime_config(config_key, enabled, effective_from, updated_at);"
+    "CREATE TABLE IF NOT EXISTS work_unit_results ("
+    "work_unit_id TEXT PRIMARY KEY, submission_id TEXT NOT NULL, manifest_sha256 TEXT NOT NULL,"
+    "claimed_tier INTEGER NOT NULL, effective_tier INTEGER NOT NULL,"
+    "tier_downgraded INTEGER NOT NULL DEFAULT 0, worker_pubkey TEXT, accepted_at TEXT NOT NULL);"
+    "CREATE INDEX IF NOT EXISTS idx_work_unit_results_submission "
+    "ON work_unit_results(submission_id);"
 )
 
 
@@ -303,6 +309,16 @@ async def _run_migrations(conn: aiosqlite.Connection) -> None:
         "CREATE TABLE IF NOT EXISTS architecture_reports ("
         "architecture_id TEXT PRIMARY KEY, content TEXT, model TEXT,"
         "source_submission_id TEXT, generated_at TEXT NOT NULL);"
+    )
+    await conn.executescript(
+        "CREATE TABLE IF NOT EXISTS work_unit_results ("
+        "work_unit_id TEXT PRIMARY KEY, submission_id TEXT NOT NULL,"
+        "manifest_sha256 TEXT NOT NULL,"
+        "claimed_tier INTEGER NOT NULL, effective_tier INTEGER NOT NULL,"
+        "tier_downgraded INTEGER NOT NULL DEFAULT 0, worker_pubkey TEXT,"
+        "accepted_at TEXT NOT NULL);"
+        "CREATE INDEX IF NOT EXISTS idx_work_unit_results_submission "
+        "ON work_unit_results(submission_id);"
     )
     await conn.executescript(
         "CREATE TABLE IF NOT EXISTS gpu_leases ("

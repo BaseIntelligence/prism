@@ -8,6 +8,7 @@ from typing import Annotated, Any
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, status
 
+from .audit import audit_sampler_from_config
 from .auth import authenticate_internal, authenticate_validator
 from .config import PrismSettings, settings
 from .coordination import list_pending_prism_work_units, work_unit_to_payload
@@ -18,6 +19,7 @@ from .evaluator.checkpoint_publisher import (
     HuggingFaceCheckpointPublisher,
 )
 from .evaluator.interface import PrismContext
+from .ingestion import ResultIngestionError, ingest_work_unit_result
 from .models import (
     SubmissionCreate,
     SubmissionResponse,
@@ -155,6 +157,63 @@ def create_app(
             "challenge_slug": app_settings.slug,
             "work_units": [work_unit_to_payload(unit) for unit in units],
         }
+
+    @app.post(
+        "/internal/v1/work_units/result", dependencies=[Depends(authenticate_internal)]
+    )
+    async def work_unit_result(request: Request) -> dict[str, object]:
+        """Accept a base-reconciled worker result (``{work_unit_id, submission_ref, result}``).
+
+        The base master forwards exactly one accepted (R=2-reconciled) result here after reconciling
+        the replicas' manifest hashes (architecture.md 3.3). The ExecutionProof is verified BEFORE
+        anything is scored: a missing/malformed proof (VAL-PRISM-018) or a tampered manifest / a
+        forged signature (VAL-PRISM-007) is rejected 422 with a distinguishable reason and never
+        finalized (the unit stays eligible for retry). A verified result is finalized idempotently:
+        a duplicate delivery is a no-op and a conflicting delivery for an already-accepted unit is
+        refused 409 so the stored score/leaderboard is never mutated (VAL-PRISM-017). The claimed
+        tier is downgraded to its verified effective tier for audit sampling (VAL-PRISM-019).
+        Disabled with the worker plane off (404) so it is inert in legacy deployments.
+        """
+        if not app_settings.worker_plane.enabled:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "worker plane disabled")
+        try:
+            payload = json.loads(await request.body())
+        except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST, "invalid JSON result body"
+            ) from exc
+        if not isinstance(payload, dict):
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "result body must be an object")
+        work_unit_id = payload.get("work_unit_id")
+        submission_ref = payload.get("submission_ref")
+        result = payload.get("result")
+        if not isinstance(work_unit_id, str) or not work_unit_id:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "work_unit_id is required")
+        if not isinstance(submission_ref, str):
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "submission_ref is required")
+        if not isinstance(result, dict):
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "result must be an object")
+        sampler = audit_sampler_from_config(app_settings.worker_plane)
+        try:
+            outcome = await ingest_work_unit_result(
+                worker=worker,
+                work_unit_id=work_unit_id,
+                submission_ref=submission_ref,
+                result=result,
+                pinned_image_digest=app_settings.worker_plane.pinned_image_digest,
+                audit_sampler=sampler,
+            )
+        except ResultIngestionError as exc:
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                {"code": exc.reason, "detail": str(exc)},
+            ) from exc
+        if outcome.status == "conflict":
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                {"code": outcome.reason, "detail": "conflicting result for finalized unit"},
+            )
+        return outcome.to_response()
 
     @app.post(
         "/internal/v1/bridge/submissions",
