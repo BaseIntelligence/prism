@@ -24,6 +24,7 @@ from .models import (
     SubmissionCreate,
     SubmissionResponse,
 )
+from .plausibility import PlausibilityError
 from .queue import PrismWorker
 from .repository import PrismRepository
 from .routes import router
@@ -168,7 +169,10 @@ def create_app(
         the replicas' manifest hashes (architecture.md 3.3). The ExecutionProof is verified BEFORE
         anything is scored: a missing/malformed proof (VAL-PRISM-018) or a tampered manifest / a
         forged signature (VAL-PRISM-007) is rejected 422 with a distinguishable reason and never
-        finalized (the unit stays eligible for retry). A verified result is finalized idempotently:
+        finalized (the unit stays eligible for retry). A verified result is then run through the
+        plausibility gate (architecture.md 3.5; VAL-PRISM-009): an implausible manifest is rejected
+        422 with a distinct ``plausibility_*`` reason and never scored, while a plausible manifest
+        passes through UNCHANGED. A verified, plausible result is finalized idempotently:
         a duplicate delivery is a no-op and a conflicting delivery for an already-accepted unit is
         refused 409 so the stored score/leaderboard is never mutated (VAL-PRISM-017). The claimed
         tier is downgraded to its verified effective tier for audit sampling (VAL-PRISM-019).
@@ -204,6 +208,11 @@ def create_app(
                 audit_sampler=sampler,
             )
         except ResultIngestionError as exc:
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                {"code": exc.reason, "detail": str(exc)},
+            ) from exc
+        except PlausibilityError as exc:
             raise HTTPException(
                 status.HTTP_422_UNPROCESSABLE_ENTITY,
                 {"code": exc.reason, "detail": str(exc)},

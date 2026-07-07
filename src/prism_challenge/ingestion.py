@@ -33,6 +33,7 @@ from typing import Any
 
 from .audit import AuditSampler, effective_tier
 from .auth import verify_hotkey_signature
+from .plausibility import check_manifest_plausibility
 from .proof import (
     EXECUTION_PROOF_VERSION,
     MANIFEST_PAYLOAD_KEY,
@@ -198,9 +199,13 @@ async def ingest_work_unit_result(
 
     ``work_unit_id`` is prism's stable unit id (``== submission_id``). Verification (shape ->
     integrity) runs BEFORE any scoring; a rejected result raises :class:`ResultIngestionError` and
-    leaves the submission untouched (eligible for retry). A verified first delivery finalizes via
-    the CAS-guarded worker path; a duplicate is an idempotent no-op and a conflicting redelivery for
-    an already-accepted unit is refused so the stored score/leaderboard is never mutated.
+    leaves the submission untouched (eligible for retry). A verified first delivery is then run
+    through the plausibility gate (architecture.md 3.5; VAL-PRISM-009): an implausible manifest
+    raises :class:`~prism_challenge.plausibility.PlausibilityError` (a reason DISTINCT from the
+    proof-verification reasons) and is never scored, while a plausible manifest passes through
+    UNCHANGED and finalizes via the CAS-guarded worker path. A duplicate is an idempotent no-op and
+    a conflicting redelivery for an already-accepted unit is refused so the stored score/leaderboard
+    is never mutated.
     """
 
     if not isinstance(result, Mapping):
@@ -258,6 +263,12 @@ async def ingest_work_unit_result(
             work_unit_id,
             claimed_tier,
             tier,
+        )
+
+    if manifest is not None:
+        check_manifest_plausibility(
+            manifest,
+            wall_clock_budget_seconds=float(worker.settings.base_eval_hard_timeout_seconds),
         )
 
     result_id = await worker.process_submission(submission_id)
