@@ -22,6 +22,8 @@ import pytest
 
 from prism_challenge.app import create_app
 from prism_challenge.config import PrismSettings, WorkerPlaneConfig
+from prism_challenge.evaluator.anti_cheat import evaluate_anti_cheat
+from prism_challenge.evaluator.components import architecture_name
 from prism_challenge.evaluator.mock_reexec import cpu_reexec_run
 from prism_challenge.ingestion import ingest_work_unit_result
 from prism_challenge.models import SubmissionCreate
@@ -68,6 +70,7 @@ def _plausible_manifest() -> dict[str, Any]:
             "prequential_bpb": 1.23,
             "bits_per_byte": 1.23,
             "covered_bytes": 4096,
+            "sum_neg_log_likelihood_nats": 3000.0,
         },
         "score": {
             "schema": "prism_score.v2",
@@ -394,18 +397,14 @@ async def test_ingestion_rejects_implausible_manifests_without_scoring(tmp_path,
         assert await app.state.repository.submission_status(submission_id) == "pending"
 
 
-async def test_ingestion_accepts_plausible_manifest_identically_to_legacy(tmp_path, monkeypatch):
-    data_dir = _stage_train(tmp_path)
-    monkeypatch.setattr(
-        "prism_challenge.evaluator.container.DockerExecutor.run",
-        cpu_reexec_run(train_data_dir=data_dir),
-    )
+async def test_ingestion_accepts_plausible_manifest_identically_to_legacy(tmp_path):
     settings = _settings(
         tmp_path, worker_plane=WorkerPlaneConfig(enabled=True, signing_key=WORKER_KEY)
     )
     app = await _make_app(settings)
     signer = worker_signer_from_key(WORKER_KEY)
     db_path = tmp_path / "coord.sqlite3"
+    worker = app.state.worker
 
     # Path A: finalize a plausible worker result through the plausibility-gated ingestion path.
     gated_id = await _seed(app)
@@ -413,7 +412,7 @@ async def test_ingestion_accepts_plausible_manifest_identically_to_legacy(tmp_pa
     before = copy.deepcopy(manifest)
     proof = _proof_dict(signer, gated_id, manifest)
     outcome = await ingest_work_unit_result(
-        worker=app.state.worker,
+        worker=worker,
         work_unit_id=gated_id,
         submission_ref="hk-owner",
         result=_result(proof, manifest),
@@ -423,13 +422,32 @@ async def test_ingestion_accepts_plausible_manifest_identically_to_legacy(tmp_pa
     assert await app.state.repository.submission_status(gated_id) == "completed"
     gated_score = _score(db_path, gated_id)
     assert gated_score is not None
-    # The forwarded manifest / score inputs are passed through UNCHANGED.
+    # The forwarded manifest / score inputs are passed through UNCHANGED (plausibility only READS).
     assert manifest == before
 
-    # Path B: finalize an identical submission through the legacy in-process path directly.
+    # Path B: feed the SAME manifest to the legacy finalization tail directly (VAL-PRISM-010).
     legacy_id = await _seed(app)
-    await app.state.worker.process_submission(legacy_id)
+    submission = await worker.repository.claim_submission(legacy_id)
+    assert submission is not None
+    snapshot = worker._snapshot_from_submission(str(submission["code"]), "project.zip", {})
+    review = worker._component_review(snapshot)
+    code_for_eval = worker._entrypoint_code(snapshot, review.components.entrypoint)
+    anti = evaluate_anti_cheat(
+        code_for_eval,
+        await worker.repository.previous_codes(legacy_id),
+        allowed_import_roots=worker._local_import_roots(snapshot),
+    )
+    await worker._finalize_container_score(
+        submission_id=legacy_id,
+        arch_hash=review.fingerprints.family_hash,
+        anti=anti,
+        manifest=copy.deepcopy(manifest),
+        hotkey="hk-owner",
+        fingerprints=review.fingerprints,
+        name=architecture_name(review.components),
+    )
     legacy_score = _score(db_path, legacy_id)
     assert legacy_score is not None
 
     assert gated_score == pytest.approx(legacy_score)
+

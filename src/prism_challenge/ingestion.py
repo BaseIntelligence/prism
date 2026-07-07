@@ -16,11 +16,13 @@ is verified:
   downgrade recorded, so the audit scheduler samples at the honest rate.
 
 Only a fully verified result is finalized, and finalization is idempotent: the first accepted
-delivery finalizes the submission through the CAS-guarded :meth:`PrismWorker.process_submission`
-path (a no-op when the executing worker already finalized it against a shared store), while a
-duplicate delivery of the same manifest is a no-op and a CONFLICTING delivery (a different
-``manifest_sha256`` for an already-accepted unit) is rejected -- never overwriting the stored score
-(VAL-PRISM-017).
+delivery finalizes the submission from the FORWARDED, verified+reconciled manifest via the
+CAS-guarded :meth:`PrismWorker.finalize_worker_result` path (worker plane on) -- scoring the run
+WITHOUT re-executing the evaluator, since the heavy GPU work already ran on the miner-funded worker
+(architecture.md 4). A duplicate delivery of the same manifest is a no-op and a CONFLICTING delivery
+(a different ``manifest_sha256`` for an already-accepted unit) is rejected -- never overwriting the
+stored score (VAL-PRISM-017). With the worker plane OFF, finalization falls back to the legacy
+in-process re-execution path (:meth:`PrismWorker.process_submission`), byte-for-byte unchanged.
 """
 
 from __future__ import annotations
@@ -81,7 +83,9 @@ class ResultIngestionError(Exception):
     * ``manifest_tampered`` -- the forwarded manifest does not hash to ``manifest_sha256``
       (VAL-PRISM-007a);
     * ``signature_invalid`` -- the worker signature does not verify for this unit
-      (VAL-PRISM-007b/c).
+      (VAL-PRISM-007b/c);
+    * ``manifest_missing`` -- the worker plane is on but no run manifest was forwarded, so there is
+      nothing to finalize from without re-executing (VAL-FINAL-001).
     """
 
     def __init__(self, reason: str, message: str = "") -> None:
@@ -278,7 +282,18 @@ async def ingest_work_unit_result(
             wall_clock_budget_seconds=float(worker.settings.base_eval_hard_timeout_seconds),
         )
 
-    result_id = await worker.process_submission(submission_id)
+    if worker.settings.worker_plane.enabled:
+        # Worker plane: finalize from the forwarded, verified+reconciled manifest WITHOUT
+        # re-executing the evaluator (the heavy GPU work already ran on the miner-funded worker).
+        if manifest is None:
+            raise ResultIngestionError(
+                "manifest_missing",
+                "worker-plane finalization requires the forwarded run manifest",
+            )
+        result_id = await worker.finalize_worker_result(submission_id, dict(manifest))
+    else:
+        # Flag OFF: legacy in-process re-execution finalization, byte-for-byte unchanged.
+        result_id = await worker.process_submission(submission_id)
     submission_status = await repository.submission_status(submission_id)
     await repository.record_work_unit_result(
         work_unit_id=work_unit_id,

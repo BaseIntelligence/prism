@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import base64
 import io
+import math
 import sqlite3
 import zipfile
 from pathlib import Path
@@ -119,10 +120,30 @@ def _settings(tmp_path: Path, *, worker_plane: WorkerPlaneConfig) -> PrismSettin
 
 
 def _manifest(marker: str = "v2") -> dict[str, Any]:
+    """A plausible AND scoreable v2 manifest (worker-plane finalization scores from it directly)."""
+
+    covered_bytes = 4096
+    online_loss = [10.0, 6.0, 3.0, 2.0]
     return {
         "schema_version": "prism_run_manifest.v2",
-        "metrics": {"prequential_bpb": 1.23, "marker": marker},
-        "steps": [{"step": 0, "loss": 3.0}, {"step": 1, "loss": 2.0}],
+        "data": {"covered_bytes": covered_bytes, "single_pass": True},
+        "metrics": {
+            "online_loss": online_loss,
+            "sum_neg_log_likelihood_nats": 900.0,
+            "covered_bytes": covered_bytes,
+            "predicted_tokens": 96,
+            "step0_loss": online_loss[0],
+            "consumed_batches": len(online_loss),
+            "random_init_baseline_nats": math.log(50257),
+            "prequential_bpb": 1.23,
+            "marker": marker,
+        },
+        "anti_cheat": {
+            "step0_anomaly": False,
+            "nan_inf_detected": False,
+            "no_learning": False,
+            "zero_forward": False,
+        },
     }
 
 

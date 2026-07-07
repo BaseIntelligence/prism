@@ -161,6 +161,62 @@ class PrismWorker:
             return None
         return await self._process_claimed(submission, resume_checkpoint_ref=resume_checkpoint_ref)
 
+    async def finalize_worker_result(
+        self, submission_id: str, manifest: dict[str, Any]
+    ) -> str | None:
+        """Finalize a submission from a forwarded worker manifest WITHOUT re-executing.
+
+        The heavy GPU evaluation already ran on the miner-funded worker; ingestion has already
+        verified+reconciled the run (proof + plausibility). This claims the pending submission (a
+        CAS, so a duplicate delivery or an already-finalized submission is a no-op returning
+        ``None``) and finalizes it from the forwarded ``prism_run_manifest.v2`` alone: the
+        challenge-owned prequential bpb (``score_prequential_bpb``) with the deterministic
+        source-static tail -- the AST anti-cheat multiplier (``evaluate_anti_cheat`` over the
+        submission SOURCE) and the static fingerprints/arch_hash/name from the component review. It
+        takes NO GPU lease and NEVER constructs the evaluator (no ``evaluator.evaluate`` /
+        ``_evaluate_within_wall_time`` / ``_augment_with_heldout``). The held-out delta is SKIPPED
+        (``skip_heldout=True``) so the score is bpb-only and the master-only secret val split
+        (``base_eval_val_data_dir``) is never read (architecture.md 4).
+        """
+        submission = await self.repository.claim_submission(submission_id)
+        if submission is None:
+            return None
+        code = str(submission["code"])
+        filename = str(submission.get("filename") or "model.py")
+        raw_metadata = submission.get("metadata")
+        metadata = cast(dict[str, Any], raw_metadata) if isinstance(raw_metadata, dict) else {}
+        hotkey = str(submission.get("hotkey") or "")
+        try:
+            snapshot = self._snapshot_from_submission(code, filename, metadata)
+            component_review = self._component_review(snapshot)
+            code_for_eval = self._entrypoint_code(
+                snapshot, component_review.components.entrypoint
+            )
+            arch_hash = component_review.fingerprints.family_hash or sha256(
+                code_for_eval.encode()
+            ).hexdigest()
+            arch_name = architecture_name(component_review.components)
+            previous = await self.repository.previous_codes(submission_id)
+            anti = evaluate_anti_cheat(
+                code_for_eval,
+                previous,
+                allowed_import_roots=self._local_import_roots(snapshot),
+            )
+        except Exception as exc:
+            await self._fail_submission(submission_id, str(exc))
+            return submission_id
+        await self._finalize_container_score(
+            submission_id=submission_id,
+            arch_hash=arch_hash,
+            anti=anti,
+            manifest=manifest,
+            hotkey=hotkey,
+            fingerprints=component_review.fingerprints,
+            name=arch_name,
+            skip_heldout=True,
+        )
+        return submission_id
+
     async def _process_claimed(
         self, submission: dict[str, Any], *, resume_checkpoint_ref: str | None = None
     ) -> str:
@@ -796,6 +852,7 @@ class PrismWorker:
         hotkey: str = "",
         fingerprints: PrismComponentFingerprints | None = None,
         name: str | None = None,
+        skip_heldout: bool = False,
     ) -> None:
         """Finalize a container run using the CHALLENGE-OWNED prequential bits-per-byte score.
 
@@ -809,9 +866,13 @@ class PrismWorker:
         and the ``training_variants`` row (keyed by ``(architecture_id, training_hash)``), and
         persists the loss curve + reconciled compute block into ``submission_curves`` so the data is
         centrally queryable (none of these are inputs to the score).
+
+        ``skip_heldout`` forces the bpb-only scoring path (no held-out delta tie-break); the worker
+        plane sets it so a forwarded worker manifest is graded on prequential bpb alone without ever
+        needing the master-only secret val split (architecture.md 4).
         """
         try:
-            score = score_prequential_bpb(manifest)
+            score = score_prequential_bpb(manifest, skip_heldout=skip_heldout)
         except ScoreValidationError as exc:
             await self._fail_submission(submission_id, f"prequential scoring failed: {exc}")
             return

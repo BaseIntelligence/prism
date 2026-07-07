@@ -245,7 +245,7 @@ def dedupe_best_per_hotkey(rows: Iterable[LeaderboardRow]) -> list[LeaderboardRo
 
 
 def score_prequential_bpb(
-    manifest: Mapping[str, Any], *, sane_max: float = BPB_SANE_MAX
+    manifest: Mapping[str, Any], *, sane_max: float = BPB_SANE_MAX, skip_heldout: bool = False
 ) -> PrequentialBpbScore:
     """Compute the prequential bits-per-byte score from the challenge-owned v2 manifest.
 
@@ -253,6 +253,12 @@ def score_prequential_bpb(
     numerator is the token-weighted online (predict-then-train) negative log-likelihood the
     challenge captured itself. Raises ``ScoreValidationError`` for a degenerate (zero-coverage,
     non-finite, or out-of-band) run so it never collapses into a fabricated/0-that-ranks score.
+
+    ``skip_heldout`` grades on prequential bpb ALONE (delta ``None``, no tie-break, no memorization
+    penalty) regardless of any held-out fields the manifest carries. The worker plane passes it
+    because the held-out delta needs the master-only secret val split, which never reaches a
+    miner-funded worker (architecture.md 4); a forwarded manifest therefore scores bpb-only and a
+    fabricated held-out field can never move the score.
     """
     metrics = manifest.get("metrics")
     if not isinstance(metrics, Mapping):
@@ -282,7 +288,18 @@ def score_prequential_bpb(
     if bool(anti_cheat.get("nan_inf_detected", False)):
         flags.append("nan_inf_detected")
     anti_cheat_multiplier = 0.0 if step0_anomaly else 1.0
-    heldout = _read_heldout(manifest, metrics, anti_cheat, train_bpb=bpb)
+    heldout = (
+        _HeldoutView(
+            delta=None,
+            val_bpb_trained=None,
+            val_bpb_random_init=None,
+            gap=None,
+            memorization_flag=False,
+            penalty=1.0,
+        )
+        if skip_heldout
+        else _read_heldout(manifest, metrics, anti_cheat, train_bpb=bpb)
+    )
     if heldout.memorization_flag:
         flags.append("memorization_gap")
     # The held-out delta refines ranking only as a NEAR-TIE tie-breaker (bounded additive term,
