@@ -935,6 +935,25 @@ class PrismRepository:
         data["metadata"] = metadata if isinstance(metadata, dict) else {}
         return data
 
+    async def submission_execution_row(self, submission_id: str) -> dict[str, object] | None:
+        """Return the full submission row (code + metadata) for a re-execution, ignoring status.
+
+        Unlike :meth:`claim_submission` this takes NO claim and mutates nothing, so an already
+        terminal (``completed``/``failed``) submission can be replayed for a validator audit without
+        disturbing its finalized record (architecture.md 3.5; VAL-FINAL-005). ``None`` when absent.
+        """
+        async with self.database.connect() as conn:
+            rows = await conn.execute_fetchall(
+                "SELECT * FROM submissions WHERE id=?", (submission_id,)
+            )
+        row_list = list(rows)
+        if not row_list:
+            return None
+        data = dict(cast(Any, row_list[0]))
+        metadata = loads(str(data.get("metadata", "{}")))
+        data["metadata"] = metadata if isinstance(metadata, dict) else {}
+        return data
+
     async def list_pending_submissions(self) -> list[dict[str, object]]:
         """Return submissions awaiting re-execution (one prism work unit each), oldest first."""
         async with self.database.connect() as conn:
@@ -1185,6 +1204,55 @@ class PrismRepository:
                     audit_unit_id,
                 ),
             )
+
+    async def record_worker_fault(
+        self,
+        *,
+        audit_unit_id: str,
+        submission_id: str,
+        worker_pubkey: str | None,
+        audited_manifest_sha256: str,
+        replay_manifest_sha256: str,
+        reason: str,
+    ) -> None:
+        """Record a fault against the worker whose manifest diverged from the validator replay.
+
+        Written on an audit MISMATCH (architecture.md 4; VAL-FINAL-005): the audited submission's
+        finalized result named ``worker_pubkey`` as its producer, and the authoritative replay
+        proved that manifest wrong. The fault is observational (it never mutates the submission or
+        any worker record); it is the durable record that this worker lied on this audited unit.
+        """
+        async with self.database.connect() as conn:
+            await conn.execute(
+                "INSERT INTO worker_faults("
+                "audit_unit_id, submission_id, worker_pubkey, audited_manifest_sha256,"
+                "replay_manifest_sha256, reason, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (
+                    audit_unit_id,
+                    submission_id,
+                    worker_pubkey,
+                    audited_manifest_sha256,
+                    replay_manifest_sha256,
+                    reason,
+                    now_iso(),
+                ),
+            )
+
+    async def list_worker_faults(
+        self, *, submission_id: str | None = None
+    ) -> list[dict[str, object]]:
+        """Return recorded worker faults (optionally scoped to one submission), oldest first."""
+        async with self.database.connect() as conn:
+            if submission_id is None:
+                rows = await conn.execute_fetchall(
+                    "SELECT * FROM worker_faults ORDER BY id"
+                )
+            else:
+                rows = await conn.execute_fetchall(
+                    "SELECT * FROM worker_faults WHERE submission_id=? ORDER BY id",
+                    (submission_id,),
+                )
+        return [dict(cast(Any, row)) for row in rows]
 
     async def invalidate_submission_score(self, submission_id: str, *, reason: str) -> bool:
         """Invalidate a finalized submission's score and recompute crown/weights aggregates.

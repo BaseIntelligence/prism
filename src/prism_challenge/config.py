@@ -32,6 +32,11 @@ class WorkerPlaneConfig(BaseModel):
     audit_rate_tier0: float = Field(default=0.10, ge=0.0, le=1.0)
     audit_rate_tier1: float = Field(default=0.05, ge=0.0, le=1.0)
     audit_rate_tier2: float = Field(default=0.02, ge=0.0, le=1.0)
+    # Server-side SECRET salt mixed into the audit sampler seed so audit selection cannot be
+    # predicted from the public ``submission_id`` alone (a different salt selects a different set),
+    # while staying reproducible for a fixed salt and preserving the per-tier rates (architecture.md
+    # 3.4; VAL-FINAL-006). Kept out of the config repr like every other secret.
+    audit_salt: str | None = Field(default=None, repr=False)
     # sr25519 signing key (URI ``//Name`` / mnemonic / seed) for the worker that emits
     # ExecutionProofs. This is the worker's OWN key, injected by the worker agent -- NEVER a
     # master-side secret. Unset -> prism emits no signed proof (the base worker plane may still

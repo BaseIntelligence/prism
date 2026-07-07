@@ -195,6 +195,12 @@ SCHEMA = (
     "created_at TEXT NOT NULL, updated_at TEXT NOT NULL);"
     "CREATE INDEX IF NOT EXISTS idx_audit_units_submission ON audit_units(submission_id);"
     "CREATE INDEX IF NOT EXISTS idx_audit_units_status ON audit_units(status);"
+    "CREATE TABLE IF NOT EXISTS worker_faults ("
+    "id INTEGER PRIMARY KEY AUTOINCREMENT, audit_unit_id TEXT NOT NULL,"
+    "submission_id TEXT NOT NULL,"
+    "worker_pubkey TEXT, audited_manifest_sha256 TEXT NOT NULL,"
+    "replay_manifest_sha256 TEXT NOT NULL, reason TEXT NOT NULL, created_at TEXT NOT NULL);"
+    "CREATE INDEX IF NOT EXISTS idx_worker_faults_submission ON worker_faults(submission_id);"
 )
 
 
@@ -343,6 +349,14 @@ async def _run_migrations(conn: aiosqlite.Connection) -> None:
         "created_at TEXT NOT NULL, updated_at TEXT NOT NULL);"
         "CREATE INDEX IF NOT EXISTS idx_audit_units_submission ON audit_units(submission_id);"
         "CREATE INDEX IF NOT EXISTS idx_audit_units_status ON audit_units(status);"
+    )
+    await conn.executescript(
+        "CREATE TABLE IF NOT EXISTS worker_faults ("
+        "id INTEGER PRIMARY KEY AUTOINCREMENT, audit_unit_id TEXT NOT NULL,"
+        "submission_id TEXT NOT NULL, worker_pubkey TEXT,"
+        "audited_manifest_sha256 TEXT NOT NULL, replay_manifest_sha256 TEXT NOT NULL,"
+        "reason TEXT NOT NULL, created_at TEXT NOT NULL);"
+        "CREATE INDEX IF NOT EXISTS idx_worker_faults_submission ON worker_faults(submission_id);"
     )
     await conn.executescript(
         "CREATE TABLE IF NOT EXISTS gpu_leases ("

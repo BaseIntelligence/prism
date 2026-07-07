@@ -17,11 +17,12 @@ from __future__ import annotations
 import json
 import logging
 import os
-from collections.abc import Iterable, Mapping
+from collections.abc import Awaitable, Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from .audit import AuditResolution, is_audit_unit_id, resolve_audit_unit
 from .coordination import (
     PRISM_DEFAULT_CONCURRENCY,
     PRISM_WORK_UNIT_CAPABILITY,
@@ -38,6 +39,11 @@ from .proof import (
 from .queue import PrismWorker
 
 logger = logging.getLogger(__name__)
+
+#: Replays an audited submission's evaluation and returns its fresh canonical manifest sha256
+#: (``None`` on an inconclusive replay failure). Defaults to
+#: :meth:`PrismWorker.replay_audit_manifest_sha256`; injectable so tests pin a deterministic hash.
+AuditReplayFn = Callable[[str], Awaitable[str | None]]
 
 #: Submission statuses at which a prism work unit is terminal (no re-execution, no re-dispatch).
 TERMINAL_SUBMISSION_STATUSES = frozenset({"completed", "failed", "rejected"})
@@ -74,6 +80,9 @@ class PrismValidatorCycleSummary:
     execution_proofs: dict[str, dict[str, Any]] = field(default_factory=dict)
     #: Run manifests backing the emitted proofs, keyed by ``work_unit_id`` (empty when off).
     execution_manifests: dict[str, dict[str, Any]] = field(default_factory=dict)
+    #: Audit resolutions produced this cycle when the worker plane is ON (audit-only cycle); empty
+    #: on the legacy flag-off primary path (VAL-FINAL-005).
+    audits: tuple[AuditResolution, ...] = ()
 
 
 async def execute_work_unit(
@@ -187,15 +196,62 @@ async def run_validator_cycle(
     max_concurrency: int = PRISM_DEFAULT_CONCURRENCY,
     proof_signer: WorkerSigner | None = None,
     proof_env: Mapping[str, str] | None = None,
+    audit_replay: AuditReplayFn | None = None,
 ) -> PrismValidatorCycleSummary:
-    """Run one decentralized validator cycle: pull -> execute (own broker) -> post.
+    """Run one decentralized validator cycle.
+
+    This is the autonomous validator entry point (the base validator agent's cycle). With the worker
+    plane ON it is AUDIT-ONLY: workers execute the primary gpu submissions (base assignment plane +
+    forwarding + light finalization), so the validator cycle NEVER pulls or executes a primary
+    submission -- it only pulls the sampled ``audit:`` units, replays each deterministically, and
+    resolves them (architecture.md 4; VAL-FINAL-005). With the flag OFF it is the legacy
+    primary-execution cycle (:func:`run_primary_execution_cycle`), unchanged (no audit units exist).
+
+    NOTE: worker-plane PRIMARY execution (a miner-funded worker running an assigned gpu unit + the
+    ExecutionProof emission that feeds base reconciliation) goes through
+    :func:`run_primary_execution_cycle` directly (via ``dispatch_assignment`` routing on the unit
+    type), NOT through this flag-gated entry -- so a worker still executes primaries while the flag
+    is on, and only the VALIDATOR cycle is audit-only.
+    """
+
+    if worker.settings.worker_plane.enabled:
+        return await run_validator_audit_cycle(
+            worker=worker, work_unit_ids=work_unit_ids, audit_replay=audit_replay
+        )
+    return await run_primary_execution_cycle(
+        worker=worker,
+        work_unit_ids=work_unit_ids,
+        capabilities=capabilities,
+        in_flight=in_flight,
+        max_concurrency=max_concurrency,
+        proof_signer=proof_signer,
+        proof_env=proof_env,
+    )
+
+
+async def run_primary_execution_cycle(
+    *,
+    worker: PrismWorker,
+    work_unit_ids: Iterable[str] | None = None,
+    capabilities: Iterable[str] = (PRISM_WORK_UNIT_CAPABILITY,),
+    in_flight: int | None = None,
+    max_concurrency: int = PRISM_DEFAULT_CONCURRENCY,
+    proof_signer: WorkerSigner | None = None,
+    proof_env: Mapping[str, str] | None = None,
+) -> PrismValidatorCycleSummary:
+    """Pull -> execute (own broker) -> post the caller's assigned PRIMARY prism units.
 
     Pulls the caller's assigned, capability-matched prism units (at most
-    ``max_concurrency - in_flight`` of them, so a busy validator runs one submission at a time),
-    executes each on the validator's own broker, and reports which submissions completed. The pull
-    and assignment are execution-free; only :func:`execute_work_unit` dispatches the broker.
+    ``max_concurrency - in_flight`` of them, so a busy executor runs one submission at a time),
+    re-executes each on the caller's own broker, and reports which submissions completed. The pull
+    and assignment are execution-free; only :func:`execute_work_unit` dispatches the broker. A
+    successful worker-plane finalization emits an ExecutionProof per unit (architecture.md 3.4).
 
-    ``in_flight`` defaults to the validator's REAL in-flight draw (the count of currently-running
+    This is the shared primary-execution path for BOTH a legacy validator (worker plane off) and a
+    miner-funded worker running an assigned gpu unit (worker plane on); the audit-only restriction
+    lives in :func:`run_validator_cycle`, not here.
+
+    ``in_flight`` defaults to the caller's REAL in-flight draw (the count of currently-running
     submissions) so the concurrency-1 cap is enforced against reality rather than a static zero; a
     caller may override it (e.g. tests pinning a specific value).
     """
@@ -236,4 +292,64 @@ async def run_validator_cycle(
         completed_submissions=tuple(completed),
         execution_proofs=execution_proofs,
         execution_manifests=execution_manifests,
+    )
+
+
+async def run_validator_audit_cycle(
+    *,
+    worker: PrismWorker,
+    work_unit_ids: Iterable[str] | None = None,
+    audit_replay: AuditReplayFn | None = None,
+) -> PrismValidatorCycleSummary:
+    """Execute the sampled prism AUDIT units assigned to this validator (architecture.md 3.5).
+
+    Enumerates the pending ``audit:`` units (``list_pending_audit_units``, each id recognised via
+    :func:`~prism_challenge.audit.is_audit_unit_id`), restricted to the caller's assigned
+    ``work_unit_ids`` when given (``None`` = every pending audit). For each, the audited
+    submission's evaluation is replayed deterministically to obtain a fresh manifest sha256, and the
+    replay result is resolved through :func:`~prism_challenge.audit.resolve_audit_unit` (the
+    ``POST /internal/v1/audit_units/{id}/result`` target): a MATCHING hash passes (finalized score
+    untouched); a DIVERGENT hash invalidates the score and records a ``worker_fault``; a replay
+    failure resolves inconclusive (re-audited within bounds). This cycle NEVER executes a primary
+    submission (VAL-FINAL-005). ``audit_replay`` defaults to the real container replay; tests inject
+    a deterministic hash.
+    """
+
+    replay = audit_replay if audit_replay is not None else worker.replay_audit_manifest_sha256
+    wanted = set(work_unit_ids) if work_unit_ids is not None else None
+    pending = await worker.repository.list_pending_audit_units()
+    resolutions: list[AuditResolution] = []
+    pulled = 0
+    executed = 0
+    for row in pending:
+        audit_unit_id = str(row["audit_unit_id"])
+        if not is_audit_unit_id(audit_unit_id):
+            continue
+        if wanted is not None and audit_unit_id not in wanted:
+            continue
+        pulled += 1
+        submission_id = str(row["submission_id"])
+        replay_hash: str | None
+        error: str | None = None
+        try:
+            replay_hash = await replay(submission_id)
+        except Exception as exc:  # noqa: BLE001 - a replay failure is an inconclusive audit
+            logger.warning("audit replay failed for %s: %s", audit_unit_id, exc)
+            replay_hash = None
+            error = str(exc)
+        executed += 1
+        resolution = await resolve_audit_unit(
+            worker.repository,
+            audit_unit_id=audit_unit_id,
+            replay_manifest_sha256=replay_hash,
+            failed=replay_hash is None,
+            error=error,
+        )
+        resolutions.append(resolution)
+    return PrismValidatorCycleSummary(
+        pulled=pulled,
+        executed=executed,
+        skipped=0,
+        completed_submissions=(),
+        audits=tuple(resolutions),
     )

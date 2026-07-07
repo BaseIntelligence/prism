@@ -104,13 +104,16 @@ class AuditSampler:
 
     The sampled fraction of each tier converges to its configured rate; a rate of ``0.0`` yields
     exactly zero samples for that tier and ``>= 1.0`` samples every one. Sampling is a pure function
-    of ``seed`` and the per-result key, so it is reproducible and order-insensitive.
+    of ``seed``, the server-side secret ``salt`` and the per-result key, so it is reproducible and
+    order-insensitive. Mixing the secret ``salt`` in makes selection unpredictable from the public
+    ``submission_id`` alone yet reproducible for a fixed salt (architecture.md 3.4; VAL-FINAL-006).
     """
 
     audit_rate_tier0: float = 0.10
     audit_rate_tier1: float = 0.05
     audit_rate_tier2: float = 0.02
     seed: int = 0
+    salt: str = ""
 
     def rate_for_tier(self, tier: int) -> float:
         """The configured audit rate for an EFFECTIVE tier (unknown tiers fall back to tier 0)."""
@@ -149,20 +152,30 @@ class AuditSampler:
         )
 
     def _uniform(self, key: str) -> float:
-        """A deterministic uniform draw in ``[0, 1)`` keyed on ``(seed, key)``."""
+        """A deterministic uniform draw in ``[0, 1)`` keyed on ``(seed, salt, key)``.
 
-        digest = hashlib.sha256(f"{self.seed}:{key}".encode()).digest()
+        The secret ``salt`` is folded into the hashed material so the draw for a given public
+        ``submission_id`` cannot be reproduced without it (VAL-FINAL-006).
+        """
+
+        digest = hashlib.sha256(f"{self.seed}:{self.salt}:{key}".encode()).digest()
         return int.from_bytes(digest[:8], "big") / float(1 << 64)
 
 
 def audit_sampler_from_config(worker_plane: WorkerPlaneConfig, *, seed: int = 0) -> AuditSampler:
-    """Build an :class:`AuditSampler` from the prism ``worker_plane`` audit-rate config."""
+    """Build an :class:`AuditSampler` from the prism ``worker_plane`` audit-rate config.
+
+    The server-side secret ``audit_salt`` is mixed into the sampler seed so audit selection is
+    unpredictable from the public ``submission_id`` yet reproducible for a fixed salt
+    (VAL-FINAL-006).
+    """
 
     return AuditSampler(
         audit_rate_tier0=worker_plane.audit_rate_tier0,
         audit_rate_tier1=worker_plane.audit_rate_tier1,
         audit_rate_tier2=worker_plane.audit_rate_tier2,
         seed=seed,
+        salt=worker_plane.audit_salt or "",
     )
 
 
@@ -183,6 +196,19 @@ class SupportsAuditResolution(Protocol):
     ) -> None: ...
 
     async def invalidate_submission_score(self, submission_id: str, *, reason: str) -> bool: ...
+
+    async def get_work_unit_result(self, work_unit_id: str) -> dict[str, object] | None: ...
+
+    async def record_worker_fault(
+        self,
+        *,
+        audit_unit_id: str,
+        submission_id: str,
+        worker_pubkey: str | None,
+        audited_manifest_sha256: str,
+        replay_manifest_sha256: str,
+        reason: str,
+    ) -> None: ...
 
 
 @dataclass(frozen=True)
@@ -278,6 +304,7 @@ async def resolve_audit_unit(
         )
 
     audited_hash = str(unit["audited_manifest_sha256"])
+    assert replay_manifest_sha256 is not None  # narrowed: inconclusive returned above
     matches = replay_manifest_sha256 == audited_hash
     invalidated = False
     if matches:
@@ -289,6 +316,25 @@ async def resolve_audit_unit(
         invalidated = await repository.invalidate_submission_score(
             submission_id,
             reason=f"audit invalidated: manifest mismatch (audit_unit={audit_unit_id})",
+        )
+        # The authoritative validator replay diverged from the audited worker manifest: the worker
+        # that produced it lied. Record a worker_fault against it (architecture.md 4;
+        # VAL-FINAL-005). The faulty worker's pubkey is the one recorded on the audited primary
+        # result; a missing result row leaves it null but still records the fault.
+        origin_work_unit_id = str(unit["origin_work_unit_id"])
+        worker_result = await repository.get_work_unit_result(origin_work_unit_id)
+        worker_pubkey = (
+            str(worker_result["worker_pubkey"])
+            if worker_result is not None and worker_result.get("worker_pubkey") is not None
+            else None
+        )
+        await repository.record_worker_fault(
+            audit_unit_id=audit_unit_id,
+            submission_id=submission_id,
+            worker_pubkey=worker_pubkey,
+            audited_manifest_sha256=audited_hash,
+            replay_manifest_sha256=replay_manifest_sha256,
+            reason="audit manifest mismatch",
         )
     await repository.record_audit_resolution(
         audit_unit_id=audit_unit_id,

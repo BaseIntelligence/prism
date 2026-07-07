@@ -114,5 +114,9 @@ worker_plane:
   audit_rate_tier0: 0.10
   audit_rate_tier1: 0.05
   audit_rate_tier2: 0.02
+  # Server-side SECRET salt mixed into the audit sampler seed so audit selection cannot be predicted
+  # from the public submission_id alone, yet stays reproducible for a fixed salt (VAL-FINAL-006).
+  # Kept out of the config repr. Leave null to sample from the seed only (legacy behaviour).
+  audit_salt: null
   # Pinned evaluator/worker image digest (sha256:<64hex>) a tier-1 proof claim is checked against.
   pinned_image_digest: null

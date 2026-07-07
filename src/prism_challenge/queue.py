@@ -43,6 +43,7 @@ from .gpu_scheduler import (
     targets_from_settings,
 )
 from .models import SubmissionStatus
+from .proof import compute_manifest_sha256, read_manifest_sha256
 from .repository import PrismRepository, now_iso
 from .sdk.executors.docker import DockerExecutor, DockerLimits, DockerMount, DockerRunSpec
 
@@ -216,6 +217,98 @@ class PrismWorker:
             skip_heldout=True,
         )
         return submission_id
+
+    async def replay_audit_manifest_sha256(
+        self, submission_id: str, *, resume_checkpoint_ref: str | None = None
+    ) -> str | None:
+        """Re-execute a finalized submission's evaluation for an audit; return its manifest sha.
+
+        Audits are the sampled minority the validator bears (architecture.md 3.5): the whole
+        evaluation is replayed on the validator's OWN broker to obtain an authoritative
+        ``prism_run_manifest.v2`` to compare against the audited worker manifest. This path is
+        VERIFY-ONLY -- it never claims the submission, writes a score, records an eval job, or
+        changes the submission status -- so a passing audit leaves the finalized result untouched.
+        The already-passed static / LLM gates are skipped; only the container re-execution is
+        repeated (the honest run is deterministic, so an honest worker's hash reproduces). Returns
+        ``None`` on any replay failure, resolving the audit inconclusive rather than confirming it.
+        """
+        if self.execution_backend not in CONTAINER_EXECUTION_BACKENDS:
+            return None
+        submission = await self.repository.submission_execution_row(submission_id)
+        if submission is None:
+            return None
+        code = str(submission["code"])
+        filename = str(submission.get("filename") or "model.py")
+        metadata = cast(dict[str, Any], submission["metadata"])
+        code_hash = str(submission.get("code_hash") or sha256(code.encode()).hexdigest())
+        try:
+            snapshot = self._snapshot_from_submission(code, filename, metadata)
+            component_review = self._component_review(snapshot)
+            code_for_eval = self._entrypoint_code(snapshot, component_review.components.entrypoint)
+            arch_hash = component_review.fingerprints.family_hash or sha256(
+                code_for_eval.encode()
+            ).hexdigest()
+            execution_mode = execution_mode_from_value(metadata.get("execution_mode"))
+        except Exception:
+            return None
+        runtime_config = await self.repository.runtime_config(self.settings, official=True)
+        score_eligible = metadata.get("score_eligible")
+        scheduler = GpuLeaseScheduler(
+            self.repository.database, targets_from_settings(self.settings, runtime_config)
+        )
+        lease = await scheduler.enqueue_or_allocate(
+            lease_request_from_runtime(
+                submission_id=submission_id,
+                job_id=None,
+                runtime_policy=runtime_config,
+                mode=execution_mode.value,
+                score_eligible=bool(score_eligible) if score_eligible is not None else None,
+            )
+        )
+        if not lease.active:
+            return None
+        effective_settings = self.settings.model_copy(
+            update={
+                "base_eval_gpu_count": lease.gpu_count,
+                "base_eval_gpu_type": runtime_config.gpu_policy.gpu_type,
+                "base_eval_gpu_server": lease.target_server,
+                "base_eval_gpu_device_ids": lease.device_ids,
+            }
+        )
+        evaluator = self._evaluator_factory(effective_settings, self.ctx)
+        if self._checkpoint_publisher is not None and evaluator._checkpoint_publisher is None:
+            evaluator._checkpoint_publisher = self._checkpoint_publisher
+        attempt = (
+            await self.repository.container_job_attempt_count(submission_id, self.execution_backend)
+            + 1
+        )
+        try:
+            result = await self._evaluate_within_wall_time(
+                evaluator,
+                submission_id=submission_id,
+                code=code_for_eval,
+                code_hash=code_hash,
+                arch_hash=arch_hash,
+                files=snapshot.files,
+                components=component_review.components,
+                gpu_lease=lease,
+                execution_mode=execution_mode,
+                attempt=attempt,
+                resume_checkpoint_ref=resume_checkpoint_ref,
+            )
+        except Exception:
+            return None
+        finally:
+            await asyncio.to_thread(evaluator.reap_job, submission_id)
+            await scheduler.release_for_submission(submission_id, "audit replay finished")
+        if not _is_v2_run_manifest(result.run_manifest):
+            return None
+        if result.run_manifest_path:
+            try:
+                return read_manifest_sha256(result.run_manifest_path)
+            except OSError:
+                pass
+        return compute_manifest_sha256(cast(dict[str, Any], result.run_manifest))
 
     async def _process_claimed(
         self, submission: dict[str, Any], *, resume_checkpoint_ref: str | None = None
