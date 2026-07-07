@@ -40,6 +40,11 @@ def _load_config() -> dict[str, Any]:
 
 def build_settings(config: dict[str, Any]) -> PrismSettings:
     token = config["token"]
+    # Legacy regression mode (VAL-CROSS-006): worker plane OFF + admission OFF so the service
+    # behaves byte-for-byte as pre-mission (submissions accepted with no active worker; the
+    # /internal/v1/work_units/result + audit routes are inert/404). The CPU re-exec seam stays
+    # available for whichever executor runs (a legacy validator dispatch, in this mode).
+    worker_plane_enabled = bool(config.get("worker_plane_enabled", True))
     return PrismSettings(
         database_url=f"sqlite+aiosqlite:///{config['db_path']}",
         shared_token=token,
@@ -58,8 +63,9 @@ def build_settings(config: dict[str, Any]) -> PrismSettings:
         base_eval_artifact_root=Path(config["artifact_root"]),
         public_submissions_enabled=True,
         worker_plane={
-            "enabled": True,
-            "admission_requires_worker": bool(config.get("admission_requires_worker", True)),
+            "enabled": worker_plane_enabled,
+            "admission_requires_worker": worker_plane_enabled
+            and bool(config.get("admission_requires_worker", True)),
             "master_base_url": config["master_base_url"],
             "cpu_reexec_test_mode": True,
             "cpu_reexec_train_data_dir": config.get("train_data_dir"),
