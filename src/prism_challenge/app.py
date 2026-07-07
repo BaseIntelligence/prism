@@ -3,14 +3,20 @@ from __future__ import annotations
 import base64
 import binascii
 import json
-from collections.abc import Callable, Coroutine
+from collections.abc import Callable, Coroutine, Mapping
 from typing import Annotated, Any
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, status
 
+from .admission import enforce_admission
+from .audit import audit_sampler_from_config, resolve_audit_unit
 from .auth import authenticate_internal, authenticate_validator
 from .config import PrismSettings, settings
-from .coordination import list_pending_prism_work_units, work_unit_to_payload
+from .coordination import (
+    audit_work_unit_to_payload,
+    list_pending_prism_work_units,
+    work_unit_to_payload,
+)
 from .db import Database
 from .evaluator.checkpoint_intake import CheckpointIntakeError, CheckpointIntakeService
 from .evaluator.checkpoint_publisher import (
@@ -18,10 +24,12 @@ from .evaluator.checkpoint_publisher import (
     HuggingFaceCheckpointPublisher,
 )
 from .evaluator.interface import PrismContext
+from .ingestion import ResultIngestionError, ingest_work_unit_result
 from .models import (
     SubmissionCreate,
     SubmissionResponse,
 )
+from .plausibility import PlausibilityError
 from .queue import PrismWorker
 from .repository import PrismRepository
 from .routes import router
@@ -41,11 +49,19 @@ def create_app(
         worker_claim_timeout_seconds=app_settings.worker_claim_timeout_seconds,
         held_review_timeout_seconds=app_settings.held_review_timeout_seconds,
     )
-    ctx = PrismContext(
-        sequence_length=app_settings.sequence_length,
-        max_layers=app_settings.max_layers,
-        max_parameters=app_settings.max_parameters,
-    )
+    if app_settings.worker_plane.cpu_reexec_test_mode:
+        # Explicit CPU re-exec test mode: install the repo's own CPU seam (no GPU/Docker/broker)
+        # and re-execute with the tiny deterministic context (architecture.md 3.4; VAL-PRISM-013).
+        from .evaluator.cpu_test_mode import configure_cpu_reexec_test_mode, cpu_test_context
+
+        configure_cpu_reexec_test_mode(app_settings)
+        ctx = cpu_test_context(app_settings.worker_plane)
+    else:
+        ctx = PrismContext(
+            sequence_length=app_settings.sequence_length,
+            max_layers=app_settings.max_layers,
+            max_parameters=app_settings.max_parameters,
+        )
     worker = PrismWorker(
         repository,
         ctx,
@@ -149,12 +165,135 @@ def create_app(
         The master coordination plane reads this to create exactly one assignable work unit per
         submission and assign it - with concurrency 1 - to a single online gpu validator. This
         endpoint is execution-free: enumerating work units never invokes the broker/executor.
+
+        With the worker plane ON it ALSO exposes pending validator AUDIT units (distinct ids,
+        validator executor kind) sampled from finalized worker results so they run on the existing
+        validator_dispatch path (VAL-PRISM-012); resolved/exhausted audits are not listed
+        (pending-only listing semantics).
         """
         units = await list_pending_prism_work_units(repository)
+        work_unit_payloads: list[Mapping[str, object]] = [
+            work_unit_to_payload(unit) for unit in units
+        ]
+        if app_settings.worker_plane.enabled:
+            for row in await repository.list_pending_audit_units():
+                work_unit_payloads.append(audit_work_unit_to_payload(row))
         return {
             "challenge_slug": app_settings.slug,
-            "work_units": [work_unit_to_payload(unit) for unit in units],
+            "work_units": work_unit_payloads,
         }
+
+    @app.post(
+        "/internal/v1/audit_units/{audit_unit_id}/result",
+        dependencies=[Depends(authenticate_internal)],
+    )
+    async def audit_unit_result(audit_unit_id: str, request: Request) -> dict[str, object]:
+        """Resolve a validator audit replay for a sampled result (architecture.md 3.5).
+
+        Body: ``{manifest_sha256?: str, success?: bool, error?: str}``. The validator replay is
+        authoritative: a hash EQUAL to the audited worker hash passes (score untouched); a DIFFERENT
+        hash invalidates the audited submission's score and propagates to crown/weights
+        (VAL-PRISM-013/023); a replay failure/timeout (``success: false`` or no ``manifest_sha256``)
+        NEVER confirms the result -- it is re-audited within bounds, then reaches a terminal
+        ``failed`` audit state with the submission left unresolved (VAL-PRISM-024). Disabled with
+        the worker plane off (404).
+        """
+        if not app_settings.worker_plane.enabled:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "worker plane disabled")
+        try:
+            payload = json.loads(await request.body())
+        except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "invalid JSON result body") from exc
+        if not isinstance(payload, dict):
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "result body must be an object")
+        replay_hash = payload.get("manifest_sha256")
+        if replay_hash is not None and not isinstance(replay_hash, str):
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "manifest_sha256 must be a string")
+        failed = payload.get("success") is False or bool(payload.get("failed"))
+        error = payload.get("error") if isinstance(payload.get("error"), str) else None
+        try:
+            resolution = await resolve_audit_unit(
+                repository,
+                audit_unit_id=audit_unit_id,
+                replay_manifest_sha256=replay_hash,
+                failed=failed,
+                error=error,
+            )
+        except KeyError as exc:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "audit unit not found") from exc
+        return resolution.to_response()
+
+    @app.post(
+        "/internal/v1/work_units/result", dependencies=[Depends(authenticate_internal)]
+    )
+    async def work_unit_result(request: Request) -> dict[str, object]:
+        """Accept a base-reconciled worker result (``{work_unit_id, submission_ref, result}``).
+
+        The base master forwards exactly one accepted (R=2-reconciled) result here after reconciling
+        the replicas' manifest hashes (architecture.md 3.3). The ExecutionProof is verified BEFORE
+        anything is scored: a missing/malformed proof (VAL-PRISM-018) or a tampered manifest / a
+        forged signature (VAL-PRISM-007) is rejected 422 with a distinguishable reason and never
+        finalized (the unit stays eligible for retry). A verified result is then run through the
+        plausibility gate (architecture.md 3.5; VAL-PRISM-009): an implausible manifest is rejected
+        422 with a distinct ``plausibility_*`` reason and never scored, while a plausible manifest
+        passes through UNCHANGED. A verified, plausible result is finalized idempotently:
+        a duplicate delivery is a no-op and a conflicting delivery for an already-accepted unit is
+        refused 409 so the stored score/leaderboard is never mutated (VAL-PRISM-017). The claimed
+        tier is downgraded to its verified effective tier for audit sampling (VAL-PRISM-019).
+        Disabled with the worker plane off (404) so it is inert in legacy deployments.
+        """
+        if not app_settings.worker_plane.enabled:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "worker plane disabled")
+        try:
+            payload = json.loads(await request.body())
+        except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST, "invalid JSON result body"
+            ) from exc
+        if not isinstance(payload, dict):
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "result body must be an object")
+        work_unit_id = payload.get("work_unit_id")
+        submission_ref = payload.get("submission_ref")
+        result = payload.get("result")
+        if not isinstance(work_unit_id, str) or not work_unit_id:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "work_unit_id is required")
+        if not isinstance(submission_ref, str):
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "submission_ref is required")
+        if not isinstance(result, dict):
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "result must be an object")
+        sampler = audit_sampler_from_config(app_settings.worker_plane)
+        try:
+            outcome = await ingest_work_unit_result(
+                worker=worker,
+                work_unit_id=work_unit_id,
+                submission_ref=submission_ref,
+                result=result,
+                pinned_image_digest=app_settings.worker_plane.pinned_image_digest,
+                audit_sampler=sampler,
+            )
+        except ResultIngestionError as exc:
+            # A transient finalization failure is retryable -> 503 so the forwarder retries; the
+            # permanent rejections (bad proof / tampered / implausible manifest) stay 422.
+            code = (
+                status.HTTP_503_SERVICE_UNAVAILABLE
+                if exc.reason == "finalization_failed"
+                else status.HTTP_422_UNPROCESSABLE_ENTITY
+            )
+            raise HTTPException(
+                code,
+                {"code": exc.reason, "detail": str(exc)},
+            ) from exc
+        except PlausibilityError as exc:
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                {"code": exc.reason, "detail": str(exc)},
+            ) from exc
+        if outcome.status == "conflict":
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                {"code": outcome.reason, "detail": "conflicting result for finalized unit"},
+            )
+        return outcome.to_response()
 
     @app.post(
         "/internal/v1/bridge/submissions",
@@ -174,6 +313,7 @@ def create_app(
         )
         if len(submission.code.encode()) > app_settings.max_code_bytes:
             raise HTTPException(status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, "submission too large")
+        await enforce_admission(app_settings, x_base_verified_hotkey)
         return await repository.create_submission(x_base_verified_hotkey, submission)
 
     return app

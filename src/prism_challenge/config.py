@@ -3,16 +3,82 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Literal
 
-from pydantic import AliasChoices, Field
+from pydantic import AliasChoices, BaseModel, Field
 from pydantic_settings import SettingsConfigDict
 
 from .sdk.config import ChallengeSettings
 
 
+class WorkerPlaneConfig(BaseModel):
+    """Prism worker-plane feature block (architecture.md 3.4/3.5).
+
+    OFF by default: with ``enabled`` false prism behaves exactly as before the compute plane (no
+    ExecutionProof emission, no admission gate, legacy audit-free finalization). Env overrides use
+    the nested delimiter, e.g. ``PRISM_WORKER_PLANE__ENABLED=true``.
+    """
+
+    enabled: bool = False
+    admission_requires_worker: bool = False
+    # Base master coordination base URL the admission rule queries for >=1 active worker bound to
+    # the submitting hotkey (``GET {master_base_url}/v1/workers/active?hotkey=``). Auth reuses the
+    # existing prism<->master bridge shared token as the bearer. Unset while
+    # ``admission_requires_worker`` is on => admission fails closed (no submission accepted), which
+    # is the same deterministic rejection as an explicit zero-worker answer (architecture.md 3.5).
+    master_base_url: str | None = None
+    # Bounded admission-check latency (seconds). A master that is unreachable/slow/5xx must never
+    # hang a submission: the query is capped here and any failure folds into the fail-closed
+    # NO_ACTIVE_WORKER rejection (architecture.md 3.5; VAL-PRISM-020).
+    admission_timeout_seconds: float = Field(default=5.0, gt=0.0)
+    audit_rate_tier0: float = Field(default=0.10, ge=0.0, le=1.0)
+    audit_rate_tier1: float = Field(default=0.05, ge=0.0, le=1.0)
+    audit_rate_tier2: float = Field(default=0.02, ge=0.0, le=1.0)
+    # Per-audit claim lease (seconds). The validator audit cycle claims each pending audit under
+    # this lease before replaying it, so in a MULTI-validator deployment each pending audit is
+    # replayed by at most one validator (idempotent-but-wasteful redundant GPU/CPU replays are
+    # avoided). A crashed claimant's lease expires and the audit becomes reclaimable; the default is
+    # generous enough to exceed a normal replay wall-time. Single-validator behaviour is unchanged.
+    audit_claim_lease_seconds: float = Field(default=1800.0, gt=0.0)
+    # Server-side SECRET salt mixed into the audit sampler seed so audit selection cannot be
+    # predicted from the public ``submission_id`` alone (a different salt selects a different set),
+    # while staying reproducible for a fixed salt and preserving the per-tier rates (architecture.md
+    # 3.4; VAL-FINAL-006). Kept out of the config repr like every other secret.
+    audit_salt: str | None = Field(default=None, repr=False)
+    # sr25519 signing key (URI ``//Name`` / mnemonic / seed) for the worker that emits
+    # ExecutionProofs. This is the worker's OWN key, injected by the worker agent -- NEVER a
+    # master-side secret. Unset -> prism emits no signed proof (the base worker plane may still
+    # stamp a tier-0 proof from the manifest hash).
+    signing_key: str | None = Field(default=None, repr=False)
+    # Pinned evaluator/worker image digest (``sha256:<64hex>``) a claimed tier-1 proof is checked
+    # against at ingestion: a tier-1 claim whose ``image_digest`` does not match this value is not
+    # verifiable, so its EFFECTIVE tier is downgraded to 0 for audit sampling (architecture.md 3.4;
+    # VAL-PRISM-019). Unset -> no tier-1 claim is verifiable, so every tier-1 claim downgrades to 0.
+    pinned_image_digest: str | None = Field(default=None)
+    # EXPLICIT test-mode config that swaps the docker/broker executor for the repo's OWN CPU
+    # re-exec seam (``evaluator.mock_reexec.cpu_reexec_run``): a real, deterministic
+    # ``prism_run_manifest.v2`` is produced on CPU with no GPU/Docker/broker. This is opt-in and
+    # OFF by default (production always uses the real broker). It exists so a local mission harness
+    # can stand up a faithful worker/audit-replay path on a CPU-only host. When
+    # ``cpu_reexec_train_data_dir`` is unset a tiny locked train shard is staged under the eval
+    # artifact root; the tiny vocab/seq/step budget keep a scored run fast + deterministic.
+    cpu_reexec_test_mode: bool = False
+    cpu_reexec_train_data_dir: str | None = None
+    cpu_reexec_vocab_size: int = Field(default=64, ge=2)
+    cpu_reexec_sequence_length: int = Field(default=16, ge=2)
+    cpu_reexec_seed: int = 1234
+    cpu_reexec_step_budget: int = Field(default=24, ge=1)
+    cpu_reexec_train_lines: int = Field(default=64, ge=1)
+
+
 class PrismSettings(ChallengeSettings):
     model_config = SettingsConfigDict(
-        env_prefix="PRISM_", env_file=".env", extra="ignore", populate_by_name=True
+        env_prefix="PRISM_",
+        env_file=".env",
+        extra="ignore",
+        populate_by_name=True,
+        env_nested_delimiter="__",
     )
+
+    worker_plane: WorkerPlaneConfig = Field(default_factory=WorkerPlaneConfig)
 
     database_url: str = Field(
         default="sqlite+aiosqlite:////data/prism.sqlite3",

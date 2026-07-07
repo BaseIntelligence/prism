@@ -98,3 +98,25 @@ base_eval_task: architecture
 validator_hotkeys: []
 validator_assignment_timeout_seconds: 900
 validator_assignment_max_attempts: 3
+# Worker-plane feature block (architecture.md 3.4/3.5). OFF by default: with these defaults prism
+# behaves exactly as before the compute plane (no ExecutionProof emission, no admission gate, legacy
+# audit-free finalization). Env overrides use the nested delimiter, e.g.
+# PRISM_WORKER_PLANE__ADMISSION_REQUIRES_WORKER=true.
+worker_plane:
+  enabled: false
+  # When true, POST /v1/submissions (and the base bridge path) is rejected 403 NO_ACTIVE_WORKER
+  # unless the master's GET /v1/workers/active?hotkey= confirms >=1 active worker for the hotkey.
+  admission_requires_worker: false
+  # Base master coordination base URL the admission rule queries; auth reuses the bridge shared
+  # token. Unset while admission_requires_worker is on => admission fails closed.
+  master_base_url: null
+  admission_timeout_seconds: 5.0
+  audit_rate_tier0: 0.10
+  audit_rate_tier1: 0.05
+  audit_rate_tier2: 0.02
+  # Server-side SECRET salt mixed into the audit sampler seed so audit selection cannot be predicted
+  # from the public submission_id alone, yet stays reproducible for a fixed salt (VAL-FINAL-006).
+  # Kept out of the config repr. Leave null to sample from the seed only (legacy behaviour).
+  audit_salt: null
+  # Pinned evaluator/worker image digest (sha256:<64hex>) a tier-1 proof claim is checked against.
+  pinned_image_digest: null

@@ -167,6 +167,48 @@ See [Security model](docs/security.md) for the full anti-cheat and sandbox polic
 
 ---
 
+## Worker Plane (verify-only validators)
+
+PRISM optionally moves its heavy GPU re-execution off validators and onto **miner-funded worker
+agents** (deployed on Lium/Targon or a miner's own hardware via the BASE `base worker` CLI). When
+this plane is on, validators run a **verify-only** pipeline instead of executing every submission.
+The whole feature is gated behind the prism `worker_plane` config block (env prefix
+`PRISM_WORKER_PLANE__`); with `worker_plane.enabled` **false** (the default) prism behaves exactly
+as before — no `ExecutionProof` emission, no admission gate, legacy audit-free finalization.
+
+- **Worker-executed evaluation**: the master assigns each submission's gpu work unit to
+  miner-funded workers (R=2 distinct owners, never the submitter's own worker). Each worker
+  re-executes the miner's training loop under forced random init and posts the challenge-authored
+  `prism_run_manifest.v2.json` plus an **ExecutionProof** (tier 0 deterministic manifest hash +
+  worker sr25519 signature; tier 1 adds a matching pinned image digest; tier 2 in-guest
+  attestation is schema-only and gated off on Targon). The master reconciles the replicas by
+  manifest hash and forwards one reconciled result; prism then **finalizes the prequential
+  bits-per-byte score from the forwarded manifest without re-executing** the evaluation.
+- **Verify-only validator pipeline**: validators no longer run every submission. They run
+  **plausibility checks** (manifest schema/version, loss-trajectory sanity vs the random-init
+  baseline, step-0 anomaly, wall-clock vs declared budget) plus a **probabilistic, tier-modulated
+  audit scheduler** that samples finalized results and replays them deterministically through the
+  existing validator dispatch path (now audit-only). Tier-dependent sampling rates default to
+  `audit_rate_tier0=0.10`, `audit_rate_tier1=0.05`, `audit_rate_tier2=0.02`; a secret
+  `audit_salt` makes selection unpredictable from the public `submission_id`. An audit mismatch
+  invalidates the submission's score and advances architecture-family ownership to the surviving
+  best submission.
+- **Admission rule**: with `worker_plane.admission_requires_worker` on, `POST /v1/submissions`
+  (and the BASE bridge path) is rejected with `403 NO_ACTIVE_WORKER` unless the master's
+  `GET /v1/workers/active?hotkey=` confirms ≥1 active worker bound to the submitting hotkey. A
+  master that is unreachable/slow folds into the same fail-closed rejection (bounded by
+  `admission_timeout_seconds`). Flag off ⇒ the check is a no-op.
+- **Trust model unchanged**: the secret held-out `val`/`test` splits and the LLM provider keys
+  never reach workers; worker results are untrusted until reconciled (R=2) or audited.
+
+Config lives in `worker_plane` in [`config.example.yaml`](config.example.yaml) (keys `enabled`,
+`admission_requires_worker`, `master_base_url`, `admission_timeout_seconds`, `audit_rate_tier{0,1,2}`,
+`audit_salt`, `pinned_image_digest`). See the BASE
+[Miner worker deployment guide](https://github.com/BaseIntelligence/base/blob/main/docs/miner/worker-plane.md)
+for how miners deploy the workers that execute these units.
+
+---
+
 ## Repository Layout
 
 ```text

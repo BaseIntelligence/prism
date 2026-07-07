@@ -43,6 +43,7 @@ from .gpu_scheduler import (
     targets_from_settings,
 )
 from .models import SubmissionStatus
+from .proof import compute_manifest_sha256, read_manifest_sha256
 from .repository import PrismRepository, now_iso
 from .sdk.executors.docker import DockerExecutor, DockerLimits, DockerMount, DockerRunSpec
 
@@ -65,6 +66,17 @@ class EvalWallTimeExceeded(RuntimeError):
     The inner docker run has its own ``base_eval_hard_timeout_seconds``; this backstop guards the
     orchestration layer so a thread that never returns (hung CUDA call, wedged docker daemon)
     cannot hold its GPU lease forever. On this error the container is reaped and the lease released.
+    """
+
+
+class WorkerFinalizationError(RuntimeError):
+    """Raised when worker-plane finalization cannot derive its score inputs from the submission.
+
+    Deriving the deterministic source-static tail (snapshot -> component review -> anti-cheat) from
+    the submission SOURCE is an internal prism step, not a worker fault; a failure here is transient
+    and MUST NOT look like a clean finalize. The claimed submission is reverted to ``pending``
+    (retryable) and this signals ingestion to report the forwarded result as un-finalized rather
+    than terminally failed, so a transient derivation error is retried instead of silently sealed.
     """
 
 
@@ -160,6 +172,168 @@ class PrismWorker:
         if submission is None:
             return None
         return await self._process_claimed(submission, resume_checkpoint_ref=resume_checkpoint_ref)
+
+    async def finalize_worker_result(
+        self, submission_id: str, manifest: dict[str, Any]
+    ) -> str | None:
+        """Finalize a submission from a forwarded worker manifest WITHOUT re-executing.
+
+        The heavy GPU evaluation already ran on the miner-funded worker; ingestion has already
+        verified+reconciled the run (proof + plausibility). This claims the pending submission (a
+        CAS, so a duplicate delivery or an already-finalized submission is a no-op returning
+        ``None``) and finalizes it from the forwarded ``prism_run_manifest.v2`` alone: the
+        challenge-owned prequential bpb (``score_prequential_bpb``) with the deterministic
+        source-static tail -- the AST anti-cheat multiplier (``evaluate_anti_cheat`` over the
+        submission SOURCE) and the static fingerprints/arch_hash/name from the component review. It
+        takes NO GPU lease and NEVER constructs the evaluator (no ``evaluator.evaluate`` /
+        ``_evaluate_within_wall_time`` / ``_augment_with_heldout``). The held-out delta is SKIPPED
+        (``skip_heldout=True``) so the score is bpb-only and the master-only secret val split
+        (``base_eval_val_data_dir``) is never read (architecture.md 4).
+
+        A failure while deriving the source-static tail is transient and internal (not a worker
+        fault), so it does NOT terminally fail the submission: it reverts the claim to ``pending``
+        and raises :class:`WorkerFinalizationError` so ingestion reports the result as un-finalized
+        and retryable rather than a clean finalize with ``status=failed``.
+        """
+        submission = await self.repository.claim_submission(submission_id)
+        if submission is None:
+            return None
+        code = str(submission["code"])
+        filename = str(submission.get("filename") or "model.py")
+        raw_metadata = submission.get("metadata")
+        metadata = cast(dict[str, Any], raw_metadata) if isinstance(raw_metadata, dict) else {}
+        hotkey = str(submission.get("hotkey") or "")
+        try:
+            snapshot = self._snapshot_from_submission(code, filename, metadata)
+            component_review = self._component_review(snapshot)
+            code_for_eval = self._entrypoint_code(
+                snapshot, component_review.components.entrypoint
+            )
+            arch_hash = component_review.fingerprints.family_hash or sha256(
+                code_for_eval.encode()
+            ).hexdigest()
+            arch_name = architecture_name(component_review.components)
+            previous = await self.repository.previous_codes(submission_id)
+            anti = evaluate_anti_cheat(
+                code_for_eval,
+                previous,
+                allowed_import_roots=self._local_import_roots(snapshot),
+            )
+        except Exception as exc:
+            # Deriving the score inputs from the submission SOURCE failed. This is an internal,
+            # transient prism error (not a worker fault), so it MUST NOT masquerade as a clean
+            # finalize: revert the CAS claim to pending so the forwarded result stays retryable and
+            # signal ingestion instead of terminally sealing the submission as failed.
+            logger.warning(
+                "worker-plane finalization could not derive score inputs for %s: %s",
+                submission_id,
+                exc,
+            )
+            await self._revert_submission_to_pending(submission_id, str(exc))
+            raise WorkerFinalizationError(str(exc)) from exc
+        await self._finalize_container_score(
+            submission_id=submission_id,
+            arch_hash=arch_hash,
+            anti=anti,
+            manifest=manifest,
+            hotkey=hotkey,
+            fingerprints=component_review.fingerprints,
+            name=arch_name,
+            skip_heldout=True,
+        )
+        return submission_id
+
+    async def replay_audit_manifest_sha256(
+        self, submission_id: str, *, resume_checkpoint_ref: str | None = None
+    ) -> str | None:
+        """Re-execute a finalized submission's evaluation for an audit; return its manifest sha.
+
+        Audits are the sampled minority the validator bears (architecture.md 3.5): the whole
+        evaluation is replayed on the validator's OWN broker to obtain an authoritative
+        ``prism_run_manifest.v2`` to compare against the audited worker manifest. This path is
+        VERIFY-ONLY -- it never claims the submission, writes a score, records an eval job, or
+        changes the submission status -- so a passing audit leaves the finalized result untouched.
+        The already-passed static / LLM gates are skipped; only the container re-execution is
+        repeated (the honest run is deterministic, so an honest worker's hash reproduces). Returns
+        ``None`` on any replay failure, resolving the audit inconclusive rather than confirming it.
+        """
+        if self.execution_backend not in CONTAINER_EXECUTION_BACKENDS:
+            return None
+        submission = await self.repository.submission_execution_row(submission_id)
+        if submission is None:
+            return None
+        code = str(submission["code"])
+        filename = str(submission.get("filename") or "model.py")
+        metadata = cast(dict[str, Any], submission["metadata"])
+        code_hash = str(submission.get("code_hash") or sha256(code.encode()).hexdigest())
+        try:
+            snapshot = self._snapshot_from_submission(code, filename, metadata)
+            component_review = self._component_review(snapshot)
+            code_for_eval = self._entrypoint_code(snapshot, component_review.components.entrypoint)
+            arch_hash = component_review.fingerprints.family_hash or sha256(
+                code_for_eval.encode()
+            ).hexdigest()
+            execution_mode = execution_mode_from_value(metadata.get("execution_mode"))
+        except Exception:
+            return None
+        runtime_config = await self.repository.runtime_config(self.settings, official=True)
+        score_eligible = metadata.get("score_eligible")
+        scheduler = GpuLeaseScheduler(
+            self.repository.database, targets_from_settings(self.settings, runtime_config)
+        )
+        lease = await scheduler.enqueue_or_allocate(
+            lease_request_from_runtime(
+                submission_id=submission_id,
+                job_id=None,
+                runtime_policy=runtime_config,
+                mode=execution_mode.value,
+                score_eligible=bool(score_eligible) if score_eligible is not None else None,
+            )
+        )
+        if not lease.active:
+            return None
+        effective_settings = self.settings.model_copy(
+            update={
+                "base_eval_gpu_count": lease.gpu_count,
+                "base_eval_gpu_type": runtime_config.gpu_policy.gpu_type,
+                "base_eval_gpu_server": lease.target_server,
+                "base_eval_gpu_device_ids": lease.device_ids,
+            }
+        )
+        evaluator = self._evaluator_factory(effective_settings, self.ctx)
+        if self._checkpoint_publisher is not None and evaluator._checkpoint_publisher is None:
+            evaluator._checkpoint_publisher = self._checkpoint_publisher
+        attempt = (
+            await self.repository.container_job_attempt_count(submission_id, self.execution_backend)
+            + 1
+        )
+        try:
+            result = await self._evaluate_within_wall_time(
+                evaluator,
+                submission_id=submission_id,
+                code=code_for_eval,
+                code_hash=code_hash,
+                arch_hash=arch_hash,
+                files=snapshot.files,
+                components=component_review.components,
+                gpu_lease=lease,
+                execution_mode=execution_mode,
+                attempt=attempt,
+                resume_checkpoint_ref=resume_checkpoint_ref,
+            )
+        except Exception:
+            return None
+        finally:
+            await asyncio.to_thread(evaluator.reap_job, submission_id)
+            await scheduler.release_for_submission(submission_id, "audit replay finished")
+        if not _is_v2_run_manifest(result.run_manifest):
+            return None
+        if result.run_manifest_path:
+            try:
+                return read_manifest_sha256(result.run_manifest_path)
+            except OSError:
+                pass
+        return compute_manifest_sha256(cast(dict[str, Any], result.run_manifest))
 
     async def _process_claimed(
         self, submission: dict[str, Any], *, resume_checkpoint_ref: str | None = None
@@ -672,6 +846,19 @@ class PrismWorker:
                 (SubmissionStatus.FAILED.value, reason, now_iso(), submission_id),
             )
 
+    async def _revert_submission_to_pending(self, submission_id: str, reason: str) -> None:
+        """Return a claimed (running) submission to ``pending`` so its work unit stays retryable.
+
+        Used when a worker-plane finalization fails for an internal/transient reason: the CAS claim
+        set the submission ``running``, and reverting it to ``pending`` (rather than terminally
+        ``failed``) lets a redelivered forwarded result re-claim and finalize it.
+        """
+        async with self.repository.database.connect() as conn:
+            await conn.execute(
+                "UPDATE submissions SET status=?, error=?, updated_at=? WHERE id=?",
+                (SubmissionStatus.PENDING.value, reason, now_iso(), submission_id),
+            )
+
     def _review_rules(self) -> tuple[ReviewRule, ...]:
         return load_review_rules(
             defaults=DEFAULT_REVIEW_RULES,
@@ -796,6 +983,7 @@ class PrismWorker:
         hotkey: str = "",
         fingerprints: PrismComponentFingerprints | None = None,
         name: str | None = None,
+        skip_heldout: bool = False,
     ) -> None:
         """Finalize a container run using the CHALLENGE-OWNED prequential bits-per-byte score.
 
@@ -809,9 +997,13 @@ class PrismWorker:
         and the ``training_variants`` row (keyed by ``(architecture_id, training_hash)``), and
         persists the loss curve + reconciled compute block into ``submission_curves`` so the data is
         centrally queryable (none of these are inputs to the score).
+
+        ``skip_heldout`` forces the bpb-only scoring path (no held-out delta tie-break); the worker
+        plane sets it so a forwarded worker manifest is graded on prequential bpb alone without ever
+        needing the master-only secret val split (architecture.md 4).
         """
         try:
-            score = score_prequential_bpb(manifest)
+            score = score_prequential_bpb(manifest, skip_heldout=skip_heldout)
         except ScoreValidationError as exc:
             await self._fail_submission(submission_id, f"prequential scoring failed: {exc}")
             return

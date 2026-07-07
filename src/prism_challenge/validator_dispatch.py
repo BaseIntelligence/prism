@@ -28,10 +28,12 @@ from collections.abc import Mapping
 from typing import Any
 
 from .app import create_app
+from .audit import is_audit_unit_id
 from .config import PrismSettings
 from .config import settings as default_settings
 from .evaluator.checkpoint_publisher import CheckpointPublisher
-from .validator_executor import run_validator_cycle
+from .proof import MANIFEST_PAYLOAD_KEY, PROOF_PAYLOAD_KEY
+from .validator_executor import run_primary_execution_cycle, run_validator_audit_cycle
 
 CHALLENGE_SLUG = "prism"
 
@@ -60,14 +62,36 @@ async def dispatch_assignment(
     settings: PrismSettings | None = None,
     checkpoint_publisher: CheckpointPublisher | None = None,
 ) -> dict[str, Any]:
-    """Run a pulled prism assignment's GPU re-execution on the validator's broker.
+    """Run a pulled prism assignment on the caller's own broker (architecture.md 4).
 
-    Returns the cycle counts (pulled/executed/skipped/completed_submissions) for
-    the platform validator agent to post back to the master.
+    Routes on the UNIT TYPE so the same dispatch entrypoint serves both roles that reuse it:
+
+    * an ``audit:`` unit (only assigned to a VALIDATOR, and only when the worker plane is on) is
+      replayed + resolved (see :func:`_dispatch_audit_only`); the finalized score is untouched on a
+      matching replay and invalidated + fault-recorded on a divergent one (VAL-FINAL-005);
+    * any other (PRIMARY) unit is GPU-re-executed via :func:`run_primary_execution_cycle` -- this is
+      the miner-funded worker path when the flag is on (it emits the ExecutionProof base reconciles)
+      and the legacy validator re-execution when the flag is off.
+
+    The autonomous validator cycle's audit-only restriction lives in :func:`run_validator_cycle`;
+    here a primary unit always executes because the base assignment plane only ever routes a primary
+    unit to a worker (flag on) or a legacy validator (flag off), never to an audit-only validator.
+    Returns the cycle counts for the platform agent to post back to the master.
     """
 
+    base_settings = settings or default_settings
+    if base_settings.worker_plane.enabled and is_audit_unit_id(work_unit_id):
+        return await _dispatch_audit_only(
+            work_unit_id=work_unit_id,
+            broker_url=broker_url,
+            broker_token=broker_token,
+            broker_token_file=broker_token_file,
+            settings=base_settings,
+            checkpoint_publisher=checkpoint_publisher,
+        )
+
     effective = gateway_scoped_settings(
-        settings or default_settings,
+        base_settings,
         payload,
         broker_url=broker_url,
         broker_token=broker_token,
@@ -77,14 +101,71 @@ async def dispatch_assignment(
     database = app.state.database
     await database.init()
     try:
-        summary = await run_validator_cycle(worker=app.state.worker, work_unit_ids=[work_unit_id])
+        summary = await run_primary_execution_cycle(
+            worker=app.state.worker, work_unit_ids=[work_unit_id]
+        )
     finally:
         await database.close()
-    return {
+    result: dict[str, Any] = {
         "pulled": summary.pulled,
         "executed": summary.executed,
         "skipped": summary.skipped,
         "completed_submissions": list(summary.completed_submissions),
+    }
+    # Emit the ExecutionProof IN the work-unit result payload at successful finalization
+    # (architecture.md 3.4; VAL-PRISM-001). Absent when the worker plane is off or the unit did not
+    # freshly finalize. The backing run manifest is forwarded alongside so the accepting plane can
+    # recompute + verify the signed digest and reject a tampered manifest (VAL-PRISM-007).
+    proof = summary.execution_proofs.get(work_unit_id)
+    if proof is not None:
+        result[PROOF_PAYLOAD_KEY] = proof
+        manifest = summary.execution_manifests.get(work_unit_id)
+        if manifest is not None:
+            result[MANIFEST_PAYLOAD_KEY] = manifest
+    return result
+
+
+async def _dispatch_audit_only(
+    *,
+    work_unit_id: str,
+    broker_url: str,
+    broker_token: str | None,
+    broker_token_file: str | None,
+    settings: PrismSettings,
+    checkpoint_publisher: CheckpointPublisher | None,
+) -> dict[str, Any]:
+    """Audit-only dispatch: replay + resolve a sampled ``audit:`` unit (VAL-FINAL-005).
+
+    Audits skip the LLM review, so this path needs NO master gateway scoped token (unlike the
+    primary path) -- only the validator's own broker for the deterministic re-execution.
+    """
+
+    effective = settings.model_copy(
+        update={
+            "docker_broker_url": broker_url,
+            "docker_broker_token": broker_token,
+            "docker_broker_token_file": broker_token_file,
+        }
+    )
+    app = create_app(effective, checkpoint_publisher=checkpoint_publisher)
+    database = app.state.database
+    await database.init()
+    try:
+        summary = await run_validator_audit_cycle(
+            worker=app.state.worker, work_unit_ids=[work_unit_id]
+        )
+    finally:
+        await database.close()
+    invalidated = sum(1 for resolution in summary.audits if resolution.invalidated)
+    return {
+        "pulled": summary.pulled,
+        "executed": summary.executed,
+        "skipped": summary.skipped,
+        "completed_submissions": [],
+        "is_audit": is_audit_unit_id(work_unit_id),
+        "audits_resolved": len(summary.audits),
+        "audits_invalidated": invalidated,
+        "audit_results": [resolution.to_response() for resolution in summary.audits],
     }
 
 

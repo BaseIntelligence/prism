@@ -17,6 +17,7 @@ from fastapi import (
 )
 from pydantic import ValidationError
 
+from .admission import enforce_admission
 from .auth import authenticate_miner
 from .evaluator.architecture_report import (
     generate_report_content,
@@ -78,6 +79,7 @@ async def submit_model(
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, exc.errors()) from exc
     if len(request_body.code.encode()) > request.app.state.settings.max_code_bytes:
         raise HTTPException(status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, "submission too large")
+    await enforce_admission(request.app.state.settings, hotkey)
     return await repository.create_submission(hotkey, request_body)
 
 

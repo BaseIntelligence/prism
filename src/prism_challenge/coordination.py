@@ -138,3 +138,29 @@ def work_unit_to_payload(unit: PrismWorkUnit) -> Mapping[str, Any]:
         "required_capability": unit.required_capability,
         "payload": dict(unit.payload),
     }
+
+
+#: Executor kind an audit unit is dispatched to: audits ALWAYS run on the authoritative validator
+#: replay path (``validator_dispatch``), never on a worker (architecture.md 3.5; VAL-PRISM-012).
+AUDIT_EXECUTOR_KIND = "validator"
+
+
+def audit_work_unit_to_payload(row: Mapping[str, Any]) -> Mapping[str, Any]:
+    """Serialise a pending audit unit (an ``audit_units`` row joined with the submission hotkey).
+
+    The audit unit carries a work_unit_id DISTINCT from the audited submission's primary unit id
+    and is marked for validator execution (``required_capability == "gpu"``, executor kind
+    ``validator``) referencing the audited submission id (VAL-PRISM-012).
+    """
+
+    submission_id = str(row["submission_id"])
+    return {
+        "work_unit_id": str(row["audit_unit_id"]),
+        "submission_id": submission_id,
+        "submission_ref": str(row.get("hotkey") or ""),
+        "required_capability": str(row.get("required_capability") or PRISM_WORK_UNIT_CAPABILITY),
+        "executor_kind": AUDIT_EXECUTOR_KIND,
+        "audit": True,
+        "audited_submission_id": submission_id,
+        "payload": {"audit": True, "audited_submission_id": submission_id},
+    }
