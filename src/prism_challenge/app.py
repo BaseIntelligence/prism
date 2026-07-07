@@ -3,15 +3,19 @@ from __future__ import annotations
 import base64
 import binascii
 import json
-from collections.abc import Callable, Coroutine
+from collections.abc import Callable, Coroutine, Mapping
 from typing import Annotated, Any
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, status
 
-from .audit import audit_sampler_from_config
+from .audit import audit_sampler_from_config, resolve_audit_unit
 from .auth import authenticate_internal, authenticate_validator
 from .config import PrismSettings, settings
-from .coordination import list_pending_prism_work_units, work_unit_to_payload
+from .coordination import (
+    audit_work_unit_to_payload,
+    list_pending_prism_work_units,
+    work_unit_to_payload,
+)
 from .db import Database
 from .evaluator.checkpoint_intake import CheckpointIntakeError, CheckpointIntakeService
 from .evaluator.checkpoint_publisher import (
@@ -152,12 +156,63 @@ def create_app(
         The master coordination plane reads this to create exactly one assignable work unit per
         submission and assign it - with concurrency 1 - to a single online gpu validator. This
         endpoint is execution-free: enumerating work units never invokes the broker/executor.
+
+        With the worker plane ON it ALSO exposes pending validator AUDIT units (distinct ids,
+        validator executor kind) sampled from finalized worker results so they run on the existing
+        validator_dispatch path (VAL-PRISM-012); resolved/exhausted audits are not listed
+        (pending-only listing semantics).
         """
         units = await list_pending_prism_work_units(repository)
+        work_unit_payloads: list[Mapping[str, object]] = [
+            work_unit_to_payload(unit) for unit in units
+        ]
+        if app_settings.worker_plane.enabled:
+            for row in await repository.list_pending_audit_units():
+                work_unit_payloads.append(audit_work_unit_to_payload(row))
         return {
             "challenge_slug": app_settings.slug,
-            "work_units": [work_unit_to_payload(unit) for unit in units],
+            "work_units": work_unit_payloads,
         }
+
+    @app.post(
+        "/internal/v1/audit_units/{audit_unit_id}/result",
+        dependencies=[Depends(authenticate_internal)],
+    )
+    async def audit_unit_result(audit_unit_id: str, request: Request) -> dict[str, object]:
+        """Resolve a validator audit replay for a sampled result (architecture.md 3.5).
+
+        Body: ``{manifest_sha256?: str, success?: bool, error?: str}``. The validator replay is
+        authoritative: a hash EQUAL to the audited worker hash passes (score untouched); a DIFFERENT
+        hash invalidates the audited submission's score and propagates to crown/weights
+        (VAL-PRISM-013/023); a replay failure/timeout (``success: false`` or no ``manifest_sha256``)
+        NEVER confirms the result -- it is re-audited within bounds, then reaches a terminal
+        ``failed`` audit state with the submission left unresolved (VAL-PRISM-024). Disabled with
+        the worker plane off (404).
+        """
+        if not app_settings.worker_plane.enabled:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "worker plane disabled")
+        try:
+            payload = json.loads(await request.body())
+        except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "invalid JSON result body") from exc
+        if not isinstance(payload, dict):
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "result body must be an object")
+        replay_hash = payload.get("manifest_sha256")
+        if replay_hash is not None and not isinstance(replay_hash, str):
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "manifest_sha256 must be a string")
+        failed = payload.get("success") is False or bool(payload.get("failed"))
+        error = payload.get("error") if isinstance(payload.get("error"), str) else None
+        try:
+            resolution = await resolve_audit_unit(
+                repository,
+                audit_unit_id=audit_unit_id,
+                replay_manifest_sha256=replay_hash,
+                failed=failed,
+                error=error,
+            )
+        except KeyError as exc:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "audit unit not found") from exc
+        return resolution.to_response()
 
     @app.post(
         "/internal/v1/work_units/result", dependencies=[Depends(authenticate_internal)]

@@ -1085,6 +1085,195 @@ class PrismRepository:
                 ),
             )
 
+    async def create_audit_unit(
+        self,
+        *,
+        submission_id: str,
+        origin_work_unit_id: str,
+        audited_manifest_sha256: str,
+        effective_tier: int,
+        replication: int = 2,
+        max_attempts: int = 3,
+    ) -> str:
+        """Create the validator audit unit for a sampled result (idempotent per submission).
+
+        The audit unit id is DISTINCT from the primary unit id (``== submission_id``), so an audit
+        never collides with the submission's own evaluation unit (VAL-PRISM-012). ``INSERT OR
+        IGNORE`` keeps a single audit unit per sampled submission; the audited submission is NOT
+        reverted to pending by this call. Returns the audit unit id.
+        """
+        from .audit import AUDIT_STATUS_PENDING, audit_unit_id_for
+
+        audit_unit_id = audit_unit_id_for(submission_id)
+        now = now_iso()
+        async with self.database.connect() as conn:
+            epoch_rows = await conn.execute_fetchall(
+                "SELECT epoch_id FROM submissions WHERE id=?", (submission_id,)
+            )
+            epoch_list = list(epoch_rows)
+            epoch_id = int(cast(SupportsInt, epoch_list[0]["epoch_id"])) if epoch_list else 0
+            await conn.execute(
+                "INSERT OR IGNORE INTO audit_units("
+                "audit_unit_id, submission_id, origin_work_unit_id, epoch_id,"
+                "audited_manifest_sha256, effective_tier, replication, required_capability,"
+                "executor_kind, status, attempts, max_attempts, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, 'gpu', 'validator', ?, 0, ?, ?, ?)",
+                (
+                    audit_unit_id,
+                    submission_id,
+                    origin_work_unit_id,
+                    epoch_id,
+                    audited_manifest_sha256,
+                    int(effective_tier),
+                    int(replication),
+                    AUDIT_STATUS_PENDING,
+                    int(max_attempts),
+                    now,
+                    now,
+                ),
+            )
+        return audit_unit_id
+
+    async def get_audit_unit(self, audit_unit_id: str) -> dict[str, object] | None:
+        """Return one audit unit row (``None`` when it does not exist)."""
+        async with self.database.connect() as conn:
+            rows = await conn.execute_fetchall(
+                "SELECT * FROM audit_units WHERE audit_unit_id=?", (audit_unit_id,)
+            )
+        row_list = list(rows)
+        return dict(cast(Any, row_list[0])) if row_list else None
+
+    async def list_pending_audit_units(self) -> list[dict[str, object]]:
+        """Return pending audit units joined with the audited submission's hotkey (oldest first).
+
+        Only ``pending`` audit units are exposed on the coordination plane; a resolved (or
+        exhausted) audit is no longer listed (pending-only listing semantics; VAL-PRISM-012).
+        """
+        from .audit import AUDIT_STATUS_PENDING
+
+        async with self.database.connect() as conn:
+            rows = await conn.execute_fetchall(
+                "SELECT au.*, s.hotkey AS hotkey FROM audit_units au "
+                "JOIN submissions s ON s.id=au.submission_id "
+                "WHERE au.status=? ORDER BY au.created_at, au.audit_unit_id",
+                (AUDIT_STATUS_PENDING,),
+            )
+        return [dict(cast(Any, row)) for row in rows]
+
+    async def record_audit_resolution(
+        self,
+        *,
+        audit_unit_id: str,
+        status: str,
+        attempts: int,
+        resolution: str | None,
+        resolved_manifest_sha256: str | None,
+        error: str | None,
+    ) -> None:
+        """Persist an audit unit's new lifecycle state after a resolution attempt."""
+        async with self.database.connect() as conn:
+            await conn.execute(
+                "UPDATE audit_units SET status=?, attempts=?, resolution=?, "
+                "resolved_manifest_sha256=?, error=?, updated_at=? WHERE audit_unit_id=?",
+                (
+                    status,
+                    int(attempts),
+                    resolution,
+                    resolved_manifest_sha256,
+                    error,
+                    now_iso(),
+                    audit_unit_id,
+                ),
+            )
+
+    async def invalidate_submission_score(self, submission_id: str, *, reason: str) -> bool:
+        """Invalidate a finalized submission's score and recompute crown/weights aggregates.
+
+        Deletes the ``scores`` row and moves the submission to ``failed`` (so it drops out of the
+        epoch leaderboard, ``score_rows`` and weights; VAL-PRISM-013), then recomputes the affected
+        architecture family's ``q_arch_best``/``canonical_submission_id`` and its training variants
+        from the REMAINING valid (completed + scored) submissions so the crown falls back to the
+        best non-invalidated submission or to the BURN state, and ``is_current_best`` moves off the
+        invalidated submission (VAL-PRISM-023). Returns ``True`` when a submission row existed.
+        """
+        now = now_iso()
+        async with self.database.connect() as conn:
+            rows = await conn.execute_fetchall(
+                "SELECT arch_hash FROM submissions WHERE id=?", (submission_id,)
+            )
+            row_list = list(rows)
+            if not row_list:
+                return False
+            arch_hash = row_list[0]["arch_hash"]
+            await conn.execute("DELETE FROM scores WHERE submission_id=?", (submission_id,))
+            await conn.execute(
+                "UPDATE submissions SET status=?, error=?, updated_at=? WHERE id=?",
+                (SubmissionStatus.FAILED.value, reason, now, submission_id),
+            )
+            if arch_hash:
+                await self._recompute_family_after_invalidation(
+                    conn,
+                    family_hash=str(arch_hash),
+                    invalidated_submission_id=submission_id,
+                    now=now,
+                )
+        return True
+
+    async def _recompute_family_after_invalidation(
+        self,
+        conn: aiosqlite.Connection,
+        *,
+        family_hash: str,
+        invalidated_submission_id: str,
+        now: str,
+    ) -> None:
+        """Recompute an architecture family's crown aggregates after an invalidation."""
+        fam_rows = await conn.execute_fetchall(
+            "SELECT id FROM architecture_families WHERE family_hash=?", (family_hash,)
+        )
+        fam_list = list(fam_rows)
+        if not fam_list:
+            return
+        architecture_id = str(fam_list[0]["id"])
+        best_rows = await conn.execute_fetchall(
+            "SELECT s.id AS sid, sc.final_score AS fs FROM submissions s "
+            "JOIN scores sc ON sc.submission_id=s.id "
+            "WHERE s.arch_hash=? AND s.status=? "
+            "ORDER BY sc.final_score DESC, s.created_at ASC, s.id ASC LIMIT 1",
+            (family_hash, SubmissionStatus.COMPLETED.value),
+        )
+        best = list(best_rows)
+        if best:
+            best_score = float(cast(SupportsFloat, best[0]["fs"]))
+            await conn.execute(
+                "UPDATE architecture_families SET canonical_submission_id=?, q_arch_best=?, "
+                "updated_at=? WHERE id=?",
+                (str(best[0]["sid"]), best_score, now, architecture_id),
+            )
+        else:
+            # No valid submission remains for the family: drop q_arch_best to 0 so the crown falls
+            # to another family or BURNs (get_weights treats a non-positive best as no crown).
+            await conn.execute(
+                "UPDATE architecture_families SET q_arch_best=0.0, updated_at=? WHERE id=?",
+                (now, architecture_id),
+            )
+        # The invalidated submission was a training variant's representative; drop that variant (its
+        # only evidence is gone) and recompute is_current_best across the family's survivors.
+        await conn.execute(
+            "DELETE FROM training_variants WHERE architecture_id=? AND submission_id=?",
+            (architecture_id, invalidated_submission_id),
+        )
+        await conn.execute(
+            "UPDATE training_variants SET is_current_best=0 WHERE architecture_id=?",
+            (architecture_id,),
+        )
+        await conn.execute(
+            "UPDATE training_variants SET is_current_best=1 WHERE id=("
+            "SELECT id FROM training_variants WHERE architecture_id=? "
+            "ORDER BY q_recipe DESC, created_at ASC, id ASC LIMIT 1)",
+            (architecture_id,),
+        )
+
     async def container_job_attempt_count(self, submission_id: str, level: str) -> int:
         async with self.database.connect() as conn:
             rows = await conn.execute_fetchall(

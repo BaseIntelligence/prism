@@ -184,6 +184,17 @@ SCHEMA = (
     "tier_downgraded INTEGER NOT NULL DEFAULT 0, worker_pubkey TEXT, accepted_at TEXT NOT NULL);"
     "CREATE INDEX IF NOT EXISTS idx_work_unit_results_submission "
     "ON work_unit_results(submission_id);"
+    "CREATE TABLE IF NOT EXISTS audit_units ("
+    "audit_unit_id TEXT PRIMARY KEY, submission_id TEXT NOT NULL,"
+    "origin_work_unit_id TEXT NOT NULL, epoch_id INTEGER NOT NULL,"
+    "audited_manifest_sha256 TEXT NOT NULL, effective_tier INTEGER NOT NULL,"
+    "replication INTEGER NOT NULL DEFAULT 2, required_capability TEXT NOT NULL DEFAULT 'gpu',"
+    "executor_kind TEXT NOT NULL DEFAULT 'validator', status TEXT NOT NULL,"
+    "attempts INTEGER NOT NULL DEFAULT 0, max_attempts INTEGER NOT NULL DEFAULT 3,"
+    "resolved_manifest_sha256 TEXT, resolution TEXT, error TEXT,"
+    "created_at TEXT NOT NULL, updated_at TEXT NOT NULL);"
+    "CREATE INDEX IF NOT EXISTS idx_audit_units_submission ON audit_units(submission_id);"
+    "CREATE INDEX IF NOT EXISTS idx_audit_units_status ON audit_units(status);"
 )
 
 
@@ -319,6 +330,19 @@ async def _run_migrations(conn: aiosqlite.Connection) -> None:
         "accepted_at TEXT NOT NULL);"
         "CREATE INDEX IF NOT EXISTS idx_work_unit_results_submission "
         "ON work_unit_results(submission_id);"
+    )
+    await conn.executescript(
+        "CREATE TABLE IF NOT EXISTS audit_units ("
+        "audit_unit_id TEXT PRIMARY KEY, submission_id TEXT NOT NULL,"
+        "origin_work_unit_id TEXT NOT NULL, epoch_id INTEGER NOT NULL,"
+        "audited_manifest_sha256 TEXT NOT NULL, effective_tier INTEGER NOT NULL,"
+        "replication INTEGER NOT NULL DEFAULT 2, required_capability TEXT NOT NULL DEFAULT 'gpu',"
+        "executor_kind TEXT NOT NULL DEFAULT 'validator', status TEXT NOT NULL,"
+        "attempts INTEGER NOT NULL DEFAULT 0, max_attempts INTEGER NOT NULL DEFAULT 3,"
+        "resolved_manifest_sha256 TEXT, resolution TEXT, error TEXT,"
+        "created_at TEXT NOT NULL, updated_at TEXT NOT NULL);"
+        "CREATE INDEX IF NOT EXISTS idx_audit_units_submission ON audit_units(submission_id);"
+        "CREATE INDEX IF NOT EXISTS idx_audit_units_status ON audit_units(status);"
     )
     await conn.executescript(
         "CREATE TABLE IF NOT EXISTS gpu_leases ("

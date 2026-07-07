@@ -103,6 +103,7 @@ class IngestionOutcome:
     finalized: bool
     submission_status: str | None = None
     audit_sampled: bool | None = None
+    audit_unit_id: str | None = None
     reason: str | None = None
 
     def to_response(self) -> dict[str, Any]:
@@ -119,6 +120,8 @@ class IngestionOutcome:
         }
         if self.audit_sampled is not None:
             payload["audit_sampled"] = self.audit_sampled
+        if self.audit_unit_id is not None:
+            payload["audit_unit_id"] = self.audit_unit_id
         if self.reason is not None:
             payload["reason"] = self.reason
         return payload
@@ -220,6 +223,10 @@ async def ingest_work_unit_result(
     claimed_tier = int(proof.tier)
     downgraded = claimed_tier != tier
     submission_id = work_unit_id
+    # Replication at acceptance (R=1 degraded or R=2 reconciled), forwarded by base for
+    # observability. It never affects audit eligibility: R=1 results are audited at their
+    # effective-tier rate exactly like R=2 ones (VAL-PRISM-026).
+    replication = _as_int(result.get("replication"), 2)
     repository = worker.repository
 
     existing = await repository.get_work_unit_result(work_unit_id)
@@ -283,10 +290,23 @@ async def ingest_work_unit_result(
         worker_pubkey=proof.worker_signature.worker_pubkey,
     )
     audit_sampled: bool | None = None
+    audit_unit_id: str | None = None
     if audit_sampler is not None:
         audit_sampled = audit_sampler.should_sample(
             work_unit_id=work_unit_id, effective_tier=tier
         )
+        # A sampled accepted result gets a validator audit unit on the existing dispatch path with a
+        # DISTINCT id; the audited submission is NOT reverted to pending (VAL-PRISM-012). R=1
+        # (replication-degraded) results are sampled and audited at their effective-tier rate just
+        # like R=2-reconciled ones -- they are never exempted (VAL-PRISM-026).
+        if audit_sampled:
+            audit_unit_id = await repository.create_audit_unit(
+                submission_id=submission_id,
+                origin_work_unit_id=work_unit_id,
+                audited_manifest_sha256=proof.manifest_sha256,
+                effective_tier=tier,
+                replication=replication,
+            )
     return IngestionOutcome(
         status="accepted",
         work_unit_id=work_unit_id,
@@ -298,6 +318,7 @@ async def ingest_work_unit_result(
         finalized=result_id is not None,
         submission_status=submission_status,
         audit_sampled=audit_sampled,
+        audit_unit_id=audit_unit_id,
     )
 
 

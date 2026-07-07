@@ -20,12 +20,42 @@ from __future__ import annotations
 
 import hashlib
 from dataclasses import dataclass
+from typing import Protocol
 
 from .config import WorkerPlaneConfig
 from .proof import ExecutionProof, has_attestation
 
 #: The three proof tiers the audit rate is keyed on (architecture.md 3.4).
 TIER_0, TIER_1, TIER_2 = 0, 1, 2
+
+#: Prefix that makes an audit work-unit id DISTINCT from the primary unit id (== submission_id),
+#: which is reserved for the submission's own evaluation unit (VAL-PRISM-012).
+AUDIT_UNIT_PREFIX = "audit:"
+
+#: Audit-unit lifecycle (architecture.md 3.5). ``pending`` units are the only ones exposed on the
+#: coordination plane (pending-only listing semantics); the rest are terminal EXCEPT ``pending`` set
+#: again on a bounded re-audit after an inconclusive failure/timeout (VAL-PRISM-024).
+AUDIT_STATUS_PENDING = "pending"
+AUDIT_STATUS_PASSED = "passed"
+AUDIT_STATUS_MISMATCH = "mismatch"
+AUDIT_STATUS_FAILED = "failed"
+
+#: Audit resolutions recorded against the unit (distinct from the lifecycle status).
+AUDIT_RESOLUTION_PASS = "pass"
+AUDIT_RESOLUTION_MISMATCH = "mismatch"
+AUDIT_RESOLUTION_INCONCLUSIVE = "inconclusive"
+
+
+def audit_unit_id_for(submission_id: str) -> str:
+    """Return the audit work-unit id for ``submission_id`` (distinct from the primary unit id)."""
+
+    return f"{AUDIT_UNIT_PREFIX}{submission_id}"
+
+
+def is_audit_unit_id(work_unit_id: str) -> bool:
+    """Whether ``work_unit_id`` names an audit unit rather than a primary evaluation unit."""
+
+    return work_unit_id.startswith(AUDIT_UNIT_PREFIX)
 
 
 def effective_tier(proof: ExecutionProof, *, pinned_image_digest: str | None = None) -> int:
@@ -136,13 +166,169 @@ def audit_sampler_from_config(worker_plane: WorkerPlaneConfig, *, seed: int = 0)
     )
 
 
+class SupportsAuditResolution(Protocol):
+    """The slice of :class:`~prism_challenge.repository.PrismRepository` audit resolution needs."""
+
+    async def get_audit_unit(self, audit_unit_id: str) -> dict[str, object] | None: ...
+
+    async def record_audit_resolution(
+        self,
+        *,
+        audit_unit_id: str,
+        status: str,
+        attempts: int,
+        resolution: str | None,
+        resolved_manifest_sha256: str | None,
+        error: str | None,
+    ) -> None: ...
+
+    async def invalidate_submission_score(self, submission_id: str, *, reason: str) -> bool: ...
+
+
+@dataclass(frozen=True)
+class AuditResolution:
+    """The observable outcome of resolving one audit unit against a validator replay."""
+
+    audit_unit_id: str
+    submission_id: str
+    status: str
+    resolution: str | None
+    attempts: int
+    invalidated: bool
+    terminal: bool
+
+    def to_response(self) -> dict[str, object]:
+        return {
+            "audit_unit_id": self.audit_unit_id,
+            "submission_id": self.submission_id,
+            "status": self.status,
+            "resolution": self.resolution,
+            "attempts": self.attempts,
+            "invalidated": self.invalidated,
+            "terminal": self.terminal,
+        }
+
+
+async def resolve_audit_unit(
+    repository: SupportsAuditResolution,
+    *,
+    audit_unit_id: str,
+    replay_manifest_sha256: str | None = None,
+    failed: bool = False,
+    error: str | None = None,
+) -> AuditResolution:
+    """Resolve an audit unit from a validator's authoritative replay (architecture.md 3.5).
+
+    The validator replay is authoritative. Outcomes:
+
+    * an authoritative replay hash EQUAL to the audited worker hash -> ``passed`` (the audited score
+      is left untouched);
+    * an authoritative replay hash DIFFERENT from it -> ``mismatch``: the audited submission's score
+      is invalidated (VAL-PRISM-013) and the crown/weights recomputed (VAL-PRISM-023);
+    * a replay FAILURE or TIMEOUT (``failed`` / no ``replay_manifest_sha256``) NEVER confirms the
+      audited result: the unit is re-audited (back to ``pending``) until ``max_attempts`` is
+      exhausted, then reaches the terminal, observable ``failed`` state -- the audited submission is
+      left unresolved (never silently reverted to accepted) and NO fault is attributed, because a
+      fault requires an authoritative divergent manifest (VAL-PRISM-024).
+
+    Resolving an already-terminal unit is an idempotent no-op.
+    """
+
+    unit = await repository.get_audit_unit(audit_unit_id)
+    if unit is None:
+        raise KeyError(f"audit unit {audit_unit_id!r} not found")
+
+    submission_id = str(unit["submission_id"])
+    status = str(unit["status"])
+    attempts = int(unit["attempts"])  # type: ignore[call-overload]
+    if status in (AUDIT_STATUS_PASSED, AUDIT_STATUS_MISMATCH, AUDIT_STATUS_FAILED):
+        return AuditResolution(
+            audit_unit_id=audit_unit_id,
+            submission_id=submission_id,
+            status=status,
+            resolution=(str(unit["resolution"]) if unit["resolution"] is not None else None),
+            attempts=attempts,
+            invalidated=status == AUDIT_STATUS_MISMATCH,
+            terminal=True,
+        )
+
+    max_attempts = int(unit["max_attempts"])  # type: ignore[call-overload]
+    attempts += 1
+    inconclusive = failed or not replay_manifest_sha256
+
+    if inconclusive:
+        exhausted = attempts >= max_attempts
+        new_status = AUDIT_STATUS_FAILED if exhausted else AUDIT_STATUS_PENDING
+        await repository.record_audit_resolution(
+            audit_unit_id=audit_unit_id,
+            status=new_status,
+            attempts=attempts,
+            resolution=AUDIT_RESOLUTION_INCONCLUSIVE if exhausted else None,
+            resolved_manifest_sha256=None,
+            error=error or "audit replay failed or timed out",
+        )
+        return AuditResolution(
+            audit_unit_id=audit_unit_id,
+            submission_id=submission_id,
+            status=new_status,
+            resolution=AUDIT_RESOLUTION_INCONCLUSIVE if exhausted else None,
+            attempts=attempts,
+            invalidated=False,
+            terminal=exhausted,
+        )
+
+    audited_hash = str(unit["audited_manifest_sha256"])
+    matches = replay_manifest_sha256 == audited_hash
+    invalidated = False
+    if matches:
+        new_status = AUDIT_STATUS_PASSED
+        resolution = AUDIT_RESOLUTION_PASS
+    else:
+        new_status = AUDIT_STATUS_MISMATCH
+        resolution = AUDIT_RESOLUTION_MISMATCH
+        invalidated = await repository.invalidate_submission_score(
+            submission_id,
+            reason=f"audit invalidated: manifest mismatch (audit_unit={audit_unit_id})",
+        )
+    await repository.record_audit_resolution(
+        audit_unit_id=audit_unit_id,
+        status=new_status,
+        attempts=attempts,
+        resolution=resolution,
+        resolved_manifest_sha256=replay_manifest_sha256,
+        error=None,
+    )
+    return AuditResolution(
+        audit_unit_id=audit_unit_id,
+        submission_id=submission_id,
+        status=new_status,
+        resolution=resolution,
+        attempts=attempts,
+        invalidated=invalidated,
+        terminal=True,
+    )
+
+
 __all__ = [
+    "AUDIT_RESOLUTION_INCONCLUSIVE",
+    "AUDIT_RESOLUTION_MISMATCH",
+    "AUDIT_RESOLUTION_PASS",
+    "AUDIT_STATUS_FAILED",
+    "AUDIT_STATUS_MISMATCH",
+    "AUDIT_STATUS_PASSED",
+    "AUDIT_STATUS_PENDING",
+    "AUDIT_UNIT_PREFIX",
     "TIER_0",
     "TIER_1",
     "TIER_2",
     "AuditDecision",
+    "AuditResolution",
     "AuditSampler",
+    "SupportsAuditResolution",
     "audit_sampler_from_config",
+    "audit_unit_id_for",
     "effective_tier",
+    "is_audit_unit_id",
     "is_tier_downgraded",
+    "resolve_audit_unit",
 ]
