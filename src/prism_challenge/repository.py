@@ -1304,7 +1304,7 @@ class PrismRepository:
             return
         architecture_id = str(fam_list[0]["id"])
         best_rows = await conn.execute_fetchall(
-            "SELECT s.id AS sid, sc.final_score AS fs FROM submissions s "
+            "SELECT s.id AS sid, s.hotkey AS owner, sc.final_score AS fs FROM submissions s "
             "JOIN scores sc ON sc.submission_id=s.id "
             "WHERE s.arch_hash=? AND s.status=? "
             "ORDER BY sc.final_score DESC, s.created_at ASC, s.id ASC LIMIT 1",
@@ -1313,10 +1313,21 @@ class PrismRepository:
         best = list(best_rows)
         if best:
             best_score = float(cast(SupportsFloat, best[0]["fs"]))
+            survivor_id = str(best[0]["sid"])
+            # Advance the weight-bearing owner_hotkey (and owner_submission_id) to the surviving
+            # best submission's owner. get_weights rewards owner_hotkey for the architecture share,
+            # so a proven-faulty owner must not keep it when a co-owner's valid submission survives.
             await conn.execute(
-                "UPDATE architecture_families SET canonical_submission_id=?, q_arch_best=?, "
-                "updated_at=? WHERE id=?",
-                (str(best[0]["sid"]), best_score, now, architecture_id),
+                "UPDATE architecture_families SET canonical_submission_id=?, owner_hotkey=?, "
+                "owner_submission_id=?, q_arch_best=?, updated_at=? WHERE id=?",
+                (
+                    survivor_id,
+                    str(best[0]["owner"]),
+                    survivor_id,
+                    best_score,
+                    now,
+                    architecture_id,
+                ),
             )
         else:
             # No valid submission remains for the family: drop q_arch_best to 0 so the crown falls

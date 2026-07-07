@@ -463,6 +463,63 @@ async def test_invalidation_propagates_to_crown_and_weights(tmp_path) -> None:
     assert all(not v["is_current_best"] for v in variants)
 
 
+async def test_invalidation_advances_owner_hotkey_in_multi_owner_family(tmp_path) -> None:
+    """VAL-FINAL-007: multi-owner family sharing one arch_hash.
+
+    The crown holder (family creator hk-alice) is proven faulty and invalidated while a co-owner
+    (hk-bob) has a valid, lower-scored submission on the SAME architecture. Ownership of the
+    weight-bearing ``architecture_families.owner_hotkey`` (the field ``get_weights`` rewards for the
+    0.60 architecture share) must advance to the surviving best submission's owner, so the faulty
+    owner loses the architecture emission share and ``get_weights`` pays the survivor.
+    """
+    from prism_challenge.db import Database
+    from prism_challenge.repository import PrismRepository
+
+    database = Database(tmp_path / "multiowner.sqlite3")
+    await database.init()
+    repository = PrismRepository(database, epoch_seconds=EPOCH_SECONDS)
+
+    # Single architecture family (arch_hash fh-A) crowned by hk-alice (0.9); hk-bob is a co-owner
+    # with a valid lower-scored submission on the SAME architecture. Per the persistent-crown
+    # semantics the family's owner_hotkey stays the creator hk-alice until an invalidation.
+    await _seed_family(repository, family="A", owner="hk-alice", submission="sA", score=0.9)
+    await _seed_co_submission(repository, family="A", owner="hk-bob", submission="sB", score=0.4)
+
+    best_before = await repository.best_architecture()
+    assert best_before["owner_hotkey"] == "hk-alice"
+    weights_before = await get_weights(repository, EPOCH_SECONDS)
+    assert weights_before.get("hk-alice", 0.0) > 0.0
+    assert "hk-bob" not in weights_before
+
+    # hk-alice's crown submission is proven faulty and invalidated; hk-bob's survives on the same
+    # architecture, so the weight-bearing ownership must advance to hk-bob.
+    invalidated = await repository.invalidate_submission_score(
+        "sA", reason="audit invalidated: manifest mismatch"
+    )
+    assert invalidated is True
+
+    best_after = await repository.best_architecture()
+    assert best_after["owner_hotkey"] == "hk-bob"
+    assert float(best_after["q_arch_best"]) > 0.0
+
+    # The family row's weight-bearing owner AND owner_submission_id advance to the survivor.
+    async with repository.database.connect() as conn:
+        rows = await conn.execute_fetchall(
+            "SELECT owner_hotkey, owner_submission_id, canonical_submission_id "
+            "FROM architecture_families WHERE family_hash=?",
+            ("fh-A",),
+        )
+    family_row = dict(list(rows)[0])
+    assert family_row["owner_hotkey"] == "hk-bob"
+    assert family_row["owner_submission_id"] == "sB"
+    assert family_row["canonical_submission_id"] == "sB"
+
+    weights_after = await get_weights(repository, EPOCH_SECONDS)
+    # The proven-faulty creator loses the architecture emission share; the survivor is paid.
+    assert "hk-alice" not in weights_after
+    assert weights_after.get("hk-bob", 0.0) > 0.0
+
+
 async def test_invalidation_burns_when_no_valid_submission_remains(tmp_path) -> None:
     from prism_challenge.db import Database
     from prism_challenge.repository import PrismRepository
@@ -782,6 +839,74 @@ async def _seed_family(
                 score,
                 0.0,
                 1,
+                created,
+                created,
+            ),
+        )
+
+
+async def _seed_co_submission(
+    repository: Any,
+    *,
+    family: str,
+    owner: str,
+    submission: str,
+    score: float,
+    epoch_id: int = 1,
+) -> None:
+    """Add a co-owner's completed submission on an EXISTING family (same arch_hash).
+
+    Models a multi-owner architecture family: the family's owner_hotkey stays the family creator,
+    but a distinct owner has a valid, lower-scored submission and a distinct training variant on the
+    same architecture, so it survives an invalidation of the crown holder's submission.
+    """
+    created = "2026-06-27T00:00:01+00:00"
+    architecture_id = f"af-{family}"
+    family_hash = f"fh-{family}"
+    async with repository.database.connect() as conn:
+        await conn.execute(
+            "INSERT OR IGNORE INTO miners(hotkey, first_seen, last_seen) VALUES (?, ?, ?)",
+            (owner, created, created),
+        )
+        await conn.execute(
+            "INSERT INTO submissions("
+            "id, hotkey, epoch_id, filename, code, code_hash, arch_hash, metadata, status, "
+            "created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                submission,
+                owner,
+                epoch_id,
+                "project.zip",
+                "x",
+                submission,
+                family_hash,
+                "{}",
+                "completed",
+                created,
+                created,
+            ),
+        )
+        await conn.execute(
+            "INSERT INTO scores("
+            "submission_id, q_arch, q_recipe, anti_cheat_multiplier, diversity_bonus, "
+            "penalty, final_score, metrics, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (submission, score, 0.0, 1.0, 0.0, 0.0, score, "{}", created),
+        )
+        await conn.execute(
+            "INSERT INTO training_variants("
+            "id, architecture_id, training_hash, owner_hotkey, submission_id, q_recipe, "
+            "metric_mean, metric_std, is_current_best, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                f"tv-{family}-{owner}",
+                architecture_id,
+                f"th-{family}-{owner}",
+                owner,
+                submission,
+                score,
+                score,
+                0.0,
+                0,
                 created,
                 created,
             ),
