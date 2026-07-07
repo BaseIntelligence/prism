@@ -1042,6 +1042,25 @@ class PrismRepository:
             )
         return int(list(rows)[0]["count"])
 
+    async def latest_run_manifest_path(self, submission_id: str, level: str) -> str | None:
+        """On-disk path of the most recent eval job's ``prism_run_manifest.v2.json`` for a run.
+
+        Used at successful finalization to hash the exact on-disk manifest bytes for the
+        ExecutionProof (architecture.md 3.4). Returns ``None`` when no eval job recorded a manifest.
+        """
+        async with self.database.connect() as conn:
+            rows = await conn.execute_fetchall(
+                "SELECT run_manifest_path FROM eval_jobs WHERE submission_id=? AND level=? "
+                "AND run_manifest_path IS NOT NULL "
+                "ORDER BY attempts DESC, created_at DESC LIMIT 1",
+                (submission_id, level),
+            )
+        row_list = list(rows)
+        if not row_list:
+            return None
+        value = row_list[0]["run_manifest_path"]
+        return str(value) if value is not None else None
+
     async def latest_retryable_container_job(
         self, submission_id: str, level: str
     ) -> dict[str, object] | None:

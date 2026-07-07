@@ -31,6 +31,7 @@ from .app import create_app
 from .config import PrismSettings
 from .config import settings as default_settings
 from .evaluator.checkpoint_publisher import CheckpointPublisher
+from .proof import PROOF_PAYLOAD_KEY
 from .validator_executor import run_validator_cycle
 
 CHALLENGE_SLUG = "prism"
@@ -80,12 +81,19 @@ async def dispatch_assignment(
         summary = await run_validator_cycle(worker=app.state.worker, work_unit_ids=[work_unit_id])
     finally:
         await database.close()
-    return {
+    result: dict[str, Any] = {
         "pulled": summary.pulled,
         "executed": summary.executed,
         "skipped": summary.skipped,
         "completed_submissions": list(summary.completed_submissions),
     }
+    # Emit the ExecutionProof IN the work-unit result payload at successful finalization
+    # (architecture.md 3.4; VAL-PRISM-001). Absent when the worker plane is off or the unit did not
+    # freshly finalize.
+    proof = summary.execution_proofs.get(work_unit_id)
+    if proof is not None:
+        result[PROOF_PAYLOAD_KEY] = proof
+    return result
 
 
 def gateway_scoped_settings(

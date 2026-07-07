@@ -3,16 +3,42 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Literal
 
-from pydantic import AliasChoices, Field
+from pydantic import AliasChoices, BaseModel, Field
 from pydantic_settings import SettingsConfigDict
 
 from .sdk.config import ChallengeSettings
 
 
+class WorkerPlaneConfig(BaseModel):
+    """Prism worker-plane feature block (architecture.md 3.4/3.5).
+
+    OFF by default: with ``enabled`` false prism behaves exactly as before the compute plane (no
+    ExecutionProof emission, no admission gate, legacy audit-free finalization). Env overrides use
+    the nested delimiter, e.g. ``PRISM_WORKER_PLANE__ENABLED=true``.
+    """
+
+    enabled: bool = False
+    admission_requires_worker: bool = False
+    audit_rate_tier0: float = Field(default=0.10, ge=0.0, le=1.0)
+    audit_rate_tier1: float = Field(default=0.05, ge=0.0, le=1.0)
+    audit_rate_tier2: float = Field(default=0.02, ge=0.0, le=1.0)
+    # sr25519 signing key (URI ``//Name`` / mnemonic / seed) for the worker that emits
+    # ExecutionProofs. This is the worker's OWN key, injected by the worker agent -- NEVER a
+    # master-side secret. Unset -> prism emits no signed proof (the base worker plane may still
+    # stamp a tier-0 proof from the manifest hash).
+    signing_key: str | None = Field(default=None, repr=False)
+
+
 class PrismSettings(ChallengeSettings):
     model_config = SettingsConfigDict(
-        env_prefix="PRISM_", env_file=".env", extra="ignore", populate_by_name=True
+        env_prefix="PRISM_",
+        env_file=".env",
+        extra="ignore",
+        populate_by_name=True,
+        env_nested_delimiter="__",
     )
+
+    worker_plane: WorkerPlaneConfig = Field(default_factory=WorkerPlaneConfig)
 
     database_url: str = Field(
         default="sqlite+aiosqlite:////data/prism.sqlite3",
