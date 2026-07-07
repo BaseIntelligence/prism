@@ -500,7 +500,7 @@ def test_result_route_body_contract(tmp_path, monkeypatch) -> None:
     with TestClient(create_app(settings)) as client:
         seed = client.post(
             "/internal/v1/bridge/submissions",
-            content=_bundle().encode(),
+            content=base64.b64decode(_bundle()),
             headers={
                 "Authorization": "Bearer secret",
                 "X-Base-Verified-Hotkey": "hk-owner",

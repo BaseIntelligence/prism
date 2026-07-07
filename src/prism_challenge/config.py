@@ -32,6 +32,12 @@ class WorkerPlaneConfig(BaseModel):
     audit_rate_tier0: float = Field(default=0.10, ge=0.0, le=1.0)
     audit_rate_tier1: float = Field(default=0.05, ge=0.0, le=1.0)
     audit_rate_tier2: float = Field(default=0.02, ge=0.0, le=1.0)
+    # Per-audit claim lease (seconds). The validator audit cycle claims each pending audit under
+    # this lease before replaying it, so in a MULTI-validator deployment each pending audit is
+    # replayed by at most one validator (idempotent-but-wasteful redundant GPU/CPU replays are
+    # avoided). A crashed claimant's lease expires and the audit becomes reclaimable; the default is
+    # generous enough to exceed a normal replay wall-time. Single-validator behaviour is unchanged.
+    audit_claim_lease_seconds: float = Field(default=1800.0, gt=0.0)
     # Server-side SECRET salt mixed into the audit sampler seed so audit selection cannot be
     # predicted from the public ``submission_id`` alone (a different salt selects a different set),
     # while staying reproducible for a fixed salt and preserving the per-tier rates (architecture.md

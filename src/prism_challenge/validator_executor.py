@@ -21,6 +21,7 @@ from collections.abc import Awaitable, Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 from .audit import AuditResolution, is_audit_unit_id, resolve_audit_unit
 from .coordination import (
@@ -300,32 +301,48 @@ async def run_validator_audit_cycle(
     worker: PrismWorker,
     work_unit_ids: Iterable[str] | None = None,
     audit_replay: AuditReplayFn | None = None,
+    claimant: str | None = None,
 ) -> PrismValidatorCycleSummary:
     """Execute the sampled prism AUDIT units assigned to this validator (architecture.md 3.5).
 
     Enumerates the pending ``audit:`` units (``list_pending_audit_units``, each id recognised via
     :func:`~prism_challenge.audit.is_audit_unit_id`), restricted to the caller's assigned
-    ``work_unit_ids`` when given (``None`` = every pending audit). For each, the audited
+    ``work_unit_ids`` when given (``None`` = every pending audit). Each candidate is CLAIMED under a
+    lightweight per-audit lease (``repository.claim_audit_unit``) BEFORE it is replayed, so in a
+    MULTI-validator deployment each pending audit is replayed by at most one validator instead of
+    every validator redundantly replaying the same set (idempotent but wasteful GPU/CPU). An audit
+    already claimed by another validator (live lease) is skipped, not replayed. Single-validator
+    behaviour is unchanged: the sole validator wins every claim. For each claimed audit, the audited
     submission's evaluation is replayed deterministically to obtain a fresh manifest sha256, and the
     replay result is resolved through :func:`~prism_challenge.audit.resolve_audit_unit` (the
     ``POST /internal/v1/audit_units/{id}/result`` target): a MATCHING hash passes (finalized score
     untouched); a DIVERGENT hash invalidates the score and records a ``worker_fault``; a replay
     failure resolves inconclusive (re-audited within bounds). This cycle NEVER executes a primary
     submission (VAL-FINAL-005). ``audit_replay`` defaults to the real container replay; tests inject
-    a deterministic hash.
+    a deterministic hash. ``claimant`` identifies the lease holder (defaults to a per-cycle id).
     """
 
     replay = audit_replay if audit_replay is not None else worker.replay_audit_manifest_sha256
     wanted = set(work_unit_ids) if work_unit_ids is not None else None
+    lease_seconds = worker.settings.worker_plane.audit_claim_lease_seconds
+    who = claimant or uuid4().hex
     pending = await worker.repository.list_pending_audit_units()
     resolutions: list[AuditResolution] = []
     pulled = 0
     executed = 0
+    skipped = 0
     for row in pending:
         audit_unit_id = str(row["audit_unit_id"])
         if not is_audit_unit_id(audit_unit_id):
             continue
         if wanted is not None and audit_unit_id not in wanted:
+            continue
+        if not await worker.repository.claim_audit_unit(
+            audit_unit_id, claimant=who, lease_seconds=lease_seconds
+        ):
+            # Another validator already holds a live claim on this audit: skip it rather than
+            # redundantly replay the same deterministic run (each audit is single-consumer).
+            skipped += 1
             continue
         pulled += 1
         submission_id = str(row["submission_id"])
@@ -349,7 +366,7 @@ async def run_validator_audit_cycle(
     return PrismValidatorCycleSummary(
         pulled=pulled,
         executed=executed,
-        skipped=0,
+        skipped=skipped,
         completed_submissions=(),
         audits=tuple(resolutions),
     )

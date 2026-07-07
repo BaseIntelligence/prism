@@ -44,7 +44,7 @@ from .proof import (
     compute_manifest_sha256,
     verify_execution_proof,
 )
-from .queue import PrismWorker
+from .queue import PrismWorker, WorkerFinalizationError
 
 logger = logging.getLogger(__name__)
 
@@ -85,7 +85,10 @@ class ResultIngestionError(Exception):
     * ``signature_invalid`` -- the worker signature does not verify for this unit
       (VAL-PRISM-007b/c);
     * ``manifest_missing`` -- the worker plane is on but no run manifest was forwarded, so there is
-      nothing to finalize from without re-executing (VAL-FINAL-001).
+      nothing to finalize from without re-executing (VAL-FINAL-001);
+    * ``finalization_failed`` -- worker-plane finalization failed for an internal/transient reason
+      (source-static derivation error): the submission is reverted to pending and NOTHING is
+      recorded, so the forwarded result is retried rather than sealed as a clean finalize.
     """
 
     def __init__(self, reason: str, message: str = "") -> None:
@@ -290,7 +293,16 @@ async def ingest_work_unit_result(
                 "manifest_missing",
                 "worker-plane finalization requires the forwarded run manifest",
             )
-        result_id = await worker.finalize_worker_result(submission_id, dict(manifest))
+        try:
+            result_id = await worker.finalize_worker_result(submission_id, dict(manifest))
+        except WorkerFinalizationError as exc:
+            # An internal/transient derivation failure is NOT a clean finalize: nothing is recorded
+            # (so a redelivery is genuinely retried, not idempotent-skipped) and the submission was
+            # reverted to pending. Surface it with a distinct, retryable reason.
+            raise ResultIngestionError(
+                "finalization_failed",
+                f"worker-plane finalization failed transiently and is retryable: {exc}",
+            ) from exc
     else:
         # Flag OFF: legacy in-process re-execution finalization, byte-for-byte unchanged.
         result_id = await worker.process_submission(submission_id)

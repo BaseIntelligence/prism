@@ -1179,6 +1179,34 @@ class PrismRepository:
             )
         return [dict(cast(Any, row)) for row in rows]
 
+    async def claim_audit_unit(
+        self, audit_unit_id: str, *, claimant: str, lease_seconds: float
+    ) -> bool:
+        """Atomically claim a pending audit unit under a lease; ``True`` when this caller won it.
+
+        A single-consumer guard for the validator audit cycle: in a MULTI-validator deployment each
+        validator enumerates the same pending audits, so without a claim they would all redundantly
+        replay every one. The claim is an atomic CAS -- only the caller whose ``UPDATE`` matches
+        (the unit is still ``pending`` AND unclaimed or its lease has expired) stamps ``claimed_at``
+        and wins; concurrent claimers get ``False`` and skip. The claim is orthogonal to the
+        lifecycle ``status`` (the unit stays ``pending``), so :func:`resolve_audit_unit` is
+        unaffected. A crashed claimant's lease expires (``claimed_at <= now - lease_seconds``) and
+        the audit becomes reclaimable, so a claim is never permanently orphaned.
+        """
+        from .audit import AUDIT_STATUS_PENDING
+
+        now = datetime.now(UTC)
+        now_str = now.isoformat()
+        cutoff = (now - timedelta(seconds=max(lease_seconds, 0.0))).isoformat()
+        async with self.database.connect() as conn:
+            rows = await conn.execute_fetchall(
+                "UPDATE audit_units SET claimed_at=?, claimed_by=? "
+                "WHERE audit_unit_id=? AND status=? "
+                "AND (claimed_at IS NULL OR claimed_at <= ?) RETURNING audit_unit_id",
+                (now_str, claimant, audit_unit_id, AUDIT_STATUS_PENDING, cutoff),
+            )
+        return bool(list(rows))
+
     async def record_audit_resolution(
         self,
         *,
@@ -1189,11 +1217,17 @@ class PrismRepository:
         resolved_manifest_sha256: str | None,
         error: str | None,
     ) -> None:
-        """Persist an audit unit's new lifecycle state after a resolution attempt."""
+        """Persist an audit unit's new lifecycle state after a resolution attempt.
+
+        The per-audit claim is cleared (``claimed_at``/``claimed_by`` -> NULL) on every resolution
+        so a unit returned to ``pending`` for a bounded re-audit is immediately reclaimable by any
+        validator rather than blocked until the previous claimant's lease expires.
+        """
         async with self.database.connect() as conn:
             await conn.execute(
                 "UPDATE audit_units SET status=?, attempts=?, resolution=?, "
-                "resolved_manifest_sha256=?, error=?, updated_at=? WHERE audit_unit_id=?",
+                "resolved_manifest_sha256=?, error=?, claimed_at=NULL, claimed_by=NULL, "
+                "updated_at=? WHERE audit_unit_id=?",
                 (
                     status,
                     int(attempts),

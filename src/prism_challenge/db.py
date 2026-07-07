@@ -192,6 +192,7 @@ SCHEMA = (
     "executor_kind TEXT NOT NULL DEFAULT 'validator', status TEXT NOT NULL,"
     "attempts INTEGER NOT NULL DEFAULT 0, max_attempts INTEGER NOT NULL DEFAULT 3,"
     "resolved_manifest_sha256 TEXT, resolution TEXT, error TEXT,"
+    "claimed_at TEXT, claimed_by TEXT,"
     "created_at TEXT NOT NULL, updated_at TEXT NOT NULL);"
     "CREATE INDEX IF NOT EXISTS idx_audit_units_submission ON audit_units(submission_id);"
     "CREATE INDEX IF NOT EXISTS idx_audit_units_status ON audit_units(status);"
@@ -346,9 +347,15 @@ async def _run_migrations(conn: aiosqlite.Connection) -> None:
         "executor_kind TEXT NOT NULL DEFAULT 'validator', status TEXT NOT NULL,"
         "attempts INTEGER NOT NULL DEFAULT 0, max_attempts INTEGER NOT NULL DEFAULT 3,"
         "resolved_manifest_sha256 TEXT, resolution TEXT, error TEXT,"
+        "claimed_at TEXT, claimed_by TEXT,"
         "created_at TEXT NOT NULL, updated_at TEXT NOT NULL);"
         "CREATE INDEX IF NOT EXISTS idx_audit_units_submission ON audit_units(submission_id);"
         "CREATE INDEX IF NOT EXISTS idx_audit_units_status ON audit_units(status);"
+    )
+    await _ensure_columns(
+        conn,
+        "audit_units",
+        {"claimed_at": "TEXT", "claimed_by": "TEXT"},
     )
     await conn.executescript(
         "CREATE TABLE IF NOT EXISTS worker_faults ("

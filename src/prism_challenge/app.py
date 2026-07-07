@@ -272,8 +272,15 @@ def create_app(
                 audit_sampler=sampler,
             )
         except ResultIngestionError as exc:
+            # A transient finalization failure is retryable -> 503 so the forwarder retries; the
+            # permanent rejections (bad proof / tampered / implausible manifest) stay 422.
+            code = (
+                status.HTTP_503_SERVICE_UNAVAILABLE
+                if exc.reason == "finalization_failed"
+                else status.HTTP_422_UNPROCESSABLE_ENTITY
+            )
             raise HTTPException(
-                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                code,
                 {"code": exc.reason, "detail": str(exc)},
             ) from exc
         except PlausibilityError as exc:

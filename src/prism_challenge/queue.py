@@ -69,6 +69,17 @@ class EvalWallTimeExceeded(RuntimeError):
     """
 
 
+class WorkerFinalizationError(RuntimeError):
+    """Raised when worker-plane finalization cannot derive its score inputs from the submission.
+
+    Deriving the deterministic source-static tail (snapshot -> component review -> anti-cheat) from
+    the submission SOURCE is an internal prism step, not a worker fault; a failure here is transient
+    and MUST NOT look like a clean finalize. The claimed submission is reverted to ``pending``
+    (retryable) and this signals ingestion to report the forwarded result as un-finalized rather
+    than terminally failed, so a transient derivation error is retried instead of silently sealed.
+    """
+
+
 EvaluatorFactory = Callable[[PrismSettings, PrismContext], PrismContainerEvaluator]
 
 
@@ -178,6 +189,11 @@ class PrismWorker:
         ``_evaluate_within_wall_time`` / ``_augment_with_heldout``). The held-out delta is SKIPPED
         (``skip_heldout=True``) so the score is bpb-only and the master-only secret val split
         (``base_eval_val_data_dir``) is never read (architecture.md 4).
+
+        A failure while deriving the source-static tail is transient and internal (not a worker
+        fault), so it does NOT terminally fail the submission: it reverts the claim to ``pending``
+        and raises :class:`WorkerFinalizationError` so ingestion reports the result as un-finalized
+        and retryable rather than a clean finalize with ``status=failed``.
         """
         submission = await self.repository.claim_submission(submission_id)
         if submission is None:
@@ -204,8 +220,17 @@ class PrismWorker:
                 allowed_import_roots=self._local_import_roots(snapshot),
             )
         except Exception as exc:
-            await self._fail_submission(submission_id, str(exc))
-            return submission_id
+            # Deriving the score inputs from the submission SOURCE failed. This is an internal,
+            # transient prism error (not a worker fault), so it MUST NOT masquerade as a clean
+            # finalize: revert the CAS claim to pending so the forwarded result stays retryable and
+            # signal ingestion instead of terminally sealing the submission as failed.
+            logger.warning(
+                "worker-plane finalization could not derive score inputs for %s: %s",
+                submission_id,
+                exc,
+            )
+            await self._revert_submission_to_pending(submission_id, str(exc))
+            raise WorkerFinalizationError(str(exc)) from exc
         await self._finalize_container_score(
             submission_id=submission_id,
             arch_hash=arch_hash,
@@ -819,6 +844,19 @@ class PrismWorker:
             await conn.execute(
                 "UPDATE submissions SET status=?, error=?, updated_at=? WHERE id=?",
                 (SubmissionStatus.FAILED.value, reason, now_iso(), submission_id),
+            )
+
+    async def _revert_submission_to_pending(self, submission_id: str, reason: str) -> None:
+        """Return a claimed (running) submission to ``pending`` so its work unit stays retryable.
+
+        Used when a worker-plane finalization fails for an internal/transient reason: the CAS claim
+        set the submission ``running``, and reverting it to ``pending`` (rather than terminally
+        ``failed``) lets a redelivered forwarded result re-claim and finalize it.
+        """
+        async with self.repository.database.connect() as conn:
+            await conn.execute(
+                "UPDATE submissions SET status=?, error=?, updated_at=? WHERE id=?",
+                (SubmissionStatus.PENDING.value, reason, now_iso(), submission_id),
             )
 
     def _review_rules(self) -> tuple[ReviewRule, ...]:
