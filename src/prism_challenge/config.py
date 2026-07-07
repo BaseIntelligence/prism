@@ -47,6 +47,20 @@ class WorkerPlaneConfig(BaseModel):
     # verifiable, so its EFFECTIVE tier is downgraded to 0 for audit sampling (architecture.md 3.4;
     # VAL-PRISM-019). Unset -> no tier-1 claim is verifiable, so every tier-1 claim downgrades to 0.
     pinned_image_digest: str | None = Field(default=None)
+    # EXPLICIT test-mode config that swaps the docker/broker executor for the repo's OWN CPU
+    # re-exec seam (``evaluator.mock_reexec.cpu_reexec_run``): a real, deterministic
+    # ``prism_run_manifest.v2`` is produced on CPU with no GPU/Docker/broker. This is opt-in and
+    # OFF by default (production always uses the real broker). It exists so a local mission harness
+    # can stand up a faithful worker/audit-replay path on a CPU-only host. When
+    # ``cpu_reexec_train_data_dir`` is unset a tiny locked train shard is staged under the eval
+    # artifact root; the tiny vocab/seq/step budget keep a scored run fast + deterministic.
+    cpu_reexec_test_mode: bool = False
+    cpu_reexec_train_data_dir: str | None = None
+    cpu_reexec_vocab_size: int = Field(default=64, ge=2)
+    cpu_reexec_sequence_length: int = Field(default=16, ge=2)
+    cpu_reexec_seed: int = 1234
+    cpu_reexec_step_budget: int = Field(default=24, ge=1)
+    cpu_reexec_train_lines: int = Field(default=64, ge=1)
 
 
 class PrismSettings(ChallengeSettings):

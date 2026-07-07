@@ -49,11 +49,19 @@ def create_app(
         worker_claim_timeout_seconds=app_settings.worker_claim_timeout_seconds,
         held_review_timeout_seconds=app_settings.held_review_timeout_seconds,
     )
-    ctx = PrismContext(
-        sequence_length=app_settings.sequence_length,
-        max_layers=app_settings.max_layers,
-        max_parameters=app_settings.max_parameters,
-    )
+    if app_settings.worker_plane.cpu_reexec_test_mode:
+        # Explicit CPU re-exec test mode: install the repo's own CPU seam (no GPU/Docker/broker)
+        # and re-execute with the tiny deterministic context (architecture.md 3.4; VAL-PRISM-013).
+        from .evaluator.cpu_test_mode import configure_cpu_reexec_test_mode, cpu_test_context
+
+        configure_cpu_reexec_test_mode(app_settings)
+        ctx = cpu_test_context(app_settings.worker_plane)
+    else:
+        ctx = PrismContext(
+            sequence_length=app_settings.sequence_length,
+            max_layers=app_settings.max_layers,
+            max_parameters=app_settings.max_parameters,
+        )
     worker = PrismWorker(
         repository,
         ctx,
