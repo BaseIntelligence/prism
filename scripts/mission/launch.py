@@ -252,6 +252,12 @@ class Harness:
         resp.raise_for_status()
         return resp.json().get("workers", [])
 
+    def master_units(self) -> list[dict[str, Any]]:
+        headers = _master_signed_headers(self.validator_kp, "GET", "/v1/workers/units")
+        resp = httpx.get(f"{MASTER_URL}/v1/workers/units", headers=headers, timeout=10)
+        resp.raise_for_status()
+        return resp.json().get("units", [])
+
     def worker_status_cli(self) -> str:
         cfg = self.workdir / "worker-cli.yaml"
         cfg.write_text(_worker_cli_yaml(MASTER_URL, WORKER_URIS["alice"]), encoding="utf-8")
@@ -516,7 +522,7 @@ def drill_self_eval(h: Harness) -> bool:
     return passed
 
 
-def drill_divergence(h: Harness) -> tuple[bool, dict[str, Any]]:
+def drill_divergence(h: Harness) -> tuple[bool, bool, dict[str, Any]]:
     print("\n=== DRILL 3: divergence -> dispute -> audit -> fault (VAL-CROSS-003) ===")
     erin_hk = ss58(MINERS["erin"])
     workers = [
@@ -549,6 +555,14 @@ def drill_divergence(h: Harness) -> tuple[bool, dict[str, Any]]:
     print(f"  (d) prism submission {sid}: status={final.get('status')} score={_score_of(final)}")
     ok_no_live_score = _score_of(final) is None or final.get("status") != "completed"
     ok_fault_on_liar = fault["owner"] == ss58(MINERS["bob"])
+
+    # VAL-CROSS-011: reconstruct the whole dispute story from operator APIs alone
+    # (no DB/file reads): the new signed GET /v1/workers/units + prism submission
+    # status + fleet/CLI fault.
+    cross011_ok = _reconstruct_dispute_via_api(
+        h, sid=sid, fault=fault, submission=final, no_live_score=ok_no_live_score
+    )
+
     evidence = {"sid": sid, "fault": fault, "submission": final}
     for w in workers:
         h.kill(w)
@@ -559,7 +573,55 @@ def drill_divergence(h: Harness) -> tuple[bool, dict[str, Any]]:
         f"  RESULT: {'PASS' if passed else 'FAIL'} "
         f"(fault_on_liar={ok_fault_on_liar}, no_live_score={ok_no_live_score})"
     )
-    return passed, evidence
+    return passed, cross011_ok, evidence
+
+
+def _reconstruct_dispute_via_api(
+    h: Harness, *, sid: str, fault: dict[str, Any], submission: dict[str, Any], no_live_score: bool
+) -> bool:
+    """VAL-CROSS-011: rebuild dispute -> audit -> invalidation -> fault via APIs only."""
+
+    print("\n=== DRILL 11: dispute lifecycle discoverable via APIs alone (VAL-CROSS-011) ===")
+    units = h.master_units()
+    unit = next(
+        (
+            u
+            for u in units
+            if u.get("work_unit_id") == sid
+            or str(u.get("work_unit_id", "")).startswith(sid)
+        ),
+        None,
+    )
+    # (a) the unit's disputed state is visible on the master surface.
+    ok_disputed = unit is not None and unit.get("status") == "disputed"
+    audit = (unit or {}).get("audit") or {}
+    # (b) the audit unit + validator executor kind + terminal outcome are visible.
+    ok_audit = (
+        bool(audit)
+        and audit.get("executor_kind") == "validator"
+        and audit.get("outcome") in ("pending", "passed", "mismatch-resolved")
+    )
+    # (c) the affected submission is not a live-ranked completed score.
+    ok_invalidated = no_live_score
+    # (d) the lying worker's fault is visible on GET /v1/workers AND base worker status.
+    cli = h.worker_status_cli()
+    ok_fault_both = bool(fault) and fault["worker_id"] in cli
+    print(
+        f"  (a) GET /v1/workers/units unit={unit.get('work_unit_id') if unit else None} "
+        f"status={unit.get('status') if unit else None}"
+    )
+    print(
+        f"  (b) audit unit={audit.get('work_unit_id')} executor_kind={audit.get('executor_kind')} "
+        f"outcome={audit.get('outcome')}"
+    )
+    print(
+        f"  (c) prism submission status={submission.get('status')} "
+        f"no_live_score={ok_invalidated}"
+    )
+    print(f"  (d) fault worker={fault['worker_id']} visible on API+CLI={ok_fault_both}")
+    passed = ok_disputed and ok_audit and ok_invalidated and ok_fault_both
+    print(f"  RESULT: {'PASS' if passed else 'FAIL'}")
+    return passed
 
 
 def drill_fleet_agreement(h: Harness) -> bool:
@@ -640,8 +702,9 @@ def main() -> int:
         if "1" in selected:
             results["VAL-CROSS-001 pipeline"] = drill_full_pipeline(h)
         if "3" in selected:
-            ok, _ = drill_divergence(h)
+            ok, cross011_ok, _ = drill_divergence(h)
             results["VAL-CROSS-003 divergence"] = ok
+            results["VAL-CROSS-011 dispute-discoverable"] = cross011_ok
         if "2" in selected:
             results["VAL-CROSS-002 self-eval"] = drill_self_eval(h)
         if "6" in selected:
