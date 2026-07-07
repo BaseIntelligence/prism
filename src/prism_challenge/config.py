@@ -19,6 +19,16 @@ class WorkerPlaneConfig(BaseModel):
 
     enabled: bool = False
     admission_requires_worker: bool = False
+    # Base master coordination base URL the admission rule queries for >=1 active worker bound to
+    # the submitting hotkey (``GET {master_base_url}/v1/workers/active?hotkey=``). Auth reuses the
+    # existing prism<->master bridge shared token as the bearer. Unset while
+    # ``admission_requires_worker`` is on => admission fails closed (no submission accepted), which
+    # is the same deterministic rejection as an explicit zero-worker answer (architecture.md 3.5).
+    master_base_url: str | None = None
+    # Bounded admission-check latency (seconds). A master that is unreachable/slow/5xx must never
+    # hang a submission: the query is capped here and any failure folds into the fail-closed
+    # NO_ACTIVE_WORKER rejection (architecture.md 3.5; VAL-PRISM-020).
+    admission_timeout_seconds: float = Field(default=5.0, gt=0.0)
     audit_rate_tier0: float = Field(default=0.10, ge=0.0, le=1.0)
     audit_rate_tier1: float = Field(default=0.05, ge=0.0, le=1.0)
     audit_rate_tier2: float = Field(default=0.02, ge=0.0, le=1.0)

@@ -8,6 +8,7 @@ from typing import Annotated, Any
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, status
 
+from .admission import enforce_admission
 from .audit import audit_sampler_from_config, resolve_audit_unit
 from .auth import authenticate_internal, authenticate_validator
 from .config import PrismSettings, settings
@@ -297,6 +298,7 @@ def create_app(
         )
         if len(submission.code.encode()) > app_settings.max_code_bytes:
             raise HTTPException(status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, "submission too large")
+        await enforce_admission(app_settings, x_base_verified_hotkey)
         return await repository.create_submission(x_base_verified_hotkey, submission)
 
     return app
