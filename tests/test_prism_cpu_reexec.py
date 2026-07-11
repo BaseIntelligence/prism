@@ -7,6 +7,12 @@ from hashlib import sha256
 from pathlib import Path
 
 import pytest
+from base.challenge_sdk.executor import (
+    DockerExecutor,
+    DockerLimits,
+    DockerMount,
+    DockerRunSpec,
+)
 from conftest import signed_headers, two_script_bundle
 from fastapi.testclient import TestClient
 
@@ -22,12 +28,6 @@ from prism_challenge.evaluator.mock_reexec import (
 from prism_challenge.evaluator.schemas import RUN_MANIFEST_V2_FILENAME
 from prism_challenge.evaluator.scoring import score_prequential_bpb
 from prism_challenge.evaluator.source_similarity import SourceFile
-from prism_challenge.sdk.executors.docker import (
-    DockerExecutor,
-    DockerLimits,
-    DockerMount,
-    DockerRunSpec,
-)
 
 # A tiny CPU-torch two-script bundle: a byte-level next-token TinyLM trained one step at a time over
 # the challenge instrument. No GPU, no tokenizer (byte basis), deterministic under the forced seed.

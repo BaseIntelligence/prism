@@ -4,6 +4,7 @@ import json
 from typing import Any
 
 import anyio
+from base.challenge_sdk.executor import DockerRunResult
 from conftest import signed_headers, two_script_bundle
 from fastapi.testclient import TestClient
 
@@ -14,7 +15,6 @@ from prism_challenge.evaluator import llm_review as llm
 from prism_challenge.evaluator.llm_review import LlmReviewConfig, review_code
 from prism_challenge.models import SubmissionCreate
 from prism_challenge.repository import PrismRepository
-from prism_challenge.sdk.executors.docker import DockerRunResult
 
 REJECT_REASON = "training.py never steps the optimizer; dead no-op loop cannot learn the model"
 ALLOW_REASON = "architecture and training loop are coherent; real from-scratch learning procedure"

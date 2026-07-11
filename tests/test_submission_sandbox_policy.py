@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 import pytest
+from base.challenge_sdk.executor import DockerRunResult
 
 from prism_challenge.config import PrismSettings
 from prism_challenge.evaluator.container import ContainerEvaluationError, PrismContainerEvaluator
 from prism_challenge.evaluator.interface import PrismContext
 from prism_challenge.evaluator.sandbox import SandboxViolation, inspect_code
 from prism_challenge.evaluator.source_similarity import SourceFile
-from prism_challenge.sdk.executors.docker import DockerRunResult
 
 CONTRACT = "\ndef build_model(ctx):\n    pass\n\ndef get_recipe(ctx):\n    return {}\n"
 

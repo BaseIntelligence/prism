@@ -2,7 +2,7 @@ slug: prism
 name: Prism
 version: 0.1.0
 api_version: "1.0"
-sdk_version: base-challenge-1
+sdk_version: 1.0.0
 database_url: sqlite+aiosqlite:////data/prism.sqlite3
 database_path: /tmp/prism.sqlite3
 shared_token_file: /run/secrets/base/challenge_token

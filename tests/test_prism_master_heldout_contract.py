@@ -23,6 +23,7 @@ from hashlib import sha256
 from pathlib import Path
 
 import pytest
+from base.challenge_sdk.executor import DockerRunResult, DockerRunSpec
 from conftest import signed_headers, two_script_bundle
 from fastapi.testclient import TestClient
 
@@ -34,7 +35,6 @@ from prism_challenge.evaluator.mock_reexec import cpu_reexec_run
 from prism_challenge.evaluator.schemas import RUN_MANIFEST_V2_FILENAME
 from prism_challenge.evaluator.scoring import bpb_to_final_score, score_prequential_bpb
 from prism_challenge.evaluator.source_similarity import SourceFile
-from prism_challenge.sdk.executors.docker import DockerRunResult, DockerRunSpec
 
 # A tiny byte-level CPU two-script bundle: deterministic under the forced seed, no GPU/tokenizer.
 TINY_ARCH = """

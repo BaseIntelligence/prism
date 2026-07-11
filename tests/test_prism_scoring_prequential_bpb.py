@@ -4,6 +4,7 @@ import json
 import math
 
 import pytest
+from base.challenge_sdk.executor import DockerRunResult
 from conftest import signed_headers, two_script_bundle
 from fastapi.testclient import TestClient
 
@@ -17,7 +18,6 @@ from prism_challenge.evaluator.scoring import (
     bpb_to_final_score,
     score_prequential_bpb,
 )
-from prism_challenge.sdk.executors.docker import DockerRunResult
 
 SCORING_ARCH = """
 import torch

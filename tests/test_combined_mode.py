@@ -8,6 +8,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
+from base.challenge_sdk import app_factory
 from fastapi import APIRouter
 from fastapi.testclient import TestClient
 
@@ -16,7 +17,6 @@ from prism_challenge.app import create_app
 from prism_challenge.config import PrismSettings
 from prism_challenge.evaluator.container import PrismContainerEvaluator
 from prism_challenge.evaluator.interface import PrismContext
-from prism_challenge.sdk import app_factory
 from prism_challenge.worker import run_worker_loop
 
 

@@ -4,10 +4,9 @@ import logging
 from pathlib import Path
 from typing import Literal
 
+from base.challenge_sdk.config import ChallengeSettings
 from pydantic import AliasChoices, BaseModel, Field
 from pydantic_settings import SettingsConfigDict
-
-from .sdk.config import ChallengeSettings
 
 
 class WorkerPlaneConfig(BaseModel):
@@ -89,7 +88,8 @@ class PrismSettings(ChallengeSettings):
     name: str = "Prism"
     version: str = "0.1.0"
     api_version: str = "1.0"
-    sdk_version: str = "base-challenge-1"
+    sdk_version: str = "1.0.0"
+    port: int = 8080
     database_path: Path = Path("/tmp/prism.sqlite3")
     shared_token: str | None = Field(
         default=None,

@@ -5,6 +5,7 @@ import logging
 from datetime import UTC, datetime
 from typing import Any, SupportsFloat, SupportsInt, cast
 
+from base.challenge_sdk.roles import public_route
 from fastapi import (
     APIRouter,
     BackgroundTasks,
@@ -46,7 +47,6 @@ from .models import (
     TrainingVariantEntry,
 )
 from .repository import PrismRepository, epoch_id_for
-from .sdk import public_route
 
 logger = logging.getLogger(__name__)
 
@@ -191,9 +191,7 @@ async def gpu_status(
         by_status[status_value] = int(cast(SupportsInt, row["lease_count"]))
         if status_value == "active":
             total_gpus = int(cast(SupportsInt, row["gpu_total"]))
-    by_tier = {
-        str(row["tier"]): int(cast(SupportsInt, row["lease_count"])) for row in tier_rows
-    }
+    by_tier = {str(row["tier"]): int(cast(SupportsInt, row["lease_count"])) for row in tier_rows}
     return GpuStatusSummary(
         total_gpus=total_gpus,
         active_leases=by_status.get("active", 0),

@@ -6,6 +6,7 @@ import json
 from collections.abc import Callable, Coroutine, Mapping
 from typing import Annotated, Any
 
+from base.challenge_sdk.app_factory import create_challenge_app
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, status
 
 from .admission import enforce_admission
@@ -33,7 +34,6 @@ from .plausibility import PlausibilityError
 from .queue import PrismWorker
 from .repository import PrismRepository
 from .routes import router
-from .sdk import create_challenge_app
 from .weights import get_weights
 
 
@@ -227,9 +227,7 @@ def create_app(
             raise HTTPException(status.HTTP_404_NOT_FOUND, "audit unit not found") from exc
         return resolution.to_response()
 
-    @app.post(
-        "/internal/v1/work_units/result", dependencies=[Depends(authenticate_internal)]
-    )
+    @app.post("/internal/v1/work_units/result", dependencies=[Depends(authenticate_internal)])
     async def work_unit_result(request: Request) -> dict[str, object]:
         """Accept a base-reconciled worker result (``{work_unit_id, submission_ref, result}``).
 
@@ -251,9 +249,7 @@ def create_app(
         try:
             payload = json.loads(await request.body())
         except (json.JSONDecodeError, UnicodeDecodeError) as exc:
-            raise HTTPException(
-                status.HTTP_400_BAD_REQUEST, "invalid JSON result body"
-            ) from exc
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "invalid JSON result body") from exc
         if not isinstance(payload, dict):
             raise HTTPException(status.HTTP_400_BAD_REQUEST, "result body must be an object")
         work_unit_id = payload.get("work_unit_id")

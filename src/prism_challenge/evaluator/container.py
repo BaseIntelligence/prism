@@ -10,9 +10,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any
 
-from ..config import PrismSettings
-from ..gpu_scheduler import GpuLease
-from ..sdk.executors.docker import (
+from base.challenge_sdk.executor import (
     DockerExecutor,
     DockerExecutorError,
     DockerLimits,
@@ -20,6 +18,9 @@ from ..sdk.executors.docker import (
     DockerRunResult,
     DockerRunSpec,
 )
+
+from ..config import PrismSettings
+from ..gpu_scheduler import GpuLease
 from .checkpoint_publisher import CheckpointPublisher
 from .heldout import HeldoutResult, compute_heldout_metrics
 from .interface import PrismContext

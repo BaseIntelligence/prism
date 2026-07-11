@@ -9,6 +9,8 @@ from pathlib import Path
 from typing import Any, cast
 from uuid import uuid4
 
+from base.challenge_sdk.executor import DockerExecutor, DockerLimits, DockerMount, DockerRunSpec
+
 from .config import PrismSettings
 from .db import dumps
 from .evaluator import llm_review, source_similarity
@@ -45,7 +47,6 @@ from .gpu_scheduler import (
 from .models import SubmissionStatus
 from .proof import compute_manifest_sha256, read_manifest_sha256
 from .repository import PrismRepository, now_iso
-from .sdk.executors.docker import DockerExecutor, DockerLimits, DockerMount, DockerRunSpec
 
 DEFAULT_REVIEW_RULES = (
     ReviewRule("prism:no-secret-exfiltration", "Do not read, infer, print, or transmit secrets."),
@@ -206,12 +207,11 @@ class PrismWorker:
         try:
             snapshot = self._snapshot_from_submission(code, filename, metadata)
             component_review = self._component_review(snapshot)
-            code_for_eval = self._entrypoint_code(
-                snapshot, component_review.components.entrypoint
+            code_for_eval = self._entrypoint_code(snapshot, component_review.components.entrypoint)
+            arch_hash = (
+                component_review.fingerprints.family_hash
+                or sha256(code_for_eval.encode()).hexdigest()
             )
-            arch_hash = component_review.fingerprints.family_hash or sha256(
-                code_for_eval.encode()
-            ).hexdigest()
             arch_name = architecture_name(component_review.components)
             previous = await self.repository.previous_codes(submission_id)
             anti = evaluate_anti_cheat(
@@ -270,9 +270,10 @@ class PrismWorker:
             snapshot = self._snapshot_from_submission(code, filename, metadata)
             component_review = self._component_review(snapshot)
             code_for_eval = self._entrypoint_code(snapshot, component_review.components.entrypoint)
-            arch_hash = component_review.fingerprints.family_hash or sha256(
-                code_for_eval.encode()
-            ).hexdigest()
+            arch_hash = (
+                component_review.fingerprints.family_hash
+                or sha256(code_for_eval.encode()).hexdigest()
+            )
             execution_mode = execution_mode_from_value(metadata.get("execution_mode"))
         except Exception:
             return None

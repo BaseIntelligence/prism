@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import pytest
+from base.challenge_sdk.executor import DockerRunResult
 
 from prism_challenge.config import PrismSettings
 from prism_challenge.evaluator.container import (
@@ -10,7 +11,6 @@ from prism_challenge.evaluator.container import (
 )
 from prism_challenge.evaluator.interface import PrismContext
 from prism_challenge.evaluator.modes import execution_mode_from_value
-from prism_challenge.sdk.executors.docker import DockerRunResult
 
 CONTRACT_CODE = "def build_model(ctx): pass\ndef get_recipe(ctx): return {}"
 

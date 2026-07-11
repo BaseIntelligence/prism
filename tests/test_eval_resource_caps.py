@@ -5,6 +5,7 @@ import sqlite3
 import threading
 
 import pytest
+from base.challenge_sdk.executor import DockerRunResult
 from conftest import signed_headers, two_script_bundle
 from fastapi.testclient import TestClient
 
@@ -19,7 +20,6 @@ from prism_challenge.gpu_scheduler import (
     GpuLeaseScheduler,
 )
 from prism_challenge.repository import PrismRepository
-from prism_challenge.sdk.executors.docker import DockerRunResult
 
 REMOTE_ONLY_CODE = """
 import torch

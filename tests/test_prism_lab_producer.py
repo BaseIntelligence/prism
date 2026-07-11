@@ -11,13 +11,13 @@ import json
 import math
 import sqlite3
 
+from base.challenge_sdk.executor import DockerRunResult
 from conftest import signed_headers, two_script_bundle
 from fastapi.testclient import TestClient
 
 from prism_challenge.app import create_app
 from prism_challenge.config import PrismSettings
 from prism_challenge.evaluator.schemas import RUN_MANIFEST_V2_FILENAME
-from prism_challenge.sdk.executors.docker import DockerRunResult
 
 ARCH_A = """
 ARCHITECTURE_NAME = "Rotary MoE v3!!"
@@ -198,17 +198,33 @@ def test_finalize_populates_lab_tables(tmp_path, monkeypatch) -> None:
     db_path = tmp_path / "lab.sqlite3"
 
     with TestClient(create_app(_settings(tmp_path))) as client:
-        sub1 = _submit(client, two_script_bundle(arch_code=ARCH_A, train_code=_train(1)),
-                       hotkey="hkA", nonce="n1")
+        sub1 = _submit(
+            client,
+            two_script_bundle(arch_code=ARCH_A, train_code=_train(1)),
+            hotkey="hkA",
+            nonce="n1",
+        )
         _process(client)
-        sub2 = _submit(client, two_script_bundle(arch_code=ARCH_A, train_code=_train(2)),
-                       hotkey="hkB", nonce="n2")
+        sub2 = _submit(
+            client,
+            two_script_bundle(arch_code=ARCH_A, train_code=_train(2)),
+            hotkey="hkB",
+            nonce="n2",
+        )
         _process(client)
-        sub3 = _submit(client, two_script_bundle(arch_code=ARCH_A, train_code=_train(3)),
-                       hotkey="hkC", nonce="n3")
+        sub3 = _submit(
+            client,
+            two_script_bundle(arch_code=ARCH_A, train_code=_train(3)),
+            hotkey="hkC",
+            nonce="n3",
+        )
         _process(client)
-        sub4 = _submit(client, two_script_bundle(arch_code=ARCH_B, train_code=_train(1)),
-                       hotkey="hkD", nonce="n4")
+        sub4 = _submit(
+            client,
+            two_script_bundle(arch_code=ARCH_B, train_code=_train(1)),
+            hotkey="hkD",
+            nonce="n4",
+        )
         _process(client)
         for sid in (sub1, sub2, sub3, sub4):
             assert client.get(f"/v1/submissions/{sid}").json()["status"] == "completed"

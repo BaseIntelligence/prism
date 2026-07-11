@@ -8,8 +8,7 @@ from types import SimpleNamespace
 from urllib.error import HTTPError, URLError
 
 import pytest
-
-from prism_challenge.sdk.executors.docker import (
+from base.challenge_sdk.executor import (
     DockerContainerInfo,
     DockerExecutor,
     DockerExecutorError,
@@ -312,7 +311,7 @@ def test_list_containers_reports_cli_errors(monkeypatch: pytest.MonkeyPatch) -> 
 
 
 def test_broker_backend_posts_run_request(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    import prism_challenge.sdk.executors.docker as module
+    import base.challenge_sdk.executors.docker as module
 
     (tmp_path / "input.txt").write_text("ok", encoding="utf-8")
     captured: dict[str, object] = {}
@@ -370,7 +369,7 @@ def test_broker_backend_posts_run_request(monkeypatch: pytest.MonkeyPatch, tmp_p
 
 
 def test_broker_backend_lists_containers(monkeypatch: pytest.MonkeyPatch) -> None:
-    import prism_challenge.sdk.executors.docker as module
+    import base.challenge_sdk.executors.docker as module
 
     captured: dict[str, object] = {}
 
@@ -416,7 +415,7 @@ def test_broker_backend_lists_containers(monkeypatch: pytest.MonkeyPatch) -> Non
 
 
 def test_broker_cleanup_posts_job_id(monkeypatch: pytest.MonkeyPatch) -> None:
-    import prism_challenge.sdk.executors.docker as module
+    import base.challenge_sdk.executors.docker as module
 
     captured: dict[str, object] = {}
 
@@ -448,7 +447,7 @@ def test_broker_cleanup_posts_job_id(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_broker_list_rejects_invalid_payload(monkeypatch: pytest.MonkeyPatch) -> None:
-    import prism_challenge.sdk.executors.docker as module
+    import base.challenge_sdk.executors.docker as module
 
     class Response:
         def __enter__(self):
@@ -487,7 +486,7 @@ def test_broker_requires_url_and_token(tmp_path: Path) -> None:
 
 
 def test_broker_reads_token_file(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    import prism_challenge.sdk.executors.docker as module
+    import base.challenge_sdk.executors.docker as module
 
     token_file = tmp_path / "token"
     token_file.write_text("file-token\n", encoding="utf-8")
@@ -519,7 +518,7 @@ def test_broker_reads_token_file(monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 
 
 def test_broker_errors_are_wrapped(monkeypatch: pytest.MonkeyPatch) -> None:
-    import prism_challenge.sdk.executors.docker as module
+    import base.challenge_sdk.executors.docker as module
 
     class ErrorBody(BytesIO):
         def read(self, *args: object, **kwargs: object) -> bytes:

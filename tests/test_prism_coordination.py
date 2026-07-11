@@ -13,6 +13,7 @@ import sqlite3
 from pathlib import Path
 
 import pytest
+from base.challenge_sdk.executor import DockerRunSpec
 from fastapi.testclient import TestClient
 
 from prism_challenge.app import create_app
@@ -28,7 +29,6 @@ from prism_challenge.coordination import (
 )
 from prism_challenge.evaluator.mock_reexec import cpu_reexec_run
 from prism_challenge.models import SubmissionCreate
-from prism_challenge.sdk.executors.docker import DockerRunSpec
 from prism_challenge.validator_executor import execute_work_unit, run_validator_cycle
 
 # A tiny CPU-torch byte-level next-token model: trains one step at a time over the challenge

@@ -5,6 +5,7 @@ from hashlib import sha256
 from typing import Any
 
 import anyio
+from base.challenge_sdk.executor import DockerRunResult
 from conftest import signed_headers, two_script_bundle
 from fastapi.testclient import TestClient
 
@@ -19,7 +20,6 @@ from prism_challenge.evaluator.llm_review import (
 )
 from prism_challenge.models import SubmissionCreate
 from prism_challenge.repository import PrismRepository
-from prism_challenge.sdk.executors.docker import DockerRunResult
 
 ALLOW_REASON = "architecture and training loop are coherent; real from-scratch learning procedure"
 REJECT_REASON = "training.py never steps the optimizer; dead no-op loop cannot learn the model"

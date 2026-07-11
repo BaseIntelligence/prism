@@ -13,12 +13,12 @@ import json
 from pathlib import Path
 from typing import Any
 
+from base.challenge_sdk.executor import DockerRunResult
 from conftest import VALID_CODE, signed_headers, two_script_bundle
 from fastapi.testclient import TestClient
 
 from prism_challenge.app import create_app
 from prism_challenge.config import PrismSettings, WorkerPlaneConfig
-from prism_challenge.sdk.executors.docker import DockerRunResult
 
 _INTERNAL_HEADERS = {"Authorization": "Bearer secret", "X-Base-Challenge-Slug": "prism"}
 
@@ -35,9 +35,7 @@ def _fake_run(self: Any, spec: Any, timeout_seconds: Any) -> DockerRunResult:
             "tokens_seen": 800,
         },
     }
-    (artifact_dir / "prism_run_manifest.v2.json").write_text(
-        json.dumps(manifest), encoding="utf-8"
-    )
+    (artifact_dir / "prism_run_manifest.v2.json").write_text(json.dumps(manifest), encoding="utf-8")
     return DockerRunResult(container_name="prism-eval", stdout="", stderr="", returncode=0)
 
 

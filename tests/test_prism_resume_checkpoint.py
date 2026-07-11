@@ -13,6 +13,8 @@ import json
 from hashlib import sha256
 from pathlib import Path
 
+from base.challenge_sdk.executor import DockerRunSpec
+
 from prism_challenge.config import PrismSettings
 from prism_challenge.evaluator.checkpoint_publisher import (
     CheckpointUpload,
@@ -26,7 +28,6 @@ from prism_challenge.evaluator.interface import PrismContext
 from prism_challenge.evaluator.mock_reexec import cpu_reexec_run
 from prism_challenge.evaluator.scoring import score_prequential_bpb
 from prism_challenge.evaluator.source_similarity import SourceFile
-from prism_challenge.sdk.executors.docker import DockerRunSpec
 
 TINY_ARCH = """
 import torch

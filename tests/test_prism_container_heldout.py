@@ -6,6 +6,7 @@ import sqlite3
 from pathlib import Path
 
 import pytest
+from base.challenge_sdk.executor import DockerRunResult
 from conftest import signed_headers, two_script_bundle
 from fastapi.testclient import TestClient
 
@@ -13,7 +14,6 @@ from prism_challenge.app import create_app
 from prism_challenge.config import PrismSettings
 from prism_challenge.evaluator.schemas import RUN_MANIFEST_V2_FILENAME
 from prism_challenge.evaluator.scoring import score_prequential_bpb
-from prism_challenge.sdk.executors.docker import DockerRunResult
 
 HELDOUT_ARCH = """
 import torch

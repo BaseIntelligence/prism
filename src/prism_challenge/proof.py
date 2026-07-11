@@ -33,11 +33,15 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
 
-from pydantic import BaseModel
+from base.challenge_sdk.proof import (
+    EXECUTION_PROOF_VERSION,
+    ExecutionProof,
+    ProviderInfo,
+    WorkerSignature,
+    execution_proof_signing_payload,
+)
 
 from .auth import verify_hotkey_signature
-
-EXECUTION_PROOF_VERSION = 1
 
 #: Result-payload key carrying the serialized :class:`ExecutionProof`. Identical to the base worker
 #: plane key so a proof prism emits is passed through unchanged by the base ``WorkerProofExecutor``.
@@ -68,38 +72,6 @@ PROVIDER_ENV_KEYS: tuple[str, ...] = (
 
 #: Documented attestation payload keys (architecture.md 3.4).
 ATTESTATION_KEYS: tuple[str, ...] = ("tdx_quote_b64", "gpu_eat_jwt")
-
-
-class ProviderInfo(BaseModel):
-    """Provider/pod identity carried by an ExecutionProof (architecture 3.4)."""
-
-    name: str
-    executor_id: str | None = None
-    pod_id: str | None = None
-    miner_hotkey: str | None = None
-
-
-class WorkerSignature(BaseModel):
-    """The worker's sr25519 signature binding a manifest hash to a work unit."""
-
-    worker_pubkey: str
-    sig: str
-
-
-class ExecutionProof(BaseModel):
-    """Proof envelope attached to every worker result (architecture 3.4).
-
-    The schema is byte-compatible with the base worker plane's ``ExecutionProof`` so a proof prism
-    emits round-trips through the platform result path unchanged.
-    """
-
-    version: int = EXECUTION_PROOF_VERSION
-    tier: int = 0
-    manifest_sha256: str
-    image_digest: str | None = None
-    provider: ProviderInfo | None = None
-    worker_signature: WorkerSignature
-    attestation: dict[str, Any] | None = None
 
 
 @runtime_checkable
@@ -173,15 +145,6 @@ def read_manifest_sha256(path: str | os.PathLike[str]) -> str:
     """sha256 hex of the exact on-disk bytes of the manifest file at ``path``."""
 
     return manifest_sha256_from_bytes(Path(path).read_bytes())
-
-
-def execution_proof_signing_payload(*, manifest_sha256: str, unit_id: str) -> bytes:
-    """The exact bytes an ExecutionProof signature covers (pinned format).
-
-    ``sha256`` digest of the UTF-8 bytes of ``{manifest_sha256}:{unit_id}``.
-    """
-
-    return hashlib.sha256(f"{manifest_sha256}:{unit_id}".encode()).digest()
 
 
 def has_attestation(attestation: Any) -> bool:
@@ -326,9 +289,7 @@ def verify_execution_proof(
     payload = execution_proof_signing_payload(
         manifest_sha256=proof.manifest_sha256, unit_id=unit_id
     )
-    return bool(
-        verify(proof.worker_signature.worker_pubkey, payload, proof.worker_signature.sig)
-    )
+    return bool(verify(proof.worker_signature.worker_pubkey, payload, proof.worker_signature.sig))
 
 
 def _resolve_manifest_sha256(
@@ -339,9 +300,7 @@ def _resolve_manifest_sha256(
 ) -> str:
     provided = [item for item in (manifest, manifest_bytes, manifest_path) if item is not None]
     if len(provided) != 1:
-        raise ValueError(
-            "exactly one of manifest, manifest_bytes, manifest_path is required"
-        )
+        raise ValueError("exactly one of manifest, manifest_bytes, manifest_path is required")
     if manifest is not None:
         return compute_manifest_sha256(manifest)
     if manifest_bytes is not None:

@@ -4,6 +4,7 @@ import logging
 from pathlib import Path
 
 import pytest
+from base.challenge_sdk.executor import DockerRunResult
 
 from prism_challenge.config import PrismSettings
 from prism_challenge.evaluator.container import (
@@ -11,7 +12,6 @@ from prism_challenge.evaluator.container import (
     PrismContainerEvaluator,
 )
 from prism_challenge.evaluator.interface import PrismContext
-from prism_challenge.sdk.executors.docker import DockerRunResult
 
 CONTRACT_CODE = "def build_model(ctx): pass\ndef get_recipe(ctx): return {}"
 
@@ -98,12 +98,12 @@ def test_full_stdout_stderr_persisted_on_failure(
         )
 
     log_dir = evaluator.settings.resolved_eval_log_dir
-    assert (
-        log_dir / "sub-fail.attempt-1.stdout.log"
-    ).read_text(encoding="utf-8") == "partial stdout before crash\n"
-    assert "RuntimeError: boom" in (
-        log_dir / "sub-fail.attempt-1.stderr.log"
-    ).read_text(encoding="utf-8")
+    assert (log_dir / "sub-fail.attempt-1.stdout.log").read_text(
+        encoding="utf-8"
+    ) == "partial stdout before crash\n"
+    assert "RuntimeError: boom" in (log_dir / "sub-fail.attempt-1.stderr.log").read_text(
+        encoding="utf-8"
+    )
 
 
 def test_stdout_stderr_persisted_on_timeout(
@@ -128,19 +128,15 @@ def test_stdout_stderr_persisted_on_timeout(
         )
 
     log_dir = evaluator.settings.resolved_eval_log_dir
-    assert (
-        log_dir / "sub-timeout.attempt-2.stdout.log"
-    ).read_text(encoding="utf-8") == "hung stdout"
+    assert (log_dir / "sub-timeout.attempt-2.stdout.log").read_text(
+        encoding="utf-8"
+    ) == "hung stdout"
 
 
-def test_persist_eval_logs_logs_info_line(
-    tmp_path: Path, caplog: pytest.LogCaptureFixture
-) -> None:
+def test_persist_eval_logs_logs_info_line(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
     evaluator = _evaluator(tmp_path)
     with caplog.at_level(logging.INFO, logger="prism_challenge.evaluator.container"):
-        paths = evaluator._persist_eval_logs(
-            "sub-info", 5, DockerRunResult("c", "out", "err", 0)
-        )
+        paths = evaluator._persist_eval_logs("sub-info", 5, DockerRunResult("c", "out", "err", 0))
 
     assert paths is not None
     stdout_path, stderr_path = paths
@@ -163,9 +159,7 @@ def test_persist_eval_logs_is_best_effort_on_oserror(
     monkeypatch.setattr(Path, "mkdir", boom_mkdir)
 
     with caplog.at_level(logging.WARNING, logger="prism_challenge.evaluator.container"):
-        result = evaluator._persist_eval_logs(
-            "sub-x", 1, DockerRunResult("c", "out", "err", 0)
-        )
+        result = evaluator._persist_eval_logs("sub-x", 1, DockerRunResult("c", "out", "err", 0))
 
     assert result is None
     assert not evaluator.settings.resolved_eval_log_dir.exists()

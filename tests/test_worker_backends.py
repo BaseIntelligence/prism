@@ -2,12 +2,12 @@ from __future__ import annotations
 
 import json
 
+from base.challenge_sdk.executor import DockerRunResult
 from conftest import signed_headers, two_script_bundle
 from fastapi.testclient import TestClient
 
 from prism_challenge.app import create_app
 from prism_challenge.config import PrismSettings
-from prism_challenge.sdk.executors.docker import DockerRunResult
 
 # The static param-count phase (architecture.md section 4.1) instantiates build_model under the
 # forced seed in the worker before any GPU work, so build_model must construct a real nn.Module.
@@ -205,7 +205,7 @@ def test_base_gpu_version_advertises_docker_executor(tmp_path):
     )
     with TestClient(create_app(settings)) as client:
         version = client.get("/version").json()
-    assert "docker_executor" in version["capabilities"]
+        assert "challenge.ordinary_proof" in version["capabilities"]
     assert "lium" not in version["capabilities"]
 
 

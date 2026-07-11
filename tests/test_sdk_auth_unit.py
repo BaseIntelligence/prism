@@ -1,10 +1,9 @@
 from __future__ import annotations
 
 import pytest
+from base.challenge_sdk.auth import build_internal_auth_dependency, load_shared_token
+from base.challenge_sdk.config import ChallengeSettings
 from fastapi import HTTPException
-
-from prism_challenge.sdk.auth import build_internal_auth_dependency, load_shared_token
-from prism_challenge.sdk.config import ChallengeSettings
 
 
 def _settings(**overrides) -> ChallengeSettings:

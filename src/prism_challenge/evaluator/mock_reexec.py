@@ -23,7 +23,7 @@ import sys
 from collections.abc import Callable, MutableSequence
 from pathlib import Path
 
-from ..sdk.executors.docker import DockerRunResult, DockerRunSpec
+from base.challenge_sdk.executor import DockerRunResult, DockerRunSpec
 
 WORKSPACE_TARGET = "/workspace"
 ARTIFACTS_TARGET = "/artifacts"

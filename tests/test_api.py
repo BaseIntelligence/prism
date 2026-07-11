@@ -6,12 +6,12 @@ import json
 import zipfile
 
 import pytest
+from base.challenge_sdk.executor import DockerRunResult
 from conftest import VALID_CODE, signed_headers, two_script_bundle
 from fastapi.testclient import TestClient
 
 from prism_challenge.app import create_app
 from prism_challenge.config import PrismSettings
-from prism_challenge.sdk.executors.docker import DockerRunResult
 
 
 @pytest.fixture
@@ -50,12 +50,12 @@ def test_size_check_rejects_just_over_cap(small_cap_client):
     assert response.json()["detail"] == "submission too large"
 
 
-
 def test_health_version_and_internal_auth(client):
     assert client.get("/health").json()["slug"] == "prism"
     capabilities = client.get("/version").json()["capabilities"]
     assert "nas" not in capabilities
-    assert "get_weights" in capabilities
+    assert "challenge.scoring" in capabilities
+    assert "challenge.ordinary_proof" in capabilities
     assert client.get("/internal/v1/get_weights").status_code == 401
     response = client.get(
         "/internal/v1/get_weights",
@@ -67,9 +67,7 @@ def test_health_version_and_internal_auth(client):
 
 def test_submit_status_process_and_leaderboard(client, monkeypatch):
     def fake_run(self, spec, timeout_seconds):
-        artifact_dir = next(
-            mount.source for mount in spec.mounts if mount.target == "/artifacts"
-        )
+        artifact_dir = next(mount.source for mount in spec.mounts if mount.target == "/artifacts")
         manifest = {
             "schema_version": "prism_run_manifest.v2",
             "metrics": {

@@ -19,12 +19,12 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from base.challenge_sdk.executor import DockerRunSpec
 
 from prism_challenge.app import create_app
 from prism_challenge.config import PrismSettings
 from prism_challenge.evaluator.mock_reexec import cpu_reexec_run
 from prism_challenge.models import SubmissionCreate
-from prism_challenge.sdk.executors.docker import DockerRunSpec
 from prism_challenge.validator_dispatch import (
     PrismGatewayConfigError,
     dispatch_assignment,

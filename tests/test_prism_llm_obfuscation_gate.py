@@ -4,6 +4,7 @@ import json
 from typing import Any
 
 import anyio
+from base.challenge_sdk.executor import DockerRunResult
 from conftest import signed_headers, two_script_bundle
 from fastapi.testclient import TestClient
 
@@ -18,7 +19,6 @@ from prism_challenge.evaluator.llm_review import (
     build_safety_review_prompt,
     review_code,
 )
-from prism_challenge.sdk.executors.docker import DockerRunResult
 
 # Reason strings mirror what the live claude-opus-4.8 gate now returns for the three known
 # obfuscation vectors (runtime-decoded hex blob, dynamic setattr rebind, requires_grad

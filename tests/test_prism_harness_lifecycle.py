@@ -4,6 +4,7 @@ import json
 import sqlite3
 from pathlib import Path
 
+from base.challenge_sdk.executor import DockerRunResult
 from conftest import signed_headers, two_script_bundle
 from fastapi.testclient import TestClient
 
@@ -15,7 +16,6 @@ from prism_challenge.gpu_scheduler import (
     GpuLeaseRequest,
     GpuLeaseScheduler,
 )
-from prism_challenge.sdk.executors.docker import DockerRunResult
 
 # A real nn.Module so the static instantiation phase passes before the (faked) container eval.
 REMOTE_ONLY_CODE = """

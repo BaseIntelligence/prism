@@ -1,7 +1,0 @@
-"""Vendored BASE challenge SDK for Prism."""
-
-from .app_factory import create_challenge_app
-from .config import ChallengeSettings
-from .decorators import public_route
-
-__all__ = ["ChallengeSettings", "create_challenge_app", "public_route"]
