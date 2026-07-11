@@ -39,7 +39,7 @@ def test_parse_computed_expression_is_none() -> None:
 
 
 def test_parse_ignores_non_module_scope() -> None:
-    src = "def build_model(ctx):\n    ARCHITECTURE_NAME = \"Local\"\n    return None\n"
+    src = 'def build_model(ctx):\n    ARCHITECTURE_NAME = "Local"\n    return None\n'
     assert parse_architecture_name(src) is None
 
 

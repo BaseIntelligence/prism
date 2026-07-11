@@ -99,9 +99,7 @@ def stage_tiny_train_data(root: Path | str, *, lines: int = 64) -> Path:
     data_dir.mkdir(parents=True, exist_ok=True)
     shard = data_dir / "train-00000.jsonl"
     if not shard.exists():
-        shard.write_text(
-            "".join(_SHARD_LINE.format(i=i) for i in range(lines)), encoding="utf-8"
-        )
+        shard.write_text("".join(_SHARD_LINE.format(i=i) for i in range(lines)), encoding="utf-8")
     return data_dir
 
 

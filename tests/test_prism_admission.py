@@ -191,8 +191,7 @@ def test_admission_on_rejects_without_active_worker(tmp_path):
             assert _submission_count(client) == 0
         # prism queried the master admission surface for the submitting hotkey
         assert any(
-            req["path"] == "/v1/workers/active" and req["hotkey"] == "hk"
-            for req in stub.requests
+            req["path"] == "/v1/workers/active" and req["hotkey"] == "hk" for req in stub.requests
         )
 
 

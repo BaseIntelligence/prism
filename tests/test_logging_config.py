@@ -10,9 +10,7 @@ from prism_challenge.app import create_app
 from prism_challenge.config import PrismSettings, configure_logging
 
 
-def _captured_basicconfig_level(
-    monkeypatch: pytest.MonkeyPatch, settings: PrismSettings
-) -> object:
+def _captured_basicconfig_level(monkeypatch: pytest.MonkeyPatch, settings: PrismSettings) -> object:
     """Return the numeric ``level`` ``configure_logging`` passes to ``logging.basicConfig``.
 
     Spying on ``basicConfig`` keeps the assertion deterministic and never mutates the real root

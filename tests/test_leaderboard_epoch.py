@@ -21,8 +21,7 @@ def _seed_score(
     async def insert() -> None:
         async with repository.database.connect() as conn:
             await conn.execute(
-                "INSERT OR IGNORE INTO epochs(id, starts_at, ends_at, status) "
-                "VALUES (?, ?, ?, ?)",
+                "INSERT OR IGNORE INTO epochs(id, starts_at, ends_at, status) VALUES (?, ?, ?, ?)",
                 (epoch_id, now, now, "open"),
             )
             await conn.execute(

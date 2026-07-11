@@ -1278,9 +1278,7 @@ class PrismRepository:
         """Return recorded worker faults (optionally scoped to one submission), oldest first."""
         async with self.database.connect() as conn:
             if submission_id is None:
-                rows = await conn.execute_fetchall(
-                    "SELECT * FROM worker_faults ORDER BY id"
-                )
+                rows = await conn.execute_fetchall("SELECT * FROM worker_faults ORDER BY id")
             else:
                 rows = await conn.execute_fetchall(
                     "SELECT * FROM worker_faults WHERE submission_id=? ORDER BY id",

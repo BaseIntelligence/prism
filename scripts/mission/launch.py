@@ -617,8 +617,7 @@ def _reconstruct_dispute_via_api(
         (
             u
             for u in units
-            if u.get("work_unit_id") == sid
-            or str(u.get("work_unit_id", "")).startswith(sid)
+            if u.get("work_unit_id") == sid or str(u.get("work_unit_id", "")).startswith(sid)
         ),
         None,
     )
@@ -645,8 +644,7 @@ def _reconstruct_dispute_via_api(
         f"outcome={audit.get('outcome')}"
     )
     print(
-        f"  (c) prism submission status={submission.get('status')} "
-        f"no_live_score={ok_invalidated}"
+        f"  (c) prism submission status={submission.get('status')} no_live_score={ok_invalidated}"
     )
     print(f"  (d) fault worker={fault['worker_id']} visible on API+CLI={ok_fault_both}")
     passed = ok_disputed and ok_audit and ok_invalidated and ok_fault_both

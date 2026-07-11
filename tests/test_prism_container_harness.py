@@ -272,9 +272,7 @@ def test_harness_runner_missing_locked_data_fails_fast(tmp_path):
 
 
 def test_harness_runner_ignores_miner_written_manifest(tmp_path):
-    proc, artifacts = _run_runner(
-        tmp_path, run_name="evilmanifest", train_code=TRAIN_FAKE_MANIFEST
-    )
+    proc, artifacts = _run_runner(tmp_path, run_name="evilmanifest", train_code=TRAIN_FAKE_MANIFEST)
     assert proc.returncode == 0, proc.stderr
     manifest = _read_manifest(artifacts)
     assert manifest["schema_version"] == "prism_run_manifest.v2"

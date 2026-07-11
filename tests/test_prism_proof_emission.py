@@ -229,9 +229,7 @@ async def test_no_proof_when_enabled_without_signing_key(tmp_path, monkeypatch):
         "prism_challenge.evaluator.container.DockerExecutor.run",
         cpu_reexec_run(train_data_dir=data_dir),
     )
-    settings = _settings(
-        tmp_path, worker_plane=WorkerPlaneConfig(enabled=True, signing_key=None)
-    )
+    settings = _settings(tmp_path, worker_plane=WorkerPlaneConfig(enabled=True, signing_key=None))
     submission_id = await _seed(settings, "hk-owner")
 
     result = await dispatch_assignment(

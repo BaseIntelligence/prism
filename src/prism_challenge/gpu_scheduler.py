@@ -147,9 +147,7 @@ class GpuLeaseScheduler:
                 "SELECT COUNT(*) AS n FROM gpu_leases WHERE status='active'"
             )
         total_devices = sum(
-            target.gpu_count
-            for target in self.targets
-            if target.enabled and not target.draining
+            target.gpu_count for target in self.targets if target.enabled and not target.draining
         )
         active_devices = sum(len(devices) for devices in leased.values())
         queued_list = list(queued_rows)
@@ -338,9 +336,7 @@ def _unavailable_reason(lease: GpuLease) -> str:
 def _lease_from_row(row: dict[str, Any]) -> GpuLease:
     device_ids = loads(str(row.get("device_ids") or "[]"))
     devices = (
-        tuple(str(device_id) for device_id in device_ids)
-        if isinstance(device_ids, list)
-        else ()
+        tuple(str(device_id) for device_id in device_ids) if isinstance(device_ids, list) else ()
     )
     gpu_count = int(row.get("gpu_count") or len(devices))
     if gpu_count < 0 or gpu_count > 8:

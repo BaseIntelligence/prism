@@ -93,6 +93,7 @@ def test_sampling_statistics_follow_effective_not_claimed_tier() -> None:
         audit_rate_tier0=0.10, audit_rate_tier1=0.05, audit_rate_tier2=0.02, seed=1234
     )
     n = 6000
+
     # 4-sigma binomial bound around each configured rate for this N.
     def _bound(p: float) -> float:
         return 4.0 * (p * (1.0 - p) / n) ** 0.5

@@ -66,14 +66,10 @@ async def count_active_workers(settings: PrismSettings, hotkey: str) -> int | No
                 ACTIVE_WORKERS_PATH, params={"hotkey": hotkey}, headers=headers
             )
     except httpx.HTTPError as exc:
-        logger.warning(
-            "admission master query failed (%s); failing closed", type(exc).__name__
-        )
+        logger.warning("admission master query failed (%s); failing closed", type(exc).__name__)
         return None
     if response.status_code >= 400:
-        logger.warning(
-            "admission master returned HTTP %s; failing closed", response.status_code
-        )
+        logger.warning("admission master returned HTTP %s; failing closed", response.status_code)
         return None
     try:
         payload = response.json()

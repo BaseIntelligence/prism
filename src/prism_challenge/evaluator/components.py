@@ -309,9 +309,7 @@ def _top_level_functions(content: str, path: str) -> set[str]:
             f"submission contract violation: cannot parse {path} ({exc.msg})"
         ) from exc
     return {
-        node.name
-        for node in tree.body
-        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef)
+        node.name for node in tree.body if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef)
     }
 
 

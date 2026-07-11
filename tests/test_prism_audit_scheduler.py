@@ -345,9 +345,7 @@ def test_audit_unit_visible_on_internal_work_units_and_absent_when_not_sampled(
         assert unauthorized.status_code == 401
         listed = client.get("/internal/v1/work_units", headers=headers)
         assert listed.status_code == 200, listed.text
-        audit_units = [
-            unit for unit in listed.json()["work_units"] if unit.get("audit") is True
-        ]
+        audit_units = [unit for unit in listed.json()["work_units"] if unit.get("audit") is True]
         assert len(audit_units) == 1
         unit = audit_units[0]
         assert unit["work_unit_id"] == audit_unit_id_for(sampled_id)
@@ -590,8 +588,7 @@ async def test_audit_failure_reaudits_then_terminal_failed_without_accepting(
         assert res.attempts == attempt
         # Still eligible for re-audit: listed as pending, submission unchanged.
         assert any(
-            u["audit_unit_id"] == audit_unit_id
-            for u in await repository.list_pending_audit_units()
+            u["audit_unit_id"] == audit_unit_id for u in await repository.list_pending_audit_units()
         )
 
     # On exhaustion the audit is terminally failed; the audited submission is NEVER accepted-by-
@@ -606,8 +603,7 @@ async def test_audit_failure_reaudits_then_terminal_failed_without_accepting(
     assert await repository.submission_status(submission_id) == "completed"
     # A terminal audit is no longer listed as pending (no unbounded retry loop).
     assert all(
-        u["audit_unit_id"] != audit_unit_id
-        for u in await repository.list_pending_audit_units()
+        u["audit_unit_id"] != audit_unit_id for u in await repository.list_pending_audit_units()
     )
     # Resolving a terminal unit again is an idempotent no-op.
     again = await resolve_audit_unit(repository, audit_unit_id=audit_unit_id, failed=True)
@@ -627,12 +623,8 @@ def test_r1_and_r2_results_sampled_at_same_effective_tier_rate() -> None:
 
     # A single population keyed by unit id; R is just a label the base plane attaches, so the
     # scheduler samples R=1 and R=2 identically at the effective tier's rate (never exempting R=1).
-    r1_hits = sum(
-        sampler.should_sample(work_unit_id=f"r1-{i}", effective_tier=0) for i in range(n)
-    )
-    r2_hits = sum(
-        sampler.should_sample(work_unit_id=f"r2-{i}", effective_tier=0) for i in range(n)
-    )
+    r1_hits = sum(sampler.should_sample(work_unit_id=f"r1-{i}", effective_tier=0) for i in range(n))
+    r2_hits = sum(sampler.should_sample(work_unit_id=f"r2-{i}", effective_tier=0) for i in range(n))
     assert abs(r1_hits / n - 0.10) < _bound(0.10)
     assert abs(r2_hits / n - 0.10) < _bound(0.10)
 

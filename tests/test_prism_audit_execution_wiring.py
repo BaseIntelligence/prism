@@ -392,9 +392,7 @@ async def test_validator_cycle_is_audit_only_when_flag_on(tmp_path, monkeypatch)
     summary = await run_validator_cycle(worker=app.state.worker, audit_replay=_replay)
 
     # The primary was never pulled/executed; it stays pending, unscored.
-    assert summary.executed == 0 or all(
-        res.audit_unit_id != primary_id for res in summary.audits
-    )
+    assert summary.executed == 0 or all(res.audit_unit_id != primary_id for res in summary.audits)
     assert await repository.submission_status(primary_id) == "pending"
     # The sampled audit was executed + resolved.
     assert len(summary.audits) == 1

@@ -310,9 +310,7 @@ def test_runner_deferred_lazy_over_cap_rejected_no_ranking_bpb(tmp_path: Path) -
 
 
 def test_runner_scored_over_cap_classified_as_param_cap() -> None:
-    rule_id, _ = _classify_failure(
-        "PRISM_RUNNER_PARAM_CAP: scored model has 153728 parameters", 1
-    )
+    rule_id, _ = _classify_failure("PRISM_RUNNER_PARAM_CAP: scored model has 153728 parameters", 1)
     assert rule_id == "prism:param-cap"
 
 

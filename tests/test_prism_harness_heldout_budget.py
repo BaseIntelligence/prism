@@ -50,9 +50,7 @@ SEQ = 16
 
 
 def _host_ctx() -> PrismContext:
-    return PrismContext(
-        vocab_size=VOCAB, sequence_length=SEQ, seed=SEED, max_parameters=5_000_000
-    )
+    return PrismContext(vocab_size=VOCAB, sequence_length=SEQ, seed=SEED, max_parameters=5_000_000)
 
 
 def _stage_val(root: Path, *, lines: int) -> Path:

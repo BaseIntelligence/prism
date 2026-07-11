@@ -91,9 +91,7 @@ def stage_gpt2(root: Path | str) -> Path:
             os.environ["TIKTOKEN_CACHE_DIR"] = prev
     blobs = [path for path in cache_dir.iterdir() if path.is_file()]
     if not blobs:
-        raise ReferenceTokenizerError(
-            f"gpt2 tiktoken cache is empty after staging: {cache_dir}"
-        )
+        raise ReferenceTokenizerError(f"gpt2 tiktoken cache is empty after staging: {cache_dir}")
     return cache_dir
 
 

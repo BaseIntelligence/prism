@@ -28,9 +28,7 @@ def _docs(n: int):
 
 
 def test_prepare_locked_dataset_writes_manifest_and_shards(tmp_path):
-    manifest = prepare_locked_dataset(
-        _docs(30), tmp_path, token_counter=FakeCounter()
-    )
+    manifest = prepare_locked_dataset(_docs(30), tmp_path, token_counter=FakeCounter())
     assert (tmp_path / "MANIFEST.json").is_file()
     # Every split dir exists.
     for name in LOCKED_SPLITS:
@@ -79,18 +77,14 @@ def test_prepare_locked_dataset_token_counts_use_counter(tmp_path):
 
 def test_prepare_locked_dataset_respects_docs_per_shard(tmp_path):
     docs = _docs(50)
-    manifest = prepare_locked_dataset(
-        docs, tmp_path, token_counter=FakeCounter(), docs_per_shard=2
-    )
+    manifest = prepare_locked_dataset(docs, tmp_path, token_counter=FakeCounter(), docs_per_shard=2)
     # At least one split should be sharded into multiple files given small shard size.
     shard_counts = [len(manifest.splits[name].shards) for name in LOCKED_SPLITS]
     assert max(shard_counts) >= 2
 
 
 def test_prepare_locked_dataset_shard_files_exist_on_disk(tmp_path):
-    manifest = prepare_locked_dataset(
-        _docs(10), tmp_path, token_counter=FakeCounter()
-    )
+    manifest = prepare_locked_dataset(_docs(10), tmp_path, token_counter=FakeCounter())
     for name in LOCKED_SPLITS:
         for shard in manifest.splits[name].shards:
             assert (tmp_path / shard.path).is_file()
@@ -98,13 +92,9 @@ def test_prepare_locked_dataset_shard_files_exist_on_disk(tmp_path):
 
 def test_prepare_locked_dataset_clears_stale_shards(tmp_path):
     # First run with many docs, then a smaller run should drop stale shard files.
-    prepare_locked_dataset(
-        _docs(60), tmp_path, token_counter=FakeCounter(), docs_per_shard=1
-    )
+    prepare_locked_dataset(_docs(60), tmp_path, token_counter=FakeCounter(), docs_per_shard=1)
     before = sorted(p.name for p in (tmp_path / "train").glob("train-*.jsonl"))
-    prepare_locked_dataset(
-        _docs(2), tmp_path, token_counter=FakeCounter(), docs_per_shard=1
-    )
+    prepare_locked_dataset(_docs(2), tmp_path, token_counter=FakeCounter(), docs_per_shard=1)
     after = sorted(p.name for p in (tmp_path / "train").glob("train-*.jsonl"))
     assert len(after) <= len(before)
 
@@ -141,7 +131,9 @@ def test_prepare_locked_dataset_rejects_bad_docs_per_shard(tmp_path):
 def test_prepare_locked_dataset_rejects_non_string_doc_id(tmp_path):
     with pytest.raises(LockedDatasetError, match="invalid document id"):
         prepare_locked_dataset(
-            [(123, "x")], tmp_path, token_counter=FakeCounter()  # type: ignore[list-item]
+            [(123, "x")],
+            tmp_path,
+            token_counter=FakeCounter(),  # type: ignore[list-item]
         )
 
 
@@ -153,7 +145,9 @@ def test_prepare_locked_dataset_rejects_empty_doc_id(tmp_path):
 def test_prepare_locked_dataset_rejects_non_string_text(tmp_path):
     with pytest.raises(LockedDatasetError, match="non-string text"):
         prepare_locked_dataset(
-            [("a", 123)], tmp_path, token_counter=FakeCounter()  # type: ignore[list-item]
+            [("a", 123)],
+            tmp_path,
+            token_counter=FakeCounter(),  # type: ignore[list-item]
         )
 
 

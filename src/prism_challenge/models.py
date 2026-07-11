@@ -223,6 +223,3 @@ class ArchitectureReport(BaseModel):
 class ArchitectureReportResponse(BaseModel):
     architecture_id: str
     report: ArchitectureReport
-
-
-

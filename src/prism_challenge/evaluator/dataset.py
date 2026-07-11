@@ -63,9 +63,7 @@ def partition_bucket(doc_id: str) -> int:
 def bucket_to_split(bucket: int) -> str:
     """Map a partition bucket to its split using the fixed/pinned boundaries."""
     if not 0 <= bucket < PARTITION_MODULUS:
-        raise LockedDatasetError(
-            f"partition bucket {bucket} out of range [0, {PARTITION_MODULUS})"
-        )
+        raise LockedDatasetError(f"partition bucket {bucket} out of range [0, {PARTITION_MODULUS})")
     for split, (low, high) in PARTITION_BUCKETS.items():
         if low <= bucket <= high:
             return split
@@ -171,9 +169,7 @@ class LockedManifest:
             "partition": self.partition,
             "tokenizer": dict(self.tokenizer),
             "splits": {
-                name: self.splits[name].to_dict()
-                for name in LOCKED_SPLITS
-                if name in self.splits
+                name: self.splits[name].to_dict() for name in LOCKED_SPLITS if name in self.splits
             },
         }
 
@@ -319,8 +315,7 @@ def verify_locked_manifest(
             actual = hashlib.sha256(data).hexdigest()
             if actual != shard.sha256:
                 problems.append(
-                    f"sha256 mismatch for {shard.path}: "
-                    f"manifest {shard.sha256} != on-disk {actual}"
+                    f"sha256 mismatch for {shard.path}: manifest {shard.sha256} != on-disk {actual}"
                 )
             if len(data) != shard.bytes:
                 problems.append(
@@ -345,9 +340,7 @@ def verify_locked_manifest_or_raise(
 ) -> None:
     problems = verify_locked_manifest(root, manifest, splits=splits)
     if problems:
-        raise LockedDatasetError(
-            "locked dataset integrity check failed: " + "; ".join(problems)
-        )
+        raise LockedDatasetError("locked dataset integrity check failed: " + "; ".join(problems))
 
 
 def locked_shard_paths(manifest: LockedManifest, split: str) -> list[str]:
@@ -405,9 +398,7 @@ def iter_locked_documents(root: Path | str, split: str) -> Iterator[LockedDocume
                 doc_id = str(record["id"])
                 text = record["text"]
             except (json.JSONDecodeError, KeyError, TypeError) as exc:
-                raise LockedDatasetError(
-                    f"malformed locked shard line {rel}:{offset}"
-                ) from exc
+                raise LockedDatasetError(f"malformed locked shard line {rel}:{offset}") from exc
             if not isinstance(text, str):
                 raise LockedDatasetError(f"locked shard line {rel}:{offset} has non-string text")
             yield LockedDocument(doc_id=doc_id, text=text, shard=rel, offset=offset, index=index)

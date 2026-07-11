@@ -57,9 +57,7 @@ def test_manifest_sha256_matches_on_disk_bytes_both_ways(
     path = tmp_path / "prism_run_manifest.v2.json"
     path.write_text(json.dumps(manifest, sort_keys=True, indent=2), encoding="utf-8")
 
-    built = build_execution_proof_from_manifest(
-        signer=signer, unit_id=UNIT_ID, manifest_path=path
-    )
+    built = build_execution_proof_from_manifest(signer=signer, unit_id=UNIT_ID, manifest_path=path)
 
     # (i) sha256 of the EXACT on-disk bytes, computed OUTSIDE the proof code path.
     disk_digest = hashlib.sha256(path.read_bytes()).hexdigest()
@@ -230,9 +228,7 @@ def test_tampered_hash_or_signature_fails_verification() -> None:
     tampered_hash = p.model_copy(update={"manifest_sha256": "b" * 64})
     assert verify_execution_proof(tampered_hash, unit_id=UNIT_ID) is False
     tampered_sig = p.model_copy(
-        update={
-            "worker_signature": p.worker_signature.model_copy(update={"sig": "0x" + "00" * 64})
-        }
+        update={"worker_signature": p.worker_signature.model_copy(update={"sig": "0x" + "00" * 64})}
     )
     assert verify_execution_proof(tampered_sig, unit_id=UNIT_ID) is False
 

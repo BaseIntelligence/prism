@@ -39,9 +39,7 @@ async def _status_and_error(repository: PrismRepository, submission_id: str):
 
 async def _set_updated_at(repository: PrismRepository, submission_id: str, value: str) -> None:
     async with repository.database.connect() as conn:
-        await conn.execute(
-            "UPDATE submissions SET updated_at=? WHERE id=?", (value, submission_id)
-        )
+        await conn.execute("UPDATE submissions SET updated_at=? WHERE id=?", (value, submission_id))
 
 
 async def test_stuck_llm_held_is_expired_to_rejected(repository: PrismRepository) -> None:

@@ -184,16 +184,32 @@ async def test_list_architectures_aggregates_and_ranks(tmp_path: Path) -> None:
             q_arch_best=0.9,
             display_name="Alpha",
         )
-        await _insert_submission(conn, submission_id="subA1", hotkey="hkA", epoch_id=100,
-                                 arch_hash="hashA")
-        await _insert_submission(conn, submission_id="subA2", hotkey="hkA2", epoch_id=100,
-                                 arch_hash="hashA")
-        await _insert_variant(conn, variant_id="tvA1", architecture_id="af-A", training_hash="tA1",
-                              owner_hotkey="hkA", submission_id="subA1", q_recipe=0.5,
-                              is_current_best=False)
-        await _insert_variant(conn, variant_id="tvA2", architecture_id="af-A", training_hash="tA2",
-                              owner_hotkey="hkA2", submission_id="subA2", q_recipe=0.9,
-                              is_current_best=True)
+        await _insert_submission(
+            conn, submission_id="subA1", hotkey="hkA", epoch_id=100, arch_hash="hashA"
+        )
+        await _insert_submission(
+            conn, submission_id="subA2", hotkey="hkA2", epoch_id=100, arch_hash="hashA"
+        )
+        await _insert_variant(
+            conn,
+            variant_id="tvA1",
+            architecture_id="af-A",
+            training_hash="tA1",
+            owner_hotkey="hkA",
+            submission_id="subA1",
+            q_recipe=0.5,
+            is_current_best=False,
+        )
+        await _insert_variant(
+            conn,
+            variant_id="tvA2",
+            architecture_id="af-A",
+            training_hash="tA2",
+            owner_hotkey="hkA2",
+            submission_id="subA2",
+            q_recipe=0.9,
+            is_current_best=True,
+        )
         # Family B: 1 submission, 1 variant, best score 0.5 (epoch 100).
         await _insert_family(
             conn,
@@ -204,11 +220,19 @@ async def test_list_architectures_aggregates_and_ranks(tmp_path: Path) -> None:
             q_arch_best=0.5,
             display_name=None,
         )
-        await _insert_submission(conn, submission_id="subB1", hotkey="hkB", epoch_id=100,
-                                 arch_hash="hashB")
-        await _insert_variant(conn, variant_id="tvB1", architecture_id="af-B", training_hash="tB1",
-                              owner_hotkey="hkB", submission_id="subB1", q_recipe=0.5,
-                              is_current_best=True)
+        await _insert_submission(
+            conn, submission_id="subB1", hotkey="hkB", epoch_id=100, arch_hash="hashB"
+        )
+        await _insert_variant(
+            conn,
+            variant_id="tvB1",
+            architecture_id="af-B",
+            training_hash="tB1",
+            owner_hotkey="hkB",
+            submission_id="subB1",
+            q_recipe=0.5,
+            is_current_best=True,
+        )
 
     resolved_epoch, rows = await repo.list_architectures(100)
     assert resolved_epoch == 100
@@ -228,15 +252,29 @@ async def test_list_architectures_aggregates_and_ranks(tmp_path: Path) -> None:
 async def test_list_architectures_epoch_filter_and_none_fallback(tmp_path: Path) -> None:
     repo = await _make_repo(tmp_path)
     async with repo.database.connect() as conn:
-        await _insert_family(conn, architecture_id="af-A", family_hash="hashA", owner_hotkey="hkA",
-                             canonical_submission_id="subA", q_arch_best=0.9)
-        await _insert_submission(conn, submission_id="subA", hotkey="hkA", epoch_id=100,
-                                 arch_hash="hashA")
+        await _insert_family(
+            conn,
+            architecture_id="af-A",
+            family_hash="hashA",
+            owner_hotkey="hkA",
+            canonical_submission_id="subA",
+            q_arch_best=0.9,
+        )
+        await _insert_submission(
+            conn, submission_id="subA", hotkey="hkA", epoch_id=100, arch_hash="hashA"
+        )
         # Family C only has a submission in the LATER epoch 105.
-        await _insert_family(conn, architecture_id="af-C", family_hash="hashC", owner_hotkey="hkC",
-                             canonical_submission_id="subC", q_arch_best=0.7)
-        await _insert_submission(conn, submission_id="subC", hotkey="hkC", epoch_id=105,
-                                 arch_hash="hashC")
+        await _insert_family(
+            conn,
+            architecture_id="af-C",
+            family_hash="hashC",
+            owner_hotkey="hkC",
+            canonical_submission_id="subC",
+            q_arch_best=0.7,
+        )
+        await _insert_submission(
+            conn, submission_id="subC", hotkey="hkC", epoch_id=105, arch_hash="hashC"
+        )
 
     # Explicit epoch scopes by submission presence.
     _, only_a = await repo.list_architectures(100)
@@ -252,14 +290,30 @@ async def test_list_architectures_epoch_filter_and_none_fallback(tmp_path: Path)
 async def test_get_architecture_detail_and_missing(tmp_path: Path) -> None:
     repo = await _make_repo(tmp_path)
     async with repo.database.connect() as conn:
-        await _insert_family(conn, architecture_id="af-A", family_hash="hashA", owner_hotkey="hkA",
-                             canonical_submission_id="subA", q_arch_best=0.42, display_name="Alpha",
-                             created_at=EARLIER, updated_at=NOW)
-        await _insert_submission(conn, submission_id="subA", hotkey="hkA", epoch_id=100,
-                                 arch_hash="hashA")
-        await _insert_variant(conn, variant_id="tvA", architecture_id="af-A", training_hash="tA",
-                              owner_hotkey="hkA", submission_id="subA", q_recipe=0.42,
-                              is_current_best=True)
+        await _insert_family(
+            conn,
+            architecture_id="af-A",
+            family_hash="hashA",
+            owner_hotkey="hkA",
+            canonical_submission_id="subA",
+            q_arch_best=0.42,
+            display_name="Alpha",
+            created_at=EARLIER,
+            updated_at=NOW,
+        )
+        await _insert_submission(
+            conn, submission_id="subA", hotkey="hkA", epoch_id=100, arch_hash="hashA"
+        )
+        await _insert_variant(
+            conn,
+            variant_id="tvA",
+            architecture_id="af-A",
+            training_hash="tA",
+            owner_hotkey="hkA",
+            submission_id="subA",
+            q_recipe=0.42,
+            is_current_best=True,
+        )
 
     detail = await repo.get_architecture("af-A")
     assert detail is not None
@@ -277,17 +331,44 @@ async def test_get_architecture_detail_and_missing(tmp_path: Path) -> None:
 async def test_list_training_variants_orders_best_first(tmp_path: Path) -> None:
     repo = await _make_repo(tmp_path)
     async with repo.database.connect() as conn:
-        await _insert_family(conn, architecture_id="af-A", family_hash="hashA", owner_hotkey="hkA",
-                             canonical_submission_id="sub3", q_arch_best=0.9)
-        await _insert_variant(conn, variant_id="tv1", architecture_id="af-A", training_hash="t1",
-                              owner_hotkey="hk1", submission_id="sub1", q_recipe=0.5,
-                              is_current_best=False)
-        await _insert_variant(conn, variant_id="tv2", architecture_id="af-A", training_hash="t2",
-                              owner_hotkey="hk2", submission_id="sub2", q_recipe=0.2,
-                              is_current_best=False)
-        await _insert_variant(conn, variant_id="tv3", architecture_id="af-A", training_hash="t3",
-                              owner_hotkey="hk3", submission_id="sub3", q_recipe=0.9,
-                              is_current_best=True)
+        await _insert_family(
+            conn,
+            architecture_id="af-A",
+            family_hash="hashA",
+            owner_hotkey="hkA",
+            canonical_submission_id="sub3",
+            q_arch_best=0.9,
+        )
+        await _insert_variant(
+            conn,
+            variant_id="tv1",
+            architecture_id="af-A",
+            training_hash="t1",
+            owner_hotkey="hk1",
+            submission_id="sub1",
+            q_recipe=0.5,
+            is_current_best=False,
+        )
+        await _insert_variant(
+            conn,
+            variant_id="tv2",
+            architecture_id="af-A",
+            training_hash="t2",
+            owner_hotkey="hk2",
+            submission_id="sub2",
+            q_recipe=0.2,
+            is_current_best=False,
+        )
+        await _insert_variant(
+            conn,
+            variant_id="tv3",
+            architecture_id="af-A",
+            training_hash="t3",
+            owner_hotkey="hk3",
+            submission_id="sub3",
+            q_recipe=0.9,
+            is_current_best=True,
+        )
 
     variants = await repo.list_training_variants("af-A")
     assert [v["variant_id"] for v in variants] == ["tv3", "tv1", "tv2"]
@@ -300,14 +381,24 @@ async def test_list_training_variants_orders_best_first(tmp_path: Path) -> None:
 async def test_get_submission_curve_and_missing(tmp_path: Path) -> None:
     repo = await _make_repo(tmp_path)
     async with repo.database.connect() as conn:
-        await _insert_submission(conn, submission_id="sub1", hotkey="hk", epoch_id=100,
-                                 arch_hash="hashA")
-        await _insert_score(conn, submission_id="sub1", final_score=0.8,
-                            metrics={"prequential_bpb": 0.95, "bits_per_byte": 0.95,
-                                     "tokens_consumed": 5000.0})
-        await _insert_curve(conn, submission_id="sub1", online_loss=[2.5, 2.0, 1.5],
-                            covered_bytes_cumulative=[100.0, 200.0, 300.0], step0_loss=2.5,
-                            baseline_nats=5.6, compute={"gpu_count": 1, "model_params": 1000})
+        await _insert_submission(
+            conn, submission_id="sub1", hotkey="hk", epoch_id=100, arch_hash="hashA"
+        )
+        await _insert_score(
+            conn,
+            submission_id="sub1",
+            final_score=0.8,
+            metrics={"prequential_bpb": 0.95, "bits_per_byte": 0.95, "tokens_consumed": 5000.0},
+        )
+        await _insert_curve(
+            conn,
+            submission_id="sub1",
+            online_loss=[2.5, 2.0, 1.5],
+            covered_bytes_cumulative=[100.0, 200.0, 300.0],
+            step0_loss=2.5,
+            baseline_nats=5.6,
+            compute={"gpu_count": 1, "model_params": 1000},
+        )
 
     curve = await repo.get_submission_curve("sub1")
     assert curve is not None
@@ -325,9 +416,13 @@ async def test_get_submission_curve_and_missing(tmp_path: Path) -> None:
 async def test_architecture_report_cache_round_trip(tmp_path: Path) -> None:
     repo = await _make_repo(tmp_path)
     assert await repo.get_architecture_report("af-A") is None
-    await repo.store_architecture_report(architecture_id="af-A", content="## Summary",
-                                         model="test-model", source_submission_id="subA",
-                                         generated_at=NOW)
+    await repo.store_architecture_report(
+        architecture_id="af-A",
+        content="## Summary",
+        model="test-model",
+        source_submission_id="subA",
+        generated_at=NOW,
+    )
     cached = await repo.get_architecture_report("af-A")
     assert cached is not None
     assert cached["content"] == "## Summary"
@@ -351,17 +446,40 @@ def _seed(client: TestClient, coro_factory) -> None:
 
 def test_route_list_architectures(client: TestClient) -> None:
     async def seed(conn):
-        await _insert_family(conn, architecture_id="af-A", family_hash="hashA", owner_hotkey="hkA",
-                             canonical_submission_id="subA", q_arch_best=0.9, display_name="Alpha")
-        await _insert_submission(conn, submission_id="subA", hotkey="hkA", epoch_id=7,
-                                 arch_hash="hashA")
-        await _insert_variant(conn, variant_id="tvA", architecture_id="af-A", training_hash="tA",
-                              owner_hotkey="hkA", submission_id="subA", q_recipe=0.9,
-                              is_current_best=True)
-        await _insert_family(conn, architecture_id="af-B", family_hash="hashB", owner_hotkey="hkB",
-                             canonical_submission_id="subB", q_arch_best=0.4, display_name=None)
-        await _insert_submission(conn, submission_id="subB", hotkey="hkB", epoch_id=7,
-                                 arch_hash="hashB")
+        await _insert_family(
+            conn,
+            architecture_id="af-A",
+            family_hash="hashA",
+            owner_hotkey="hkA",
+            canonical_submission_id="subA",
+            q_arch_best=0.9,
+            display_name="Alpha",
+        )
+        await _insert_submission(
+            conn, submission_id="subA", hotkey="hkA", epoch_id=7, arch_hash="hashA"
+        )
+        await _insert_variant(
+            conn,
+            variant_id="tvA",
+            architecture_id="af-A",
+            training_hash="tA",
+            owner_hotkey="hkA",
+            submission_id="subA",
+            q_recipe=0.9,
+            is_current_best=True,
+        )
+        await _insert_family(
+            conn,
+            architecture_id="af-B",
+            family_hash="hashB",
+            owner_hotkey="hkB",
+            canonical_submission_id="subB",
+            q_arch_best=0.4,
+            display_name=None,
+        )
+        await _insert_submission(
+            conn, submission_id="subB", hotkey="hkB", epoch_id=7, arch_hash="hashB"
+        )
 
     _seed(client, seed)
     body = client.get("/v1/architectures", params={"epoch_id": 7}).json()
@@ -381,10 +499,18 @@ def test_route_list_architectures(client: TestClient) -> None:
 
 def test_route_get_architecture_and_404(client: TestClient) -> None:
     async def seed(conn):
-        await _insert_family(conn, architecture_id="af-A", family_hash="hashA", owner_hotkey="hkA",
-                             canonical_submission_id="subA", q_arch_best=0.9, display_name="Alpha")
-        await _insert_submission(conn, submission_id="subA", hotkey="hkA", epoch_id=7,
-                                 arch_hash="hashA")
+        await _insert_family(
+            conn,
+            architecture_id="af-A",
+            family_hash="hashA",
+            owner_hotkey="hkA",
+            canonical_submission_id="subA",
+            q_arch_best=0.9,
+            display_name="Alpha",
+        )
+        await _insert_submission(
+            conn, submission_id="subA", hotkey="hkA", epoch_id=7, arch_hash="hashA"
+        )
 
     _seed(client, seed)
     ok = client.get("/v1/architectures/af-A")
@@ -398,8 +524,14 @@ def test_route_get_architecture_and_404(client: TestClient) -> None:
 
 def test_route_variants_empty_ok_and_404(client: TestClient) -> None:
     async def seed(conn):
-        await _insert_family(conn, architecture_id="af-A", family_hash="hashA", owner_hotkey="hkA",
-                             canonical_submission_id="subA", q_arch_best=0.9)
+        await _insert_family(
+            conn,
+            architecture_id="af-A",
+            family_hash="hashA",
+            owner_hotkey="hkA",
+            canonical_submission_id="subA",
+            q_arch_best=0.9,
+        )
 
     _seed(client, seed)
     ok = client.get("/v1/architectures/af-A/variants")
@@ -416,13 +548,27 @@ def test_route_curve_downsamples_and_preserves_endpoints(client: TestClient) -> 
     cumulative = [float(i * 10) for i in range(1200)]
 
     async def seed(conn):
-        await _insert_score(conn, submission_id="sub1", final_score=0.8,
-                            metrics={"prequential_bpb": 0.9, "bits_per_byte": 0.9,
-                                     "tokens_consumed": 500.0})
-        await _insert_curve(conn, submission_id="sub1", online_loss=loss,
-                            covered_bytes_cumulative=cumulative, step0_loss=0.0, baseline_nats=5.0,
-                            compute={"gpu_count": 2, "device": "cuda:0", "model_params": 1000,
-                                     "wall_clock_seconds": 720.0, "peak_vram_bytes": 123})
+        await _insert_score(
+            conn,
+            submission_id="sub1",
+            final_score=0.8,
+            metrics={"prequential_bpb": 0.9, "bits_per_byte": 0.9, "tokens_consumed": 500.0},
+        )
+        await _insert_curve(
+            conn,
+            submission_id="sub1",
+            online_loss=loss,
+            covered_bytes_cumulative=cumulative,
+            step0_loss=0.0,
+            baseline_nats=5.0,
+            compute={
+                "gpu_count": 2,
+                "device": "cuda:0",
+                "model_params": 1000,
+                "wall_clock_seconds": 720.0,
+                "peak_vram_bytes": 123,
+            },
+        )
 
     _seed(client, seed)
     body = client.get("/v1/submissions/sub1/curve").json()
@@ -452,9 +598,15 @@ def test_route_curve_downsamples_and_preserves_endpoints(client: TestClient) -> 
 def test_route_curve_small_series_not_downsampled(client: TestClient) -> None:
     async def seed(conn):
         await _insert_score(conn, submission_id="sub1", final_score=0.8, metrics={})
-        await _insert_curve(conn, submission_id="sub1", online_loss=[2.5, 2.0, 1.5],
-                            covered_bytes_cumulative=[10.0, 20.0, 30.0], step0_loss=2.5,
-                            baseline_nats=None, compute={})
+        await _insert_curve(
+            conn,
+            submission_id="sub1",
+            online_loss=[2.5, 2.0, 1.5],
+            covered_bytes_cumulative=[10.0, 20.0, 30.0],
+            step0_loss=2.5,
+            baseline_nats=None,
+            compute={},
+        )
 
     _seed(client, seed)
     body = client.get("/v1/submissions/sub1/curve").json()
@@ -470,13 +622,24 @@ def test_route_curve_small_series_not_downsampled(client: TestClient) -> None:
 
 def test_route_curve_uses_stored_estimates_when_present(client: TestClient) -> None:
     async def seed(conn):
-        await _insert_score(conn, submission_id="sub1", final_score=0.8,
-                            metrics={"tokens_consumed": 500.0})
-        await _insert_curve(conn, submission_id="sub1", online_loss=[1.0],
-                            covered_bytes_cumulative=[1.0], step0_loss=1.0, baseline_nats=1.0,
-                            compute={"gpu_count": 4, "model_params": 1000,
-                                     "wall_clock_seconds": 36.0, "estimated_flops": 999.0,
-                                     "gpu_hours": 1.5})
+        await _insert_score(
+            conn, submission_id="sub1", final_score=0.8, metrics={"tokens_consumed": 500.0}
+        )
+        await _insert_curve(
+            conn,
+            submission_id="sub1",
+            online_loss=[1.0],
+            covered_bytes_cumulative=[1.0],
+            step0_loss=1.0,
+            baseline_nats=1.0,
+            compute={
+                "gpu_count": 4,
+                "model_params": 1000,
+                "wall_clock_seconds": 36.0,
+                "estimated_flops": 999.0,
+                "gpu_hours": 1.5,
+            },
+        )
 
     _seed(client, seed)
     compute = client.get("/v1/submissions/sub1/curve").json()["compute"]
@@ -492,8 +655,14 @@ def test_route_curve_404_when_absent(client: TestClient) -> None:
 def test_route_report_unavailable_without_llm_key(client: TestClient) -> None:
     # The shared fixture has no OpenRouter key configured -> generation degrades to unavailable.
     async def seed(conn):
-        await _insert_family(conn, architecture_id="af-A", family_hash="hashA", owner_hotkey="hkA",
-                             canonical_submission_id="subA", q_arch_best=0.9)
+        await _insert_family(
+            conn,
+            architecture_id="af-A",
+            family_hash="hashA",
+            owner_hotkey="hkA",
+            canonical_submission_id="subA",
+            q_arch_best=0.9,
+        )
 
     _seed(client, seed)
     body = client.get("/v1/architectures/af-A/report").json()
@@ -505,8 +674,14 @@ def test_route_report_unavailable_without_llm_key(client: TestClient) -> None:
 
 def test_route_report_cached_ready(client: TestClient) -> None:
     async def seed(conn):
-        await _insert_family(conn, architecture_id="af-A", family_hash="hashA", owner_hotkey="hkA",
-                             canonical_submission_id="subA", q_arch_best=0.9)
+        await _insert_family(
+            conn,
+            architecture_id="af-A",
+            family_hash="hashA",
+            owner_hotkey="hkA",
+            canonical_submission_id="subA",
+            q_arch_best=0.9,
+        )
 
     _seed(client, seed)
     # A cache row whose key matches the current best submission is served as ready, even with no
@@ -515,8 +690,11 @@ def test_route_report_cached_ready(client: TestClient) -> None:
 
     async def store() -> None:
         await repository.store_architecture_report(
-            architecture_id="af-A", content="## Summary\nok", model="cached-model",
-            source_submission_id="subA", generated_at=NOW,
+            architecture_id="af-A",
+            content="## Summary\nok",
+            model="cached-model",
+            source_submission_id="subA",
+            generated_at=NOW,
         )
 
     anyio.run(store)
@@ -529,16 +707,26 @@ def test_route_report_cached_ready(client: TestClient) -> None:
 
 def test_route_report_stale_cache_is_not_served(client: TestClient) -> None:
     async def seed(conn):
-        await _insert_family(conn, architecture_id="af-A", family_hash="hashA", owner_hotkey="hkA",
-                             canonical_submission_id="subNEW", q_arch_best=0.9)
+        await _insert_family(
+            conn,
+            architecture_id="af-A",
+            family_hash="hashA",
+            owner_hotkey="hkA",
+            canonical_submission_id="subNEW",
+            q_arch_best=0.9,
+        )
 
     _seed(client, seed)
     repository = client.app.state.repository
 
     async def store() -> None:
-        await repository.store_architecture_report(architecture_id="af-A", content="stale",
-                                                   model="m", source_submission_id="subOLD",
-                                                   generated_at=NOW)
+        await repository.store_architecture_report(
+            architecture_id="af-A",
+            content="stale",
+            model="m",
+            source_submission_id="subOLD",
+            generated_at=NOW,
+        )
 
     anyio.run(store)
     # Best submission advanced to subNEW; the cache keyed to subOLD must NOT be returned ready.
@@ -578,13 +766,30 @@ def test_route_report_generates_in_background(report_client: TestClient, monkeyp
     monkeypatch.setattr("prism_challenge.routes.generate_report_content", fake_generate)
 
     async def seed(conn):
-        await _insert_family(conn, architecture_id="af-A", family_hash="hashA", owner_hotkey="hkA",
-                             canonical_submission_id="subA", q_arch_best=0.9, display_name="Alpha")
-        await _insert_score(conn, submission_id="subA", final_score=0.9,
-                            metrics={"prequential_bpb": 0.5, "tokens_consumed": 100.0})
-        await _insert_curve(conn, submission_id="subA", online_loss=[3.0, 1.0],
-                            covered_bytes_cumulative=[1.0, 2.0], step0_loss=3.0, baseline_nats=5.0,
-                            compute={"gpu_count": 1, "model_params": 10})
+        await _insert_family(
+            conn,
+            architecture_id="af-A",
+            family_hash="hashA",
+            owner_hotkey="hkA",
+            canonical_submission_id="subA",
+            q_arch_best=0.9,
+            display_name="Alpha",
+        )
+        await _insert_score(
+            conn,
+            submission_id="subA",
+            final_score=0.9,
+            metrics={"prequential_bpb": 0.5, "tokens_consumed": 100.0},
+        )
+        await _insert_curve(
+            conn,
+            submission_id="subA",
+            online_loss=[3.0, 1.0],
+            covered_bytes_cumulative=[1.0, 2.0],
+            step0_loss=3.0,
+            baseline_nats=5.0,
+            compute={"gpu_count": 1, "model_params": 10},
+        )
 
     _seed(report_client, seed)
 
@@ -611,8 +816,14 @@ def test_route_report_generation_error_then_unavailable(
     monkeypatch.setattr("prism_challenge.routes.generate_report_content", boom)
 
     async def seed(conn):
-        await _insert_family(conn, architecture_id="af-A", family_hash="hashA", owner_hotkey="hkA",
-                             canonical_submission_id="subA", q_arch_best=0.9)
+        await _insert_family(
+            conn,
+            architecture_id="af-A",
+            family_hash="hashA",
+            owner_hotkey="hkA",
+            canonical_submission_id="subA",
+            q_arch_best=0.9,
+        )
 
     _seed(report_client, seed)
 

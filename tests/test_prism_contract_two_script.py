@@ -118,8 +118,7 @@ def test_contract_single_module_reexport_no_longer_satisfies() -> None:
 
 def test_contract_prism_yaml_non_default_entrypoints_resolved() -> None:
     manifest = (
-        "architecture:\n  entrypoint: model.py::make_model\n"
-        "training:\n  entrypoint: loop.py::run\n"
+        "architecture:\n  entrypoint: model.py::make_model\ntraining:\n  entrypoint: loop.py::run\n"
     )
     arch = "import torch\n\ndef make_model(ctx):\n    return torch.nn.Linear(4, 4)\n"
     loop = "def run(ctx):\n    return None\n"
@@ -136,8 +135,7 @@ def test_contract_prism_yaml_non_default_entrypoints_resolved() -> None:
 
 def test_contract_prism_yaml_declared_entrypoint_missing_no_silent_fallback() -> None:
     manifest = (
-        "architecture:\n  entrypoint: model.py::make_model\n"
-        "training:\n  entrypoint: loop.py::run\n"
+        "architecture:\n  entrypoint: model.py::make_model\ntraining:\n  entrypoint: loop.py::run\n"
     )
     with pytest.raises(SubmissionContractError) as excinfo:
         project_components(

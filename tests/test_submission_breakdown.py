@@ -24,8 +24,7 @@ def _seed_submission(client, *, submission_id: str, with_score: bool) -> None:
     async def insert() -> None:
         async with repository.database.connect() as conn:
             await conn.execute(
-                "INSERT OR IGNORE INTO epochs(id, starts_at, ends_at, status) "
-                "VALUES (?, ?, ?, ?)",
+                "INSERT OR IGNORE INTO epochs(id, starts_at, ends_at, status) VALUES (?, ?, ?, ?)",
                 (0, _NOW, _NOW, "open"),
             )
             await conn.execute(

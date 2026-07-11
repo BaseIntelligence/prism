@@ -63,9 +63,7 @@ class Gpt2TokenCounter:
             try:
                 import tiktoken
             except ImportError as exc:  # pragma: no cover - exercised only without tiktoken
-                raise LockedDatasetError(
-                    "tiktoken is required for the gpt2 token counter"
-                ) from exc
+                raise LockedDatasetError("tiktoken is required for the gpt2 token counter") from exc
             self._encoding = tiktoken.get_encoding("gpt2")
         return self._encoding
 

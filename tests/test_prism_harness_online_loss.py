@@ -22,6 +22,7 @@ def _network_available() -> bool:
     except OSError:
         return False
 
+
 # A tiny token-in/logits-out LM the challenge instrument can score (forward -> [B, T, V]).
 ARCH_LM = """
 import torch

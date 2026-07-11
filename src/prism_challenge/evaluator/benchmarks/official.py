@@ -91,9 +91,7 @@ class NeedleScoringConfig(BaseModel):
     @model_validator(mode="after")
     def weights_sum_to_one(self) -> NeedleScoringConfig:
         total = (
-            self.exact_match_weight
-            + self.contains_answer_weight
-            + self.normalized_position_weight
+            self.exact_match_weight + self.contains_answer_weight + self.normalized_position_weight
         )
         if abs(total - 1.0) > 1e-6:
             raise ValueError(f"needle scoring weights must sum to 1.0, got {total:.6f}")
@@ -217,9 +215,7 @@ def parse_official_benchmark_outputs(
     parsed_scores = list(parse_lm_eval_output(lm_payload))
     parsed_scores.append(parse_needle_output(needle_payload, needle_spec))
     benchmark_scores = {score.benchmark_key: score.score for score in parsed_scores}
-    missing = tuple(
-        key for key in OFFICIAL_BENCHMARK_SCORE_KEYS if key not in benchmark_scores
-    )
+    missing = tuple(key for key in OFFICIAL_BENCHMARK_SCORE_KEYS if key not in benchmark_scores)
     errors = tuple(f"missing benchmark result: {key}" for key in missing)
     return BenchmarkParseResult(
         benchmark_scores=benchmark_scores,
@@ -301,8 +297,7 @@ def _parse_task_group(
     if metric is None:
         raise ValueError(f"{task_id} result missing supported metrics {preferred_metrics}")
     values = [
-        _require_float(result[metric], f"{task_id}.{metric}")
-        for result in task_results.values()
+        _require_float(result[metric], f"{task_id}.{metric}") for result in task_results.values()
     ]
     stderr = _average_stderr(task_results, metric)
     return ParsedBenchmarkScore(
@@ -315,9 +310,7 @@ def _parse_task_group(
     )
 
 
-def _matching_task_results(
-    results: dict[str, Any], task_id: str
-) -> dict[str, dict[str, Any]]:
+def _matching_task_results(results: dict[str, Any], task_id: str) -> dict[str, dict[str, Any]]:
     matches: dict[str, dict[str, Any]] = {}
     for key, value in results.items():
         if key == task_id or key.startswith(f"{task_id}_"):

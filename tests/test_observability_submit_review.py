@@ -96,9 +96,9 @@ def test_signature_failure_logs_record_and_does_not_leak_secret(tmp_path, caplog
     assert resp.status_code == 401, resp.text
     assert resp.json()["detail"] == "invalid signature"
     # A log record was emitted on the rejection path.
-    assert any(
-        "signature" in rec.getMessage().lower() for rec in caplog.records
-    ), f"expected a signature-failure log record, got: {caplog.text!r}"
+    assert any("signature" in rec.getMessage().lower() for rec in caplog.records), (
+        f"expected a signature-failure log record, got: {caplog.text!r}"
+    )
     # And it must NOT leak the signature / secret material.
     assert LEAK_SENTINEL not in caplog.text, "signature value leaked into logs!"
     assert "secret" not in caplog.text, "shared_token value leaked into logs!"

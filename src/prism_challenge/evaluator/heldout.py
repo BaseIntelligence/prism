@@ -354,8 +354,12 @@ def _child_heldout(
             conn.send(("error", "build_model returned a non-nn.Module value"))
             return
         val_bpb_random = _bpb_over_texts(
-            twin, texts, vocab_size=vocab_size, seq_len=seq_len,
-            batch_size=batch_size, baseline_nats=baseline_nats,
+            twin,
+            texts,
+            vocab_size=vocab_size,
+            seq_len=seq_len,
+            batch_size=batch_size,
+            baseline_nats=baseline_nats,
         )
 
         # Trained model: a fresh instance loaded with the persisted trained weights.
@@ -371,8 +375,12 @@ def _child_heldout(
         state = torch.load(trained_state_path, map_location="cpu", weights_only=True)
         trained.load_state_dict(_strip_module_prefix(state), strict=False)
         val_bpb_trained = _bpb_over_texts(
-            trained, texts, vocab_size=vocab_size, seq_len=seq_len,
-            batch_size=batch_size, baseline_nats=baseline_nats,
+            trained,
+            texts,
+            vocab_size=vocab_size,
+            seq_len=seq_len,
+            batch_size=batch_size,
+            baseline_nats=baseline_nats,
         )
 
         # CONVERGED (final-checkpoint) train bpb: the SAME trained model re-evaluated byte-level
@@ -386,19 +394,25 @@ def _child_heldout(
             train_texts = _load_split_texts(train_data_dir, "train", val_byte_budget)
             if train_texts:
                 train_bpb_converged = _bpb_over_texts(
-                    trained, train_texts, vocab_size=vocab_size, seq_len=seq_len,
-                    batch_size=batch_size, baseline_nats=baseline_nats,
+                    trained,
+                    train_texts,
+                    vocab_size=vocab_size,
+                    seq_len=seq_len,
+                    batch_size=batch_size,
+                    baseline_nats=baseline_nats,
                 )
 
-        conn.send((
-            "ok",
-            {
-                "val_bpb_random_init": val_bpb_random,
-                "val_bpb_trained": val_bpb_trained,
-                "val_covered_bytes": val_covered_bytes,
-                "train_bpb_converged": train_bpb_converged,
-            },
-        ))
+        conn.send(
+            (
+                "ok",
+                {
+                    "val_bpb_random_init": val_bpb_random,
+                    "val_bpb_trained": val_bpb_trained,
+                    "val_covered_bytes": val_covered_bytes,
+                    "train_bpb_converged": train_bpb_converged,
+                },
+            )
+        )
     except BaseException as exc:  # noqa: BLE001 - report any failure cleanly to the parent
         try:
             conn.send(("error", f"{type(exc).__name__}: {exc}"))

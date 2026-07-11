@@ -14,16 +14,10 @@ from prism_challenge.evaluator.checkpoints import (
 
 
 def test_checkpoint_workspace_uses_plan_mapping() -> None:
-    workspace = checkpoint_workspace(
-        Path("/artifacts"), submission_id="submission-123", attempt=3
-    )
+    workspace = checkpoint_workspace(Path("/artifacts"), submission_id="submission-123", attempt=3)
 
-    assert workspace.current_dir == Path(
-        "/artifacts/checkpoints/submission-123/attempt-3/current"
-    )
-    assert workspace.resume_dir == Path(
-        "/artifacts/checkpoints/submission-123/attempt-2/current"
-    )
+    assert workspace.current_dir == Path("/artifacts/checkpoints/submission-123/attempt-3/current")
+    assert workspace.resume_dir == Path("/artifacts/checkpoints/submission-123/attempt-2/current")
 
 
 def test_first_attempt_has_no_resume_checkpoint_dir() -> None:

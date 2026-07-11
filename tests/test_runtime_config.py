@@ -122,6 +122,5 @@ def test_runtime_execution_mode_defaults_match_evaluator_and_fineweb_contracts()
     assert full_scale["phase_2_dataset_subset"] == "sample-100BT"
     assert full_scale["phase_1_dataset_tokens"] == FINEWEB_EDU_SUBSETS["sample-10BT"]["token_count"]
     assert (
-        full_scale["phase_2_dataset_tokens"]
-        == FINEWEB_EDU_SUBSETS["sample-100BT"]["token_count"]
+        full_scale["phase_2_dataset_tokens"] == FINEWEB_EDU_SUBSETS["sample-100BT"]["token_count"]
     )

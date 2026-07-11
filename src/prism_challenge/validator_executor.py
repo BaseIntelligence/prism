@@ -177,9 +177,7 @@ def _load_manifest(manifest_path: str) -> dict[str, Any] | None:
     return parsed if isinstance(parsed, dict) else None
 
 
-def _resolve_proof_signer(
-    worker: PrismWorker, signer: WorkerSigner | None
-) -> WorkerSigner | None:
+def _resolve_proof_signer(worker: PrismWorker, signer: WorkerSigner | None) -> WorkerSigner | None:
     if signer is not None:
         return signer
     key = worker.settings.worker_plane.signing_key

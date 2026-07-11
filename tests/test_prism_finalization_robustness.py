@@ -348,9 +348,7 @@ async def test_claim_audit_unit_is_single_consumer_with_lease(tmp_path) -> None:
     assert unit["claimed_by"] == "validator-1"
 
     # An expired lease (cutoff == now) is reclaimable by another validator.
-    assert await repository.claim_audit_unit(
-        audit_unit_id, claimant="validator-3", lease_seconds=0
-    )
+    assert await repository.claim_audit_unit(audit_unit_id, claimant="validator-3", lease_seconds=0)
     reclaimed = await repository.get_audit_unit(audit_unit_id)
     assert reclaimed is not None
     assert reclaimed["claimed_by"] == "validator-3"

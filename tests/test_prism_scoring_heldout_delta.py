@@ -111,12 +111,8 @@ def test_scoring_heldout_tie_break_does_not_override_clear_bpb() -> None:
 def test_scoring_excessive_memorization_gap_flagged_and_penalized() -> None:
     # VAL-SCORE-009 / VAL-HARNESS-016: an excessive train-vs-held-out gap is flagged and the score
     # degraded relative to a same-bpb, same-delta non-memorizing run.
-    memorizer = score_prequential_bpb(
-        _manifest(bpb=1.0, heldout_delta=0.3, train_heldout_gap=2.5)
-    )
-    benign = score_prequential_bpb(
-        _manifest(bpb=1.0, heldout_delta=0.3, train_heldout_gap=0.1)
-    )
+    memorizer = score_prequential_bpb(_manifest(bpb=1.0, heldout_delta=0.3, train_heldout_gap=2.5))
+    benign = score_prequential_bpb(_manifest(bpb=1.0, heldout_delta=0.3, train_heldout_gap=0.1))
     assert memorizer.memorization_flag is True
     assert memorizer.memorization_penalty == pytest.approx(MEMORIZATION_PENALTY_FACTOR)
     assert "memorization_gap" in memorizer.flags
@@ -149,8 +145,6 @@ def test_scoring_absent_heldout_is_backward_compatible() -> None:
 def test_scoring_step0_anomaly_zeroes_score_even_with_positive_delta() -> None:
     # A smuggled-weights step-0 anomaly zeroes the anti-cheat multiplier; a positive held-out delta
     # cannot rescue it.
-    score = score_prequential_bpb(
-        _manifest(bpb=0.01, heldout_delta=0.9, step0_anomaly=True)
-    )
+    score = score_prequential_bpb(_manifest(bpb=0.01, heldout_delta=0.9, step0_anomaly=True))
     assert score.anomaly is True
     assert score.final_score == 0.0

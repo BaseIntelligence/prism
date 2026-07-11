@@ -272,9 +272,7 @@ def _is_rank0_test(test: ast.AST) -> bool:
         return any(_is_rank0_test(value) for value in test.values)
     if isinstance(test, ast.Compare) and len(test.ops) == 1 and isinstance(test.ops[0], ast.Eq):
         left, right = test.left, test.comparators[0]
-        return (_is_rank_ref(left) and _is_zero(right)) or (
-            _is_rank_ref(right) and _is_zero(left)
-        )
+        return (_is_rank_ref(left) and _is_zero(right)) or (_is_rank_ref(right) and _is_zero(left))
     return False
 
 

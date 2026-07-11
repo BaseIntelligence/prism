@@ -13,9 +13,7 @@ def test_base_challenge_env_aliases_are_loaded(monkeypatch):
     monkeypatch.setenv("CHALLENGE_DOCKER_ENABLED", "true")
     monkeypatch.setenv("CHALLENGE_DOCKER_BACKEND", "broker")
     monkeypatch.setenv("CHALLENGE_DOCKER_BROKER_URL", "http://base-docker-broker:8082")
-    monkeypatch.setenv(
-        "CHALLENGE_DOCKER_BROKER_TOKEN_FILE", "/run/secrets/base/challenge_token"
-    )
+    monkeypatch.setenv("CHALLENGE_DOCKER_BROKER_TOKEN_FILE", "/run/secrets/base/challenge_token")
 
     settings = PrismSettings()
 
@@ -92,7 +90,6 @@ def test_internal_token_requires_secret() -> None:
         assert "PRISM_SHARED_TOKEN" in str(exc)
     else:
         raise AssertionError("internal_token should require a configured secret")
-
 
 
 def test_max_code_bytes_holds_five_mib_zip_base64() -> None:

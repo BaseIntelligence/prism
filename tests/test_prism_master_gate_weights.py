@@ -354,12 +354,19 @@ async def test_get_weights_empty_store_returns_empty(tmp_path: Path) -> None:
 async def test_get_weights_splits_between_distinct_owners(tmp_path: Path) -> None:
     repository = await _new_repository(tmp_path, "weights-split.sqlite3")
     await _seed_architecture(
-        repository, architecture_id="arch-1", owner_hotkey="arch-owner",
-        q_arch_best=0.9, created_at="2024-01-01T00:00:00+00:00",
+        repository,
+        architecture_id="arch-1",
+        owner_hotkey="arch-owner",
+        q_arch_best=0.9,
+        created_at="2024-01-01T00:00:00+00:00",
     )
     await _seed_training_variant(
-        repository, variant_id="var-1", architecture_id="arch-1",
-        owner_hotkey="train-owner", q_recipe=0.8, created_at="2024-01-01T00:00:00+00:00",
+        repository,
+        variant_id="var-1",
+        architecture_id="arch-1",
+        owner_hotkey="train-owner",
+        q_recipe=0.8,
+        created_at="2024-01-01T00:00:00+00:00",
     )
 
     weights = await get_weights(repository, EPOCH_SECONDS)
@@ -372,12 +379,19 @@ async def test_get_weights_splits_between_distinct_owners(tmp_path: Path) -> Non
 async def test_get_weights_same_owner_takes_full_pool(tmp_path: Path) -> None:
     repository = await _new_repository(tmp_path, "weights-same.sqlite3")
     await _seed_architecture(
-        repository, architecture_id="arch-1", owner_hotkey="solo",
-        q_arch_best=0.9, created_at="2024-01-01T00:00:00+00:00",
+        repository,
+        architecture_id="arch-1",
+        owner_hotkey="solo",
+        q_arch_best=0.9,
+        created_at="2024-01-01T00:00:00+00:00",
     )
     await _seed_training_variant(
-        repository, variant_id="var-1", architecture_id="arch-1",
-        owner_hotkey="solo", q_recipe=0.8, created_at="2024-01-01T00:00:00+00:00",
+        repository,
+        variant_id="var-1",
+        architecture_id="arch-1",
+        owner_hotkey="solo",
+        q_recipe=0.8,
+        created_at="2024-01-01T00:00:00+00:00",
     )
 
     weights = await get_weights(repository, EPOCH_SECONDS)
@@ -388,12 +402,19 @@ async def test_get_weights_same_owner_takes_full_pool(tmp_path: Path) -> None:
 async def test_get_weights_honors_db_configured_custom_split(tmp_path: Path) -> None:
     repository = await _new_repository(tmp_path, "weights-custom.sqlite3")
     await _seed_architecture(
-        repository, architecture_id="arch-1", owner_hotkey="arch-owner",
-        q_arch_best=0.9, created_at="2024-01-01T00:00:00+00:00",
+        repository,
+        architecture_id="arch-1",
+        owner_hotkey="arch-owner",
+        q_arch_best=0.9,
+        created_at="2024-01-01T00:00:00+00:00",
     )
     await _seed_training_variant(
-        repository, variant_id="var-1", architecture_id="arch-1",
-        owner_hotkey="train-owner", q_recipe=0.8, created_at="2024-01-01T00:00:00+00:00",
+        repository,
+        variant_id="var-1",
+        architecture_id="arch-1",
+        owner_hotkey="train-owner",
+        q_recipe=0.8,
+        created_at="2024-01-01T00:00:00+00:00",
     )
     await repository.store_runtime_config(
         config_key="reward_pools",
@@ -419,20 +440,34 @@ async def test_get_weights_crown_is_cross_epoch(tmp_path: Path) -> None:
     # crown is global/all-time, not scoped to the current epoch.
     repository = await _new_repository(tmp_path, "weights-crossepoch.sqlite3")
     await _seed_architecture(
-        repository, architecture_id="arch-old", owner_hotkey="old-owner",
-        q_arch_best=0.95, created_at="2023-01-01T00:00:00+00:00",
+        repository,
+        architecture_id="arch-old",
+        owner_hotkey="old-owner",
+        q_arch_best=0.95,
+        created_at="2023-01-01T00:00:00+00:00",
     )
     await _seed_training_variant(
-        repository, variant_id="var-old", architecture_id="arch-old",
-        owner_hotkey="old-train", q_recipe=0.9, created_at="2023-01-01T00:00:00+00:00",
+        repository,
+        variant_id="var-old",
+        architecture_id="arch-old",
+        owner_hotkey="old-train",
+        q_recipe=0.9,
+        created_at="2023-01-01T00:00:00+00:00",
     )
     await _seed_architecture(
-        repository, architecture_id="arch-new", owner_hotkey="new-owner",
-        q_arch_best=0.50, created_at="2025-06-01T00:00:00+00:00",
+        repository,
+        architecture_id="arch-new",
+        owner_hotkey="new-owner",
+        q_arch_best=0.50,
+        created_at="2025-06-01T00:00:00+00:00",
     )
     await _seed_training_variant(
-        repository, variant_id="var-new", architecture_id="arch-new",
-        owner_hotkey="new-train", q_recipe=0.4, created_at="2025-06-01T00:00:00+00:00",
+        repository,
+        variant_id="var-new",
+        architecture_id="arch-new",
+        owner_hotkey="new-train",
+        q_recipe=0.4,
+        created_at="2025-06-01T00:00:00+00:00",
     )
 
     weights = await get_weights(repository, EPOCH_SECONDS)
@@ -451,12 +486,19 @@ async def test_get_weights_nonpositive_crown_burns(tmp_path: Path) -> None:
     # A crown holder whose all-time best is non-positive is not a real learner -> BURN.
     repository = await _new_repository(tmp_path, "weights-zero-crown.sqlite3")
     await _seed_architecture(
-        repository, architecture_id="arch-1", owner_hotkey="arch-owner",
-        q_arch_best=0.0, created_at="2024-01-01T00:00:00+00:00",
+        repository,
+        architecture_id="arch-1",
+        owner_hotkey="arch-owner",
+        q_arch_best=0.0,
+        created_at="2024-01-01T00:00:00+00:00",
     )
     await _seed_training_variant(
-        repository, variant_id="var-1", architecture_id="arch-1",
-        owner_hotkey="train-owner", q_recipe=0.0, created_at="2024-01-01T00:00:00+00:00",
+        repository,
+        variant_id="var-1",
+        architecture_id="arch-1",
+        owner_hotkey="train-owner",
+        q_recipe=0.0,
+        created_at="2024-01-01T00:00:00+00:00",
     )
     assert await get_weights(repository, EPOCH_SECONDS) == {}
 
@@ -465,8 +507,11 @@ async def test_get_weights_missing_training_variant_gives_arch_owner_full(tmp_pa
     # Crowned architecture exists but has NO training variant -> arch owner takes the whole pool.
     repository = await _new_repository(tmp_path, "weights-no-variant.sqlite3")
     await _seed_architecture(
-        repository, architecture_id="arch-1", owner_hotkey="arch-owner",
-        q_arch_best=0.9, created_at="2024-01-01T00:00:00+00:00",
+        repository,
+        architecture_id="arch-1",
+        owner_hotkey="arch-owner",
+        q_arch_best=0.9,
+        created_at="2024-01-01T00:00:00+00:00",
     )
 
     weights = await get_weights(repository, EPOCH_SECONDS)

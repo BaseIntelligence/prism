@@ -154,11 +154,7 @@ def test_prism_dataset_manifest_shard_sha256_matches_on_disk(tmp_path: Path) -> 
             assert hashlib.sha256(path.read_bytes()).hexdigest() == shard["sha256"]
             listed.add(path)
 
-    on_disk = {
-        path
-        for split in LOCKED_SPLITS
-        for path in (root / split).glob(f"{split}-*.jsonl")
-    }
+    on_disk = {path for split in LOCKED_SPLITS for path in (root / split).glob(f"{split}-*.jsonl")}
     assert on_disk == listed
 
 

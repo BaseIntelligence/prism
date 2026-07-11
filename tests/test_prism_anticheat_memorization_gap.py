@@ -69,9 +69,7 @@ def _benign_text(i: int) -> str:
 
 
 def _jsonl(prefix: str, text_fn: Callable[[int], str], n: int) -> str:
-    return "".join(
-        json.dumps({"id": f"{prefix}-{i}", "text": text_fn(i)}) + "\n" for i in range(n)
-    )
+    return "".join(json.dumps({"id": f"{prefix}-{i}", "text": text_fn(i)}) + "\n" for i in range(n))
 
 
 def _write_val(root: Path, text_fn: Callable[[int], str], n: int = 60) -> Path:

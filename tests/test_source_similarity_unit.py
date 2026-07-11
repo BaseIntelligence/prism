@@ -222,9 +222,7 @@ def test_python_files_property_filters_non_python():
 
 
 def test_primary_python_code_prefers_model_py():
-    snap = snapshot_from_named_sources(
-        [("agent.py", "AGENT = 1"), ("model.py", "MODEL = 2")]
-    )
+    snap = snapshot_from_named_sources([("agent.py", "AGENT = 1"), ("model.py", "MODEL = 2")])
     assert "MODEL = 2" in primary_python_code(snap)
 
 
@@ -496,9 +494,7 @@ def test_run_pair_sandbox_runner_non_object_json_raises():
 
 
 def test_write_snapshot_dir_materializes_files(tmp_path):
-    snap = snapshot_from_named_sources(
-        [("pkg/model.py", MODEL_CODE), ("README.md", "# hi")]
-    )
+    snap = snapshot_from_named_sources([("pkg/model.py", MODEL_CODE), ("README.md", "# hi")])
     write_snapshot_dir(snap, tmp_path)
     assert (tmp_path / "pkg" / "model.py").read_text() == MODEL_CODE
     assert (tmp_path / "README.md").read_text() == "# hi"

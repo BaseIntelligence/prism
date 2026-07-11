@@ -253,8 +253,7 @@ def run(workdir: Path) -> bool:
             f"assigned_validator_hotkey={row['assigned_validator_hotkey']}"
         )
         assigned_to_validator = (
-            row["assigned_validator_hotkey"] == validator_hk
-            and row["required_capability"] == "gpu"
+            row["assigned_validator_hotkey"] == validator_hk and row["required_capability"] == "gpu"
         )
         worker_regs = h._count("worker_registrations")
         worker_asgn = h._count("worker_assignments")

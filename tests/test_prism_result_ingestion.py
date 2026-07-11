@@ -564,4 +564,3 @@ def test_result_route_disabled_when_worker_plane_off(tmp_path) -> None:
             headers={"Authorization": "Bearer secret"},
         )
         assert resp.status_code == 404
-

@@ -319,9 +319,7 @@ async def ingest_work_unit_result(
     audit_sampled: bool | None = None
     audit_unit_id: str | None = None
     if audit_sampler is not None:
-        audit_sampled = audit_sampler.should_sample(
-            work_unit_id=work_unit_id, effective_tier=tier
-        )
+        audit_sampled = audit_sampler.should_sample(work_unit_id=work_unit_id, effective_tier=tier)
         # A sampled accepted result gets a validator audit unit on the existing dispatch path with a
         # DISTINCT id; the audited submission is NOT reverted to pending (VAL-PRISM-012). R=1
         # (replication-degraded) results are sampled and audited at their effective-tier rate just

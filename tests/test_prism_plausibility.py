@@ -450,4 +450,3 @@ async def test_ingestion_accepts_plausible_manifest_identically_to_legacy(tmp_pa
     assert legacy_score is not None
 
     assert gated_score == pytest.approx(legacy_score)
-

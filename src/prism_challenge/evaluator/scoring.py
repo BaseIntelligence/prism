@@ -33,6 +33,7 @@ HELDOUT_DELTA_BPB_EPSILON = 5e-3
 MEMORIZATION_GAP_THRESHOLD_BPB = 1.0
 MEMORIZATION_PENALTY_FACTOR = 0.5
 
+
 class ScoreValidationError(ValueError):
     def __init__(self, reasons: list[str] | tuple[str, ...]) -> None:
         self.reasons = tuple(reasons)
