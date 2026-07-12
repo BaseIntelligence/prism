@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import binascii
+import importlib
 import json
 from collections.abc import Callable, Coroutine, Mapping
 from typing import Annotated, Any
@@ -35,6 +36,16 @@ from .queue import PrismWorker
 from .repository import PrismRepository
 from .routes import router
 from .weights import get_weights
+
+_ExternalResultEnvelope: Any
+try:
+    _ExternalResultEnvelope = getattr(
+        importlib.import_module("base.challenge_sdk.schemas"),
+        "ExternalResultEnvelope",
+        None,
+    )
+except ImportError:  # Base v3.1.1 compatibility until the next immutable SDK release.
+    _ExternalResultEnvelope = None
 
 
 def create_app(
@@ -252,14 +263,52 @@ def create_app(
             raise HTTPException(status.HTTP_400_BAD_REQUEST, "invalid JSON result body") from exc
         if not isinstance(payload, dict):
             raise HTTPException(status.HTTP_400_BAD_REQUEST, "result body must be an object")
-        work_unit_id = payload.get("work_unit_id")
-        submission_ref = payload.get("submission_ref")
-        result = payload.get("result")
+        if _ExternalResultEnvelope is not None and "api_version" in payload:
+            try:
+                envelope = _ExternalResultEnvelope.model_validate(payload)
+            except Exception as exc:
+                raise HTTPException(
+                    status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    {
+                        "code": "result_envelope_invalid",
+                        "detail": (
+                            "external result envelope does not match the canonical SDK contract"
+                        ),
+                    },
+                ) from exc
+            if envelope.challenge_slug != app_settings.slug:
+                raise HTTPException(
+                    status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    {
+                        "code": "result_challenge_mismatch",
+                        "detail": "challenge binding is invalid",
+                    },
+                )
+            if envelope.assignment_id != envelope.work_unit_id:
+                raise HTTPException(
+                    status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    {
+                        "code": "result_assignment_mismatch",
+                        "detail": "assignment binding is invalid",
+                    },
+                )
+            work_unit_id = envelope.work_unit_id
+            submission_ref = envelope.submission_ref
+            result_payload: dict[str, Any] = dict(
+                {
+                    **envelope.result,
+                    "execution_proof": envelope.proof.model_dump(mode="json"),
+                }
+            )
+        else:
+            work_unit_id = payload.get("work_unit_id")
+            submission_ref = payload.get("submission_ref")
+            result_payload = payload.get("result")  # type: ignore[assignment]
         if not isinstance(work_unit_id, str) or not work_unit_id:
             raise HTTPException(status.HTTP_400_BAD_REQUEST, "work_unit_id is required")
         if not isinstance(submission_ref, str):
             raise HTTPException(status.HTTP_400_BAD_REQUEST, "submission_ref is required")
-        if not isinstance(result, dict):
+        if not isinstance(result_payload, dict):
             raise HTTPException(status.HTTP_400_BAD_REQUEST, "result must be an object")
         sampler = audit_sampler_from_config(app_settings.worker_plane)
         try:
@@ -267,7 +316,7 @@ def create_app(
                 worker=worker,
                 work_unit_id=work_unit_id,
                 submission_ref=submission_ref,
-                result=result,
+                result=result_payload,
                 pinned_image_digest=app_settings.worker_plane.pinned_image_digest,
                 audit_sampler=sampler,
             )

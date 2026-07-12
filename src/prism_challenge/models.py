@@ -4,7 +4,7 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 def utc_now() -> datetime:
@@ -35,12 +35,14 @@ class JobStatus(StrEnum):
 
 
 class SubmissionCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     code: str = Field(min_length=1)
     filename: str = Field(default="model.py", pattern=r"^[A-Za-z0-9_.-]+\.(py|zip)$")
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 class SubmissionResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     id: str
     hotkey: str
     epoch_id: int
@@ -50,6 +52,7 @@ class SubmissionResponse(BaseModel):
 
 
 class SubmissionStatusResponse(SubmissionResponse):
+    model_config = ConfigDict(extra="forbid")
     error: str | None = None
     final_score: float | None = None
     q_arch: float | None = None
