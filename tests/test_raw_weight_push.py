@@ -18,7 +18,11 @@ from base.challenge_sdk.roles import Role, activate_role
 from base.challenge_sdk.schemas import RawWeightPushRequest
 
 from prism_challenge.db import Database
-from prism_challenge.raw_weight_push import RawWeightPushClient, RawWeightPushStore
+from prism_challenge.raw_weight_push import (
+    RawWeightPushClient,
+    RawWeightPushStore,
+    maybe_build_push_client_from_settings,
+)
 
 HOTKEY = "5CkeyABC"
 TOKEN = "prism-shared-token"
@@ -224,3 +228,35 @@ async def test_wrong_role_cannot_push(database: Database) -> None:
     with activate_role(Role.MASTER):
         with pytest.raises(RoleContractError):
             await client.push_once(weights={HOTKEY: 1.0}, epoch=1)
+
+
+def test_maybe_build_push_client_requires_master_and_token(database: Database) -> None:
+    class _Settings:
+        raw_weight_push_enabled = True
+        master_base_url = None
+        worker_plane = type("WP", (), {"master_base_url": None})()
+        slug = SLUG
+        epoch_seconds = 3600
+        architecture_reward_weight = 0.6
+        training_reward_weight = 0.4
+        raw_weight_push_interval_seconds = 5.0
+
+        def internal_token(self) -> str:
+            return TOKEN
+
+    assert (
+        maybe_build_push_client_from_settings(
+            settings=_Settings(), database=database, repository=object()
+        )
+        is None
+    )
+
+    class _Enabled(_Settings):
+        master_base_url = "http://master.test"
+
+    client = maybe_build_push_client_from_settings(
+        settings=_Enabled(), database=database, repository=object()
+    )
+    assert client is not None
+    assert client.master_base_url == "http://master.test"
+

@@ -10,6 +10,7 @@ unchanged so restart retries the same logical snapshot.
 
 from __future__ import annotations
 
+import asyncio
 import hmac
 import logging
 import uuid
@@ -21,7 +22,7 @@ from typing import Any
 
 import aiosqlite
 import httpx
-from base.challenge_sdk.roles import Capability, Role, role_contract
+from base.challenge_sdk.roles import Capability, Role, activate_role, role_contract
 from base.challenge_sdk.schemas import (
     RawWeightPushAcknowledgement,
     RawWeightPushRequest,
@@ -561,6 +562,101 @@ def build_weights_loader(
     return _load
 
 
+async def run_raw_weight_push_loop(
+    client: RawWeightPushClient,
+    *,
+    interval_seconds: float = 30.0,
+    resilient: bool = True,
+) -> None:
+    """Background loop: push scored hotkey weights when master + token enable it.
+
+    Retries the same durable pending identity on transport failures. Cancellation
+    always propagates so app lifespan can stop the task cleanly.
+    """
+
+    await client.init()
+    logger.info(
+        "raw weight push loop started",
+        extra={"master": client.master_base_url, "slug": client.challenge_slug},
+    )
+    while True:
+        try:
+            with activate_role(
+                Role.CHALLENGE, capabilities=(Capability.CHALLENGE_RAW_WEIGHT_PUSH,)
+            ):
+                result = await client.push_once()
+            logger.info(
+                "raw weight push attempt",
+                extra={
+                    "status": result.status,
+                    "epoch": result.epoch,
+                    "revision": result.revision,
+                    "cursor_advanced": result.cursor_advanced,
+                },
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            if not resilient:
+                raise
+            logger.exception("raw weight push loop iteration failed")
+        await asyncio.sleep(max(float(interval_seconds), 0.1))
+
+
+def maybe_build_push_client_from_settings(
+    *,
+    settings: Any,
+    database: Database,
+    repository: Any,
+) -> RawWeightPushClient | None:
+    """Construct a push client when master_base_url + token enable raw-weight push."""
+
+    if not bool(getattr(settings, "raw_weight_push_enabled", True)):
+        return None
+    master_url = getattr(settings, "master_base_url", None) or getattr(
+        getattr(settings, "worker_plane", None), "master_base_url", None
+    )
+    if not master_url:
+        return None
+    token_loader = getattr(settings, "internal_token", None)
+    token = token_loader() if callable(token_loader) else None
+    if not token:
+        shared = getattr(settings, "shared_token", None)
+        token = str(shared) if shared else None
+    if not token:
+        return None
+    epoch_seconds = int(getattr(settings, "epoch_seconds", 3600) or 3600)
+    arch = float(getattr(settings, "architecture_reward_weight", 0.60))
+    train = float(getattr(settings, "training_reward_weight", 0.40))
+    interval_hint = float(getattr(settings, "raw_weight_push_interval_seconds", 30.0))
+
+    def _epoch() -> int:
+        return int(datetime.now(UTC).timestamp()) // max(epoch_seconds, 1)
+
+    client = RawWeightPushClient(
+        database=database,
+        challenge_slug=str(getattr(settings, "slug", "prism")),
+        master_base_url=str(master_url),
+        shared_token=str(token),
+        weights_fn=build_weights_loader(
+            repository=repository,
+            epoch_seconds=epoch_seconds,
+            architecture_weight=arch,
+            training_weight=train,
+        ),
+        epoch_fn=_epoch,
+        freshness_seconds=int(
+            getattr(settings, "raw_weight_push_freshness_seconds", DEFAULT_FRESHNESS_SECONDS)
+        ),
+        timeout_seconds=float(
+            getattr(settings, "raw_weight_push_timeout_seconds", DEFAULT_TIMEOUT_SECONDS)
+        ),
+    )
+    # Stash interval for app wiring convenience.
+    client.push_interval_seconds = interval_hint  # type: ignore[attr-defined]
+    return client
+
+
 __all__ = [
     "PushAttemptResult",
     "PushCursor",
@@ -568,4 +664,7 @@ __all__ = [
     "RawWeightPushStore",
     "build_weights_loader",
     "ensure_raw_weight_push_schema",
+    "maybe_build_push_client_from_settings",
+    "run_raw_weight_push_loop",
 ]
+

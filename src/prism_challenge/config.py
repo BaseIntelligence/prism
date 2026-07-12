@@ -227,6 +227,19 @@ class PrismSettings(ChallengeSettings):
     sdk_version: str = "1.0.0"
     tee_verification_enabled: bool = True
     raw_weight_push_enabled: bool = True
+    # Master coordination base URL for authenticated raw-weight push. When set
+    # together with the challenge shared token, Prism starts the push loop.
+    master_base_url: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "PRISM_MASTER_BASE_URL",
+            "CHALLENGE_MASTER_BASE_URL",
+            "MASTER_BASE_URL",
+        ),
+    )
+    raw_weight_push_interval_seconds: float = Field(default=30.0, ge=0.1)
+    raw_weight_push_freshness_seconds: int = Field(default=300, ge=30)
+    raw_weight_push_timeout_seconds: float = Field(default=10.0, gt=0.0)
     capabilities: tuple[str, ...] = Field(
         default_factory=lambda: (
             "challenge.scoring",

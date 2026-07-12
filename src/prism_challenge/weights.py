@@ -4,6 +4,12 @@ from typing import SupportsFloat, cast
 
 from .repository import PrismRepository
 
+# Versioned score-owner policy recorded for aggregation provenance (VAL-WEIGHT-094).
+# One positive canonical score owner is selected per hotkey for the emission map;
+# non-positive scores contribute zero and do not receive hidden renormalization
+# advantages beyond the explicit architecture/training pool split.
+SCORE_OWNER_POLICY_VERSION = "score-owner.architecture-training.v1"
+
 
 async def get_weights(
     repository: PrismRepository,
@@ -18,6 +24,9 @@ async def get_weights(
     the ``architecture_weight`` share and the owner of the best training variant on that winning
     architecture takes the ``training_weight`` share. ``epoch_seconds`` is retained for signature
     stability but no longer scopes the ranking (the crown is global, not per-epoch).
+
+    Non-positive architecture scores contribute an empty map (explicit zero to the master after
+    a synthetic zero push, or skip; never a hidden redistribution across non-owners).
     """
     best_arch = await repository.best_architecture()
     # BURN: no architecture has ever scored, or the crown holder's all-time best is non-positive ->

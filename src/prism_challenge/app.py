@@ -93,7 +93,7 @@ def create_app(
     # worker loop is launched by the app-factory lifespan AFTER database.init() and cancelled +
     # awaited before database.close(), reusing this SAME PrismWorker via app.state.worker (no
     # second app/DB).
-    background_tasks: tuple[Callable[[FastAPI], Coroutine[Any, Any, None]], ...] = ()
+    background_tasks: list[Callable[[FastAPI], Coroutine[Any, Any, None]]] = []
     if app_settings.combined_mode:
 
         async def _run_combined_worker(app: FastAPI) -> None:
@@ -105,15 +105,41 @@ def create_app(
                 resilient=True,
             )
 
-        background_tasks = (_run_combined_worker,)
+        background_tasks.append(_run_combined_worker)
+
+    # Wire authenticated raw-weight push when master_base_url + token enable it.
+    from .raw_weight_push import (
+        maybe_build_push_client_from_settings,
+        run_raw_weight_push_loop,
+    )
+
+    push_client = maybe_build_push_client_from_settings(
+        settings=app_settings,
+        database=database,
+        repository=repository,
+    )
+    if push_client is not None:
+        interval = float(getattr(push_client, "push_interval_seconds", 30.0))
+
+        async def _run_raw_weight_push(app: FastAPI) -> None:
+            client = getattr(app.state, "raw_weight_push_client", push_client)
+            await run_raw_weight_push_loop(
+                client,
+                interval_seconds=interval,
+                resilient=True,
+            )
+
+        background_tasks.append(_run_raw_weight_push)
 
     app = create_challenge_app(
         settings=app_settings,
         database=database,
         public_router=router,
         get_weights_fn=get_weights_fn,
-        background_tasks=background_tasks,
+        background_tasks=tuple(background_tasks),
     )
+    if push_client is not None:
+        app.state.raw_weight_push_client = push_client
     app.state.settings = app_settings
     app.state.database = database
     app.state.repository = repository
