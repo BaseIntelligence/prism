@@ -294,8 +294,8 @@ wheels = [
 
 [[package]]
 name = "base"
-version = "3.1.0"
-source = { url = "https://github.com/BaseIntelligence/base/releases/download/v3.1.0/base-3.1.0-py3-none-any.whl" }
+version = "3.1.1"
+source = { url = "https://github.com/BaseIntelligence/base/releases/download/v3.1.1/base-3.1.1-py3-none-any.whl" }
 dependencies = [
     { name = "aiosqlite" },
     { name = "alembic" },
@@ -318,7 +318,7 @@ dependencies = [
     { name = "uvicorn", extra = ["standard"] },
 ]
 wheels = [
-    { filename = "base-3.1.0-py3-none-any.whl", hash = "sha256:e14d2df197322099e48ba4853fb548341b9bd9b598e5b83d2dd7d050a6c26b8f" },
+    { url = "https://github.com/BaseIntelligence/base/releases/download/v3.1.1/base-3.1.1-py3-none-any.whl", hash = "sha256:325d55e5279741fc18440cb9880579ef5c12f50839d3c00acef7f9219cb4415b" },
 ]
 
 [package.metadata]
@@ -331,6 +331,7 @@ requires-dist = [
     { name = "bittensor", marker = "extra == 'validator'", specifier = ">=9" },
     { name = "docker", specifier = ">=7.1" },
     { name = "fastapi", specifier = ">=0.115" },
+    { name = "hatchling", marker = "extra == 'dev'", specifier = "==1.31.0" },
     { name = "httpx", specifier = ">=0.27" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.10" },
     { name = "opentelemetry-api", specifier = ">=1.25" },
@@ -2245,7 +2246,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "aiosqlite", specifier = ">=0.20" },
-    { name = "base", url = "https://github.com/BaseIntelligence/base/releases/download/v3.1.0/base-3.1.0-py3-none-any.whl#sha256=e14d2df197322099e48ba4853fb548341b9bd9b598e5b83d2dd7d050a6c26b8f" },
+    { name = "base", url = "https://github.com/BaseIntelligence/base/releases/download/v3.1.1/base-3.1.1-py3-none-any.whl" },
     { name = "bittensor", marker = "extra == 'bittensor'", specifier = ">=9" },
     { name = "bittensor", marker = "extra == 'dev'", specifier = ">=9" },
     { name = "fastapi", specifier = ">=0.115" },

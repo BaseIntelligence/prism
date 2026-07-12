@@ -138,7 +138,7 @@ def test_clean_artifacts_resolve_one_base_sdk(tmp_path: Path) -> None:
     assert evidence["prism_sdk"] is None
     assert any(
         requirement.startswith(
-            "base @ https://github.com/BaseIntelligence/base/releases/download/v3.1.0/"
+            "base @ https://github.com/BaseIntelligence/base/releases/download/v3.1.1/"
         )
         for requirement in evidence["base_requirement"]
     )
