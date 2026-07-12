@@ -9,8 +9,8 @@
 # A plain `docker build .` (no --target) yields the `service` image, preserving
 # the previous single-image consumer (uvicorn app on port 8080).
 #
-# NOTE: every stage that runs `pip install .` MUST have `git` installed, because
-# pyproject.toml pulls `base @ git+https://github.com/BaseIntelligence/base.git`.
+# The Base SDK is resolved from the immutable, hash-pinned wheel declared in
+# pyproject.toml. No repository checkout is required.
 
 ############################################################
 # evaluator target — CUDA-capable image (cu128 series) that
@@ -32,10 +32,10 @@ ARG TORCH_CUDA_CHANNEL=cu128
 
 WORKDIR /workspace
 
-# python3.12 ships with ubuntu24.04; git is required for the git+https dep clone.
+# python3.12 ships with ubuntu24.04.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
-        python3 python3-venv python3-pip git \
+        python3 python3-venv python3-pip \
     && rm -rf /var/lib/apt/lists/*
 
 # Isolated venv (ubuntu24.04 python is externally-managed).
@@ -96,10 +96,9 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-# git: required for the `base @ git+https://...` dependency clone.
 # docker-cli: the service shells out to the docker broker.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends git docker-cli \
+    && apt-get install -y --no-install-recommends docker-cli \
     && rm -rf /var/lib/apt/lists/*
 
 COPY pyproject.toml ./
