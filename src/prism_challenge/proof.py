@@ -31,7 +31,7 @@ import os
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Protocol, cast, runtime_checkable
+from typing import Any, Literal, Protocol, cast, runtime_checkable
 
 from base.challenge_sdk.proof import (
     EXECUTION_PROOF_VERSION,
@@ -42,6 +42,9 @@ from base.challenge_sdk.proof import (
 )
 
 from .auth import verify_hotkey_signature
+
+ExecutionProofVersion = Literal[1]
+ExecutionProofTier = Literal[0, 1, 2]
 
 #: Result-payload key carrying the serialized :class:`ExecutionProof`. Identical to the base worker
 #: plane key so a proof prism emits is passed through unchanged by the base ``WorkerProofExecutor``.
@@ -160,7 +163,7 @@ def compute_tier(
     image_digest: str | None,
     provider: ProviderInfo | None,
     attestation: Any,
-) -> int:
+) -> ExecutionProofTier:
     """Compute the proof tier from the available provenance (architecture 3.4).
 
     tier 2 iff a populated attestation payload is present; else tier 1 iff BOTH a pinned image
@@ -218,7 +221,7 @@ def build_execution_proof(
     provider: ProviderInfo | None = None,
     image_digest: str | None = None,
     attestation: dict[str, Any] | None = None,
-    tier: int | None = None,
+    tier: ExecutionProofTier | None = None,
 ) -> ExecutionProof:
     """Build and sign an ExecutionProof binding ``manifest_sha256`` to ``unit_id`` under ``signer``.
 
@@ -226,7 +229,7 @@ def build_execution_proof(
     keypair; its public identity becomes ``worker_signature.worker_pubkey``.
     """
 
-    effective_tier = (
+    effective_tier: ExecutionProofTier = (
         compute_tier(image_digest=image_digest, provider=provider, attestation=attestation)
         if tier is None
         else tier
@@ -235,7 +238,7 @@ def build_execution_proof(
         execution_proof_signing_payload(manifest_sha256=manifest_sha256, unit_id=unit_id)
     )
     return ExecutionProof(
-        version=EXECUTION_PROOF_VERSION,
+        version=cast(ExecutionProofVersion, EXECUTION_PROOF_VERSION),
         tier=effective_tier,
         manifest_sha256=manifest_sha256,
         image_digest=image_digest,

@@ -7,6 +7,7 @@ from collections.abc import Callable, Coroutine, Mapping
 from typing import Annotated, Any
 
 from base.challenge_sdk.app_factory import create_challenge_app
+from base.challenge_sdk.roles import Capability, Role, role_contract
 from base.challenge_sdk.schemas import ExternalResultEnvelope
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, status
 
@@ -229,20 +230,24 @@ def create_app(
         return resolution.to_response()
 
     @app.post("/internal/v1/work_units/result", dependencies=[Depends(authenticate_internal)])
+    @role_contract(role=Role.CHALLENGE, capability=Capability.CHALLENGE_ORDINARY_PROOF)
     async def work_unit_result(request: Request) -> dict[str, object]:
-        """Accept a base-reconciled worker result (``{work_unit_id, submission_ref, result}``).
+        """Accept a base-reconciled worker result as ExternalResultEnvelope only.
 
         The base master forwards exactly one accepted (R=2-reconciled) result here after reconciling
-        the replicas' manifest hashes (architecture.md 3.3). The ExecutionProof is verified BEFORE
-        anything is scored: a missing/malformed proof (VAL-PRISM-018) or a tampered manifest / a
-        forged signature (VAL-PRISM-007) is rejected 422 with a distinguishable reason and never
-        finalized (the unit stays eligible for retry). A verified result is then run through the
-        plausibility gate (architecture.md 3.5; VAL-PRISM-009): an implausible manifest is rejected
-        422 with a distinct ``plausibility_*`` reason and never scored, while a plausible manifest
-        passes through UNCHANGED. A verified, plausible result is finalized idempotently:
-        a duplicate delivery is a no-op and a conflicting delivery for an already-accepted unit is
-        refused 409 so the stored score/leaderboard is never mutated (VAL-PRISM-017). The claimed
-        tier is downgraded to its verified effective tier for audit sampling (VAL-PRISM-019).
+        the replicas' manifest hashes (architecture.md 3.3). The body must be the canonical
+        :class:`ExternalResultEnvelope` (api_version, assignment/challenge bindings, and proof)
+        -- dual/legacy reduced bodies without those fields are rejected 422 before scoring or
+        persistence. The ExecutionProof is verified BEFORE anything is scored: a missing/malformed
+        proof (VAL-PRISM-018) or a tampered manifest / a forged signature (VAL-PRISM-007) is
+        rejected 422 with a distinguishable reason and never finalized (the unit stays eligible for
+        retry). A verified result is then run through the plausibility gate (architecture.md 3.5;
+        VAL-PRISM-009): an implausible manifest is rejected 422 with a distinct ``plausibility_*``
+        reason and never scored, while a plausible manifest passes through UNCHANGED.
+        A verified, plausible result is finalized idempotently: a duplicate delivery is
+        a no-op and a conflicting delivery for an already-accepted unit is refused 409 so
+        the stored score/leaderboard is never mutated (VAL-PRISM-017). The claimed tier is
+        downgraded to its verified effective tier for audit sampling (VAL-PRISM-019).
         Disabled with the worker plane off (404) so it is inert in legacy deployments.
         """
         if not app_settings.worker_plane.enabled:
@@ -253,54 +258,40 @@ def create_app(
             raise HTTPException(status.HTTP_400_BAD_REQUEST, "invalid JSON result body") from exc
         if not isinstance(payload, dict):
             raise HTTPException(status.HTTP_400_BAD_REQUEST, "result body must be an object")
-        work_unit_id: object
-        submission_ref: object
-        result_payload: object
-        if "api_version" in payload:
-            try:
-                envelope = ExternalResultEnvelope.model_validate(payload)
-            except Exception as exc:
-                raise HTTPException(
-                    status.HTTP_422_UNPROCESSABLE_ENTITY,
-                    {
-                        "code": "result_envelope_invalid",
-                        "detail": (
-                            "external result envelope does not match the canonical SDK contract"
-                        ),
-                    },
-                ) from exc
-            if envelope.challenge_slug != app_settings.slug:
-                raise HTTPException(
-                    status.HTTP_422_UNPROCESSABLE_ENTITY,
-                    {
-                        "code": "result_challenge_mismatch",
-                        "detail": "challenge binding is invalid",
-                    },
-                )
-            if envelope.assignment_id != envelope.work_unit_id:
-                raise HTTPException(
-                    status.HTTP_422_UNPROCESSABLE_ENTITY,
-                    {
-                        "code": "result_assignment_mismatch",
-                        "detail": "assignment binding is invalid",
-                    },
-                )
-            work_unit_id = envelope.work_unit_id
-            submission_ref = envelope.submission_ref
-            result_payload = {
-                **envelope.result,
-                "execution_proof": envelope.proof.model_dump(mode="json"),
-            }
-        else:
-            work_unit_id = payload.get("work_unit_id")
-            submission_ref = payload.get("submission_ref")
-            result_payload = payload.get("result")
-        if not isinstance(work_unit_id, str) or not work_unit_id:
-            raise HTTPException(status.HTTP_400_BAD_REQUEST, "work_unit_id is required")
-        if not isinstance(submission_ref, str):
-            raise HTTPException(status.HTTP_400_BAD_REQUEST, "submission_ref is required")
-        if not isinstance(result_payload, dict):
-            raise HTTPException(status.HTTP_400_BAD_REQUEST, "result must be an object")
+        try:
+            envelope = ExternalResultEnvelope.model_validate(payload)
+        except Exception as exc:
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                {
+                    "code": "result_envelope_invalid",
+                    "detail": (
+                        "external result envelope does not match the canonical SDK contract"
+                    ),
+                },
+            ) from exc
+        if envelope.challenge_slug != app_settings.slug:
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                {
+                    "code": "result_challenge_mismatch",
+                    "detail": "challenge binding is invalid",
+                },
+            )
+        if envelope.assignment_id != envelope.work_unit_id:
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                {
+                    "code": "result_assignment_mismatch",
+                    "detail": "assignment binding is invalid",
+                },
+            )
+        work_unit_id = envelope.work_unit_id
+        submission_ref = envelope.submission_ref
+        result_payload = {
+            **envelope.result,
+            "execution_proof": envelope.proof.model_dump(mode="json"),
+        }
         sampler = audit_sampler_from_config(app_settings.worker_plane)
         try:
             outcome = await ingest_work_unit_result(

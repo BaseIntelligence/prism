@@ -307,10 +307,15 @@ def test_result_route_returns_503_on_finalization_failure(tmp_path, monkeypatch)
         submission_id = seed.json()["id"]
 
         manifest = _manifest()
+        proof = _proof_dict(signer, submission_id, manifest)
         body = {
+            "api_version": "1.0",
             "work_unit_id": submission_id,
+            "assignment_id": submission_id,
             "submission_ref": "hk-owner",
-            "result": _result(_proof_dict(signer, submission_id, manifest), manifest),
+            "challenge_slug": "prism",
+            "result": _result(proof, manifest),
+            "proof": proof,
         }
         resp = client.post("/internal/v1/work_units/result", json=body, headers=headers)
         # A transient internal derivation failure is retryable -> 503, distinct from the permanent

@@ -456,15 +456,24 @@ async def test_ingestion_records_downgraded_effective_tier(tmp_path, monkeypatch
 
     submission_id = await _seed(app)
     manifest = _manifest()
-    # A tier-2 claim with a null attestation is unverifiable -> effective tier 0.
-    proof = _proof_dict(signer, submission_id, manifest, tier=2, attestation=None)
+    # A tier-1 claim whose image_digest does not match the pinned digest is
+    # unverifiable under SDK-strict proof shape -> effective tier 0.
+    proof = _proof_dict(
+        signer,
+        submission_id,
+        manifest,
+        tier=1,
+        image_digest="sha256:" + ("ab" * 32),
+        attestation=None,
+    )
     outcome = await ingest_work_unit_result(
         worker=app.state.worker,
         work_unit_id=submission_id,
         submission_ref="hk-owner",
         result=_result(proof, manifest),
+        pinned_image_digest="sha256:" + ("cd" * 32),
     )
-    assert outcome.claimed_tier == 2
+    assert outcome.claimed_tier == 1
     assert outcome.effective_tier == 0
     assert outcome.tier_downgraded is True
 
@@ -477,10 +486,32 @@ async def test_ingestion_records_downgraded_effective_tier(tmp_path, monkeypatch
         ).fetchone()
     finally:
         conn.close()
-    assert row == (2, 0, 1)
+    assert row == (1, 0, 1)
 
 
 # --- HTTP route body contract + status codes (VAL-PRISM-017/018) ---------------------------------
+
+
+def _envelope(
+    *,
+    work_unit_id: str,
+    submission_ref: str,
+    proof: dict[str, Any],
+    manifest: dict[str, Any] | None,
+    challenge_slug: str = "prism",
+    assignment_id: str | None = None,
+) -> dict[str, Any]:
+    """Build the canonical ExternalResultEnvelope body for HTTP tests."""
+
+    return {
+        "api_version": "1.0",
+        "work_unit_id": work_unit_id,
+        "assignment_id": assignment_id or work_unit_id,
+        "submission_ref": submission_ref,
+        "challenge_slug": challenge_slug,
+        "result": _result(proof, manifest),
+        "proof": proof,
+    }
 
 
 def test_result_route_body_contract(tmp_path, monkeypatch) -> None:
@@ -513,40 +544,69 @@ def test_result_route_body_contract(tmp_path, monkeypatch) -> None:
 
         manifest = _manifest()
         proof = _proof_dict(signer, submission_id, manifest)
-        body = {
-            "work_unit_id": submission_id,
-            "submission_ref": "hk-owner",
-            "result": _result(proof, manifest),
-        }
+        body = _envelope(
+            work_unit_id=submission_id,
+            submission_ref="hk-owner",
+            proof=proof,
+            manifest=manifest,
+        )
 
         # Unauthenticated is rejected.
         assert client.post("/internal/v1/work_units/result", json=body).status_code == 401
 
-        # A well-formed forwarded result is accepted (exact base body contract).
+        # A well-formed ExternalResultEnvelope is accepted (canonical base body).
         accept = client.post("/internal/v1/work_units/result", json=body, headers=headers)
         assert accept.status_code == 200, accept.text
         assert accept.json()["status"] == "accepted"
 
-        # A malformed proof is rejected 422 with a distinguishable reason code.
-        bad = {
+        # Legacy reduced body without api_version/proof bindings is rejected before score.
+        legacy = {
             "work_unit_id": submission_id,
             "submission_ref": "hk-owner",
-            "result": _result({**proof, "version": 5}, manifest),
+            "result": _result(proof, manifest),
         }
+        legacy_rejected = client.post(
+            "/internal/v1/work_units/result", json=legacy, headers=headers
+        )
+        assert legacy_rejected.status_code == 422
+        assert legacy_rejected.json()["detail"]["code"] == "result_envelope_invalid"
+
+        # Challenge binding mismatch is rejected before scoring/persistence.
+        wrong_challenge = _envelope(
+            work_unit_id=submission_id,
+            submission_ref="hk-owner",
+            proof=proof,
+            manifest=manifest,
+            challenge_slug="other-challenge",
+        )
+        mismatched = client.post(
+            "/internal/v1/work_units/result", json=wrong_challenge, headers=headers
+        )
+        assert mismatched.status_code == 422
+        assert mismatched.json()["detail"]["code"] == "result_challenge_mismatch"
+
+        # A malformed proof is rejected 422 with a distinguishable reason code.
+        bad = _envelope(
+            work_unit_id=submission_id,
+            submission_ref="hk-owner",
+            proof={**proof, "version": 5},
+            manifest=manifest,
+        )
         rejected = client.post("/internal/v1/work_units/result", json=bad, headers=headers)
         assert rejected.status_code == 422
-        assert rejected.json()["detail"]["code"] == "proof_bad_version"
+        assert rejected.json()["detail"]["code"] == "result_envelope_invalid"
 
         # A conflicting redelivery for the finalized unit is refused 409.
         conflict_manifest = _manifest("conflict")
         conflict_proof = _proof_dict(signer, submission_id, conflict_manifest)
         conflict = client.post(
             "/internal/v1/work_units/result",
-            json={
-                "work_unit_id": submission_id,
-                "submission_ref": "hk-owner",
-                "result": _result(conflict_proof, conflict_manifest),
-            },
+            json=_envelope(
+                work_unit_id=submission_id,
+                submission_ref="hk-owner",
+                proof=conflict_proof,
+                manifest=conflict_manifest,
+            ),
             headers=headers,
         )
         assert conflict.status_code == 409
@@ -560,7 +620,17 @@ def test_result_route_disabled_when_worker_plane_off(tmp_path) -> None:
     with TestClient(create_app(settings)) as client:
         resp = client.post(
             "/internal/v1/work_units/result",
-            json={"work_unit_id": "s1", "submission_ref": "hk", "result": {}},
+            json=_envelope(
+                work_unit_id="s1",
+                submission_ref="hk",
+                proof={
+                    "version": 1,
+                    "tier": 0,
+                    "manifest_sha256": "0" * 64,
+                    "worker_signature": {"worker_pubkey": "wk", "sig": "0x01"},
+                },
+                manifest=None,
+            ),
             headers={"Authorization": "Bearer secret"},
         )
         assert resp.status_code == 404
