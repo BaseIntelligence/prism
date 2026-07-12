@@ -27,15 +27,6 @@ recipe_weight: 0.3
 component_rewards_enabled: true
 architecture_reward_weight: 0.65
 training_reward_weight: 0.35
-component_agent_enabled: true
-component_agent_required: false
-component_agent_min_confidence: 0.72
-component_agent_transfer_confidence: 0.86
-component_agent_same_threshold: 0.82
-component_agent_hold_threshold: 0.55
-component_agent_candidate_top_k: 5
-component_agent_mermaid_enabled: true
-component_hold_low_confidence: true
 architecture_improvement_min_delta_abs: 0.01
 architecture_improvement_min_delta_rel: 0.005
 architecture_transfer_min_delta_abs: 0.08

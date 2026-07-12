@@ -1,4 +1,4 @@
-"""Validator dispatch entrypoint for prism work units (architecture sec 4, G2).
+"""Validator dispatch for prism assignments.
 
 The platform validator agent (``base validator agent``) pulls the single prism
 gpu work unit from the master coordination plane and dispatches it here (selected
@@ -10,12 +10,9 @@ challenge uses) through :func:`run_validator_cycle`: the eval container runs
 val/test), with concurrency 1 enforced against the validator's real in-flight
 draw.
 
-The prism LLM review (claude-opus) routes through the master gateway using the
-per-assignment scoped token, and the raw provider key is stripped from the
-validator's settings (see :func:`gateway_scoped_settings`) so it never reaches
-the eval host. Re-running an already-terminal submission is an idempotent no-op
-(the worker's CAS claim neither re-dispatches the broker nor mutates the recorded
-score).
+LLM gateway scoped settings are gone: admission and scoring are deterministic and
+never require a gateway token or provider URL. Residual ``gateway_*`` payload keys
+are rejected fail-closed before any broker dispatch (VAL-GATE-017).
 
 The signature deliberately uses only plain types (no dependency on the platform
 validator-agent package), so this runs against the published ``base`` while the
@@ -37,19 +34,75 @@ from .validator_executor import run_primary_execution_cycle, run_validator_audit
 
 CHALLENGE_SLUG = "prism"
 
-_GATEWAY_TOKEN_PAYLOAD_KEYS = ("gateway_token", "BASE_GATEWAY_TOKEN")
-_GATEWAY_URL_PAYLOAD_KEY = "BASE_LLM_GATEWAY_URL"
-_GATEWAY_BASE_URL_PAYLOAD_KEYS = ("gateway_url", "gateway_base_url")
-_LLM_GATEWAY_PATH = "/llm/v1"
+_LEGACY_GATEWAY_PAYLOAD_KEYS = frozenset(
+    {
+        "gateway_token",
+        "gateway_url",
+        "gateway_base_url",
+        "BASE_GATEWAY_TOKEN",
+        "BASE_GATEWAY_TOKEN_FILE",
+        "BASE_LLM_GATEWAY_URL",
+        "PRISM_GATEWAY_TOKEN",
+        "PRISM_GATEWAY_TOKEN_FILE",
+        "PRISM_LLM_GATEWAY_URL",
+        "llm_gateway_url",
+        "llm_gateway_token",
+        "llm_gateway_token_file",
+        "llm_provider",
+        "llm_model",
+        "llm",
+        "gateway",
+    }
+)
 
 
 class PrismGatewayConfigError(ValueError):
-    """A prism assignment payload cannot yield a master gateway config.
+    """Legacy LLM-gateway assignment payload was rejected fail-closed.
 
-    Raised BEFORE any broker dispatch so the validator never runs the prism LLM
-    review without the master gateway (which would require a raw provider key on
-    the validator).
+    Raised BEFORE any broker dispatch so residual gateway/provider/model fields
+    never reach settings construction or execution.
     """
+
+
+def _reject_legacy_gateway_payload(payload: Mapping[str, Any]) -> None:
+    hits: list[str] = []
+
+    def walk(node: Mapping[str, Any], path: str) -> None:
+        for key, value in node.items():
+            key_str = str(key)
+            here = f"{path}.{key_str}" if path else key_str
+            if (
+                key_str in _LEGACY_GATEWAY_PAYLOAD_KEYS
+                or key_str.upper() in _LEGACY_GATEWAY_PAYLOAD_KEYS
+                or key_str.startswith("gateway_")
+                or key_str.startswith("GATEWAY_")
+                or key_str.startswith("llm_gateway")
+            ):
+                hits.append(here)
+                continue
+            if key_str in {"provider", "Provider"} and isinstance(value, Mapping):
+                llm_like = {
+                    "gateway_token",
+                    "gateway_url",
+                    "api_key",
+                    "base_url",
+                    "model",
+                    "openai_api_key",
+                    "openrouter_api_key",
+                    "token",
+                    "token_file",
+                }
+                if any(str(nested) in llm_like for nested in value):
+                    hits.append(here)
+                    continue
+            if isinstance(value, Mapping):
+                walk(value, here)
+
+    walk(payload, "")
+    if hits:
+        raise PrismGatewayConfigError(
+            "unsupported removed LLM gateway assignment fields: " + ", ".join(sorted(set(hits)))
+        )
 
 
 async def dispatch_assignment(
@@ -79,6 +132,8 @@ async def dispatch_assignment(
     Returns the cycle counts for the platform agent to post back to the master.
     """
 
+    _reject_legacy_gateway_payload(payload)
+
     base_settings = settings or default_settings
     if base_settings.worker_plane.enabled and is_audit_unit_id(work_unit_id):
         return await _dispatch_audit_only(
@@ -90,9 +145,8 @@ async def dispatch_assignment(
             checkpoint_publisher=checkpoint_publisher,
         )
 
-    effective = gateway_scoped_settings(
+    effective = settings_with_broker(
         base_settings,
-        payload,
         broker_url=broker_url,
         broker_token=broker_token,
         broker_token_file=broker_token_file,
@@ -136,16 +190,15 @@ async def _dispatch_audit_only(
 ) -> dict[str, Any]:
     """Audit-only dispatch: replay + resolve a sampled ``audit:`` unit (VAL-FINAL-005).
 
-    Audits skip the LLM review, so this path needs NO master gateway scoped token (unlike the
-    primary path) -- only the validator's own broker for the deterministic re-execution.
+    Audits never require a master gateway token, only the validator's own broker
+    for the deterministic re-execution.
     """
 
-    effective = settings.model_copy(
-        update={
-            "docker_broker_url": broker_url,
-            "docker_broker_token": broker_token,
-            "docker_broker_token_file": broker_token_file,
-        }
+    effective = settings_with_broker(
+        settings,
+        broker_url=broker_url,
+        broker_token=broker_token,
+        broker_token_file=broker_token_file,
     )
     app = create_app(effective, checkpoint_publisher=checkpoint_publisher)
     database = app.state.database
@@ -169,6 +222,24 @@ async def _dispatch_audit_only(
     }
 
 
+def settings_with_broker(
+    settings: PrismSettings,
+    *,
+    broker_url: str,
+    broker_token: str | None = None,
+    broker_token_file: str | None = None,
+) -> PrismSettings:
+    """Return settings bound only to the validator's broker (no LLM gateway)."""
+
+    return settings.model_copy(
+        update={
+            "docker_broker_url": broker_url,
+            "docker_broker_token": broker_token,
+            "docker_broker_token_file": broker_token_file,
+        }
+    )
+
+
 def gateway_scoped_settings(
     settings: PrismSettings,
     payload: Mapping[str, Any],
@@ -177,44 +248,19 @@ def gateway_scoped_settings(
     broker_token: str | None = None,
     broker_token_file: str | None = None,
 ) -> PrismSettings:
-    """Return settings bound to the validator's broker + the scoped gateway.
+    """Compatibility shim: reject residual gateway payloads and bind the broker only.
 
-    The raw provider key is stripped so the validator routes the prism LLM review
-    only through the master gateway with the per-assignment scoped token. Raises
-    :class:`PrismGatewayConfigError` BEFORE any broker dispatch when the payload
-    cannot yield a gateway config.
+    Historically stamped LLM gateway settings onto Prism. Those settings are removed;
+    gateway fields now fail closed. Prefer :func:`settings_with_broker`.
     """
 
-    token = _first_present(payload, _GATEWAY_TOKEN_PAYLOAD_KEYS)
-    if not token:
-        raise PrismGatewayConfigError("prism assignment payload is missing a scoped gateway token")
-    gateway_url = payload.get(_GATEWAY_URL_PAYLOAD_KEY)
-    if not gateway_url:
-        base = _first_present(payload, _GATEWAY_BASE_URL_PAYLOAD_KEYS)
-        if base:
-            gateway_url = f"{str(base).rstrip('/')}{_LLM_GATEWAY_PATH}"
-    if not gateway_url:
-        raise PrismGatewayConfigError(
-            "prism assignment payload is missing the master gateway base URL"
-        )
-    return settings.model_copy(
-        update={
-            "docker_broker_url": broker_url,
-            "docker_broker_token": broker_token,
-            "docker_broker_token_file": broker_token_file,
-            "llm_gateway_url": str(gateway_url),
-            "llm_gateway_token": str(token),
-            "llm_gateway_token_file": None,
-        }
+    _reject_legacy_gateway_payload(payload)
+    return settings_with_broker(
+        settings,
+        broker_url=broker_url,
+        broker_token=broker_token,
+        broker_token_file=broker_token_file,
     )
-
-
-def _first_present(payload: Mapping[str, Any], keys: tuple[str, ...]) -> Any:
-    for key in keys:
-        value = payload.get(key)
-        if value:
-            return value
-    return None
 
 
 __all__ = [
@@ -222,4 +268,5 @@ __all__ = [
     "PrismGatewayConfigError",
     "dispatch_assignment",
     "gateway_scoped_settings",
+    "settings_with_broker",
 ]

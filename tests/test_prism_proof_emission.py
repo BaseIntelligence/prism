@@ -112,11 +112,8 @@ def _settings(tmp_path: Path, *, worker_plane: WorkerPlaneConfig) -> PrismSettin
 
 
 def _payload() -> dict[str, str]:
-    return {
-        "gateway_url": "http://master:8081",
-        "BASE_LLM_GATEWAY_URL": "http://master:8081/llm/v1",
-        "gateway_token": "scoped-token",
-    }
+    # Gateway-free assignment payload (deterministic admission path).
+    return {"task": "primary"}
 
 
 async def _seed(settings: PrismSettings, hotkey: str) -> str:

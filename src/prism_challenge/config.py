@@ -83,36 +83,61 @@ class WorkerPlaneConfig(BaseModel):
     cpu_reexec_train_lines: int = Field(default=64, ge=1)
 
 
+REMOVED_LLM_SETTING_NAMES = frozenset(
+    {
+        "llm_review_enabled",
+        "llm_review_required",
+        "llm_gateway_url",
+        "llm_gateway_token",
+        "llm_gateway_token_file",
+        "llm_review_timeout_seconds",
+        "held_review_timeout_seconds",
+        "llm_review_temperature",
+        "llm_review_max_tokens",
+        "llm_review_max_retries",
+        "llm_review_max_source_chars",
+        # Residual nondeterministic component-agent knobs (VAL-GATE-007).
+        "component_agent_enabled",
+        "component_agent_required",
+        "component_agent_model",
+        "component_agent_min_confidence",
+        "component_agent_transfer_confidence",
+        "component_agent_same_threshold",
+        "component_agent_hold_threshold",
+        "component_agent_candidate_top_k",
+        "component_agent_mermaid_enabled",
+        "component_hold_low_confidence",
+    }
+)
+REMOVED_LLM_ENV_NAMES = frozenset(
+    {
+        "PRISM_LLM_REVIEW_ENABLED",
+        "PRISM_LLM_REVIEW_REQUIRED",
+        "PRISM_LLM_GATEWAY_URL",
+        "PRISM_GATEWAY_TOKEN",
+        "PRISM_GATEWAY_TOKEN_FILE",
+        "BASE_LLM_GATEWAY_URL",
+        "BASE_GATEWAY_TOKEN",
+        "BASE_GATEWAY_TOKEN_FILE",
+        "PRISM_LLM_REVIEW_TIMEOUT_SECONDS",
+        "PRISM_HELD_REVIEW_TIMEOUT_SECONDS",
+        "PRISM_LLM_REVIEW_TEMPERATURE",
+        "PRISM_LLM_REVIEW_MAX_TOKENS",
+        "PRISM_LLM_REVIEW_MAX_RETRIES",
+        "PRISM_LLM_REVIEW_MAX_SOURCE_CHARS",
+        "PRISM_COMPONENT_AGENT_ENABLED",
+        "PRISM_COMPONENT_AGENT_REQUIRED",
+        "PRISM_COMPONENT_AGENT_MODEL",
+        "PRISM_COMPONENT_AGENT_MIN_CONFIDENCE",
+        "PRISM_COMPONENT_AGENT_TRANSFER_CONFIDENCE",
+        "PRISM_COMPONENT_AGENT_SAME_THRESHOLD",
+        "PRISM_COMPONENT_AGENT_HOLD_THRESHOLD",
+        "PRISM_COMPONENT_AGENT_CANDIDATE_TOP_K",
+        "PRISM_COMPONENT_AGENT_MERMAID_ENABLED",
+        "PRISM_COMPONENT_HOLD_LOW_CONFIDENCE",
+    }
+)
 
-REMOVED_LLM_SETTING_NAMES = frozenset({
-    "llm_review_enabled",
-    "llm_review_required",
-    "llm_gateway_url",
-    "llm_gateway_token",
-    "llm_gateway_token_file",
-    "llm_review_timeout_seconds",
-    "held_review_timeout_seconds",
-    "llm_review_temperature",
-    "llm_review_max_tokens",
-    "llm_review_max_retries",
-    "llm_review_max_source_chars",
-})
-REMOVED_LLM_ENV_NAMES = frozenset({
-    "PRISM_LLM_REVIEW_ENABLED",
-    "PRISM_LLM_REVIEW_REQUIRED",
-    "PRISM_LLM_GATEWAY_URL",
-    "PRISM_GATEWAY_TOKEN",
-    "PRISM_GATEWAY_TOKEN_FILE",
-    "BASE_LLM_GATEWAY_URL",
-    "BASE_GATEWAY_TOKEN",
-    "BASE_GATEWAY_TOKEN_FILE",
-    "PRISM_LLM_REVIEW_TIMEOUT_SECONDS",
-    "PRISM_HELD_REVIEW_TIMEOUT_SECONDS",
-    "PRISM_LLM_REVIEW_TEMPERATURE",
-    "PRISM_LLM_REVIEW_MAX_TOKENS",
-    "PRISM_LLM_REVIEW_MAX_RETRIES",
-    "PRISM_LLM_REVIEW_MAX_SOURCE_CHARS",
-})
 
 class PrismSettings(ChallengeSettings):
     model_config = SettingsConfigDict(
@@ -129,16 +154,34 @@ class PrismSettings(ChallengeSettings):
             raise ValueError(
                 "Unsupported removed Prism LLM configuration keys: "
                 + ", ".join(removed)
-                + ". Deterministic admission no longer accepts gateway/review settings."
+                + ". Deterministic admission no longer accepts gateway/review or "
+                "component-agent settings."
             )
-        env_hits = sorted(name for name in os.environ if name in REMOVED_LLM_ENV_NAMES or (
-            name.startswith("PRISM_") and "LLM" in name and "GATEWAY" in name
-        ) or name in {"BASE_LLM_GATEWAY_URL", "BASE_GATEWAY_TOKEN", "BASE_GATEWAY_TOKEN_FILE"})
+        env_hits = sorted(
+            name
+            for name in os.environ
+            if name in REMOVED_LLM_ENV_NAMES
+            or (
+                name.startswith("PRISM_")
+                and (
+                    ("LLM" in name and "GATEWAY" in name)
+                    or name.startswith("PRISM_COMPONENT_AGENT_")
+                    or name == "PRISM_COMPONENT_HOLD_LOW_CONFIDENCE"
+                )
+            )
+            or name
+            in {
+                "BASE_LLM_GATEWAY_URL",
+                "BASE_GATEWAY_TOKEN",
+                "BASE_GATEWAY_TOKEN_FILE",
+            }
+        )
         if env_hits:
             raise ValueError(
                 "Unsupported removed Prism LLM environment keys: "
                 + ", ".join(env_hits)
-                + ". Deterministic admission no longer accepts gateway/review settings."
+                + ". Deterministic admission no longer accepts gateway/review or "
+                "component-agent settings."
             )
         known = {
             *self._known_environment_names(),
@@ -250,16 +293,6 @@ class PrismSettings(ChallengeSettings):
     component_rewards_enabled: bool = True
     architecture_reward_weight: float = Field(default=0.65, ge=0, le=1)
     training_reward_weight: float = Field(default=0.35, ge=0, le=1)
-    component_agent_enabled: bool = True
-    component_agent_required: bool = False
-    component_agent_model: str | None = None
-    component_agent_min_confidence: float = Field(default=0.72, ge=0, le=1)
-    component_agent_transfer_confidence: float = Field(default=0.86, ge=0, le=1)
-    component_agent_same_threshold: float = Field(default=0.82, ge=0, le=1)
-    component_agent_hold_threshold: float = Field(default=0.55, ge=0, le=1)
-    component_agent_candidate_top_k: int = Field(default=5, ge=1)
-    component_agent_mermaid_enabled: bool = True
-    component_hold_low_confidence: bool = True
     architecture_improvement_min_delta_abs: float = Field(default=0.01, ge=0)
     architecture_improvement_min_delta_rel: float = Field(default=0.005, ge=0)
     architecture_transfer_min_delta_abs: float = Field(default=0.08, ge=0)
@@ -547,7 +580,6 @@ class PrismSettings(ChallengeSettings):
         if self.eval_log_dir is not None:
             return self.eval_log_dir
         return self.resolved_database_path.parent / "eval-logs"
-
 
     def hf_token_value(self) -> str | None:
         if self.hf_token:

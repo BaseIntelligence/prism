@@ -6,8 +6,8 @@ re-execution on the validator's OWN broker (exercised here via the CPU re-exec
 mock). These tests lock the dispatch contract: the re-exec container runs
 ``network=none`` (single-node), concurrency 1 is enforced against the validator's
 real in-flight draw, re-running a completed unit is an idempotent no-op, the LLM
-review routes through the master gateway scoped token with the raw provider key
-stripped, and a payload missing the token NEVER reaches the broker.
+LLM gateway scoped settings are removed: residual gateway payload fields fail
+closed before any broker dispatch.
 """
 
 from __future__ import annotations
@@ -29,11 +29,9 @@ from prism_challenge.validator_dispatch import (
     PrismGatewayConfigError,
     dispatch_assignment,
     gateway_scoped_settings,
+    settings_with_broker,
 )
 
-GATEWAY_BASE_URL = "http://master:8081"
-GATEWAY_V1_URL = f"{GATEWAY_BASE_URL}/llm/v1"
-GATEWAY_TOKEN = "scoped-token"
 BROKER_URL = "http://broker-val:8082"
 BROKER_TOKEN = "val-secret"
 
@@ -115,13 +113,12 @@ def _settings(tmp_path: Path) -> PrismSettings:
     )
 
 
-def _payload(*, with_token: bool = True) -> dict[str, Any]:
-    payload: dict[str, Any] = {
-        "gateway_url": GATEWAY_BASE_URL,
-        "BASE_LLM_GATEWAY_URL": GATEWAY_V1_URL,
-    }
-    if with_token:
-        payload["gateway_token"] = GATEWAY_TOKEN
+def _payload(*, with_gateway: bool = False) -> dict[str, Any]:
+    payload: dict[str, Any] = {"task": "primary"}
+    if with_gateway:
+        payload["gateway_url"] = "http://master:8081"
+        payload["gateway_token"] = "scoped-token"
+        payload["BASE_LLM_GATEWAY_URL"] = "http://master:8081/llm/v1"
     return payload
 
 
@@ -224,30 +221,27 @@ async def test_dispatch_enforces_concurrency_one(tmp_path, monkeypatch):
     assert captured == []
 
 
-def test_gateway_scoped_settings_binds_gateway_token(tmp_path):
-    effective = gateway_scoped_settings(
-        _settings(tmp_path), _payload(), broker_url=BROKER_URL, broker_token=BROKER_TOKEN
+def test_settings_with_broker_binds_only_broker(tmp_path):
+    effective = settings_with_broker(
+        _settings(tmp_path), broker_url=BROKER_URL, broker_token=BROKER_TOKEN
     )
-
-    # The prism LLM review routes ONLY through the master gateway /llm/v1 with the scoped token;
-    # the challenge/validator holds no raw provider key (the field no longer exists).
-    assert effective.llm_gateway_token == GATEWAY_TOKEN
-    assert effective.llm_gateway_url == GATEWAY_V1_URL
-    assert not hasattr(effective, "openrouter_api_key")
-    # The re-execution is dispatched to the validator's OWN broker.
     assert effective.docker_broker_url == BROKER_URL
     assert effective.docker_broker_token == BROKER_TOKEN
+    assert "llm_gateway_url" not in PrismSettings.model_fields
+    assert "llm_gateway_token" not in PrismSettings.model_fields
+    assert not hasattr(effective, "openrouter_api_key")
 
 
-def test_gateway_scoped_settings_derives_v1_url_from_base(tmp_path):
-    # A payload carrying only the gateway base URL still yields the /llm/v1 route (never
-    # gateway=None).
-    payload = {"gateway_token": GATEWAY_TOKEN, "gateway_url": GATEWAY_BASE_URL}
-    effective = gateway_scoped_settings(_settings(tmp_path), payload, broker_url=BROKER_URL)
-    assert effective.llm_gateway_url == GATEWAY_V1_URL
+def test_gateway_scoped_settings_rejects_residual_gateway_payload(tmp_path):
+    with pytest.raises(PrismGatewayConfigError, match="gateway"):
+        gateway_scoped_settings(
+            _settings(tmp_path),
+            _payload(with_gateway=True),
+            broker_url=BROKER_URL,
+        )
 
 
-async def test_dispatch_missing_gateway_token_never_reaches_broker(tmp_path, monkeypatch):
+async def test_dispatch_residual_gateway_payload_never_reaches_broker(tmp_path, monkeypatch):
     data_dir = _stage_train(tmp_path)
     captured: list[DockerRunSpec] = []
     monkeypatch.setattr(
@@ -260,7 +254,7 @@ async def test_dispatch_missing_gateway_token_never_reaches_broker(tmp_path, mon
     with pytest.raises(PrismGatewayConfigError):
         await dispatch_assignment(
             work_unit_id=submission_id,
-            payload=_payload(with_token=False),
+            payload=_payload(with_gateway=True),
             broker_url=BROKER_URL,
             settings=settings,
         )

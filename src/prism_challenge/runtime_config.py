@@ -104,7 +104,6 @@ class DuplicateThresholds(BaseModel):
     static_reject_similarity: float = Field(default=0.96, ge=0, le=1)
 
 
-
 class GpuPolicy(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -229,7 +228,8 @@ def runtime_policy_defaults(settings: PrismSettings) -> dict[str, Any]:
         "duplicate_thresholds": {
             "exact_source_similarity": 0.98,
             "quarantine_source_similarity": 0.85,
-            "same_architecture_similarity": settings.component_agent_same_threshold,
+            # Deterministic source-similarity default (former component-agent knob removed).
+            "same_architecture_similarity": 0.82,
             "static_reject_similarity": settings.plagiarism_static_reject_threshold,
         },
         "gpu_policy": {

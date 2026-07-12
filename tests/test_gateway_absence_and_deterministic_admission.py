@@ -35,11 +35,27 @@ def test_clean_deterministic_config_loads(monkeypatch: pytest.MonkeyPatch) -> No
         "BASE_LLM_GATEWAY_URL",
         "BASE_GATEWAY_TOKEN",
         "PRISM_LLM_REVIEW_ENABLED",
+        "PRISM_COMPONENT_AGENT_ENABLED",
+        "PRISM_COMPONENT_HOLD_LOW_CONFIDENCE",
     ):
         monkeypatch.delenv(name, raising=False)
     PrismSettings(database_path="/tmp/prism-absence.sqlite3", shared_token="test-token")
     assert "llm_gateway_url" not in PrismSettings.model_fields
     assert "llm_review_enabled" not in PrismSettings.model_fields
+    # VAL-GATE-007: nondeterministic component-agent knobs are gone.
+    for field_name in (
+        "component_agent_enabled",
+        "component_agent_required",
+        "component_agent_model",
+        "component_agent_min_confidence",
+        "component_agent_transfer_confidence",
+        "component_agent_same_threshold",
+        "component_agent_hold_threshold",
+        "component_agent_candidate_top_k",
+        "component_agent_mermaid_enabled",
+        "component_hold_low_confidence",
+    ):
+        assert field_name not in PrismSettings.model_fields
 
 
 @pytest.mark.parametrize(
@@ -48,11 +64,21 @@ def test_clean_deterministic_config_loads(monkeypatch: pytest.MonkeyPatch) -> No
         {"llm_review_enabled": True},
         {"llm_gateway_url": "http://gateway/llm/v1"},
         {"llm_gateway_token": "tok"},
+        {"component_agent_enabled": True},
+        {"component_agent_model": "gpt-4o"},
+        {"component_hold_low_confidence": True},
+        {"component_agent_same_threshold": 0.9},
     ],
 )
 def test_legacy_llm_settings_rejected(kwargs: dict) -> None:
     with pytest.raises(ValueError, match="removed Prism LLM"):
         PrismSettings(shared_token="x", **kwargs)
+
+
+def test_legacy_component_agent_env_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("PRISM_COMPONENT_AGENT_ENABLED", "true")
+    with pytest.raises(ValueError, match="removed Prism LLM"):
+        PrismSettings(shared_token="x")
 
 
 def test_legacy_llm_env_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -122,9 +148,7 @@ async def test_legacy_held_rows_migrate_to_rejected(tmp_path: Path) -> None:
         from prism_challenge.db import _migrate_legacy_llm_state
 
         await _migrate_legacy_llm_state(conn)
-        rows = await conn.execute_fetchall(
-            "SELECT id, status, error FROM submissions ORDER BY id"
-        )
+        rows = await conn.execute_fetchall("SELECT id, status, error FROM submissions ORDER BY id")
     statuses = {row["id"]: (row["status"], row["error"]) for row in rows}
     assert statuses["s-held"][0] == "rejected"
     # Preserve prior operator error text if present; never silently approve.
