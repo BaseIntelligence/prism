@@ -28,10 +28,10 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Protocol, runtime_checkable
+from typing import Any, Protocol, cast, runtime_checkable
 
 from base.challenge_sdk.proof import (
     EXECUTION_PROOF_VERSION,
@@ -115,7 +115,7 @@ def worker_signer_from_key(key: str) -> KeypairWorkerSigner:
     elif " " in value:
         keypair = bt.Keypair.create_from_mnemonic(value)
     else:
-        keypair = bt.Keypair.create_from_seed(value)
+        keypair = cast(Callable[[str], Any], bt.Keypair.create_from_seed)(value)
     return KeypairWorkerSigner(keypair)
 
 
