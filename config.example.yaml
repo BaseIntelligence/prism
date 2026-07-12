@@ -16,7 +16,7 @@ max_sequence_length: 512
 sequence_length: 128
 fineweb_sample_count: 128
 execution_backend: base_gpu
-prism_role: master
+prism_role: challenge
 public_submissions_enabled: true
 worker_claim_timeout_seconds: 900
 l2_top_k: 200

@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import logging
+import os
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 from base.challenge_sdk.config import ChallengeSettings
 from pydantic import AliasChoices, BaseModel, Field
@@ -16,6 +17,8 @@ class WorkerPlaneConfig(BaseModel):
     ExecutionProof emission, no admission gate, legacy audit-free finalization). Env overrides use
     the nested delimiter, e.g. ``PRISM_WORKER_PLANE__ENABLED=true``.
     """
+
+    model_config = SettingsConfigDict(extra="forbid")
 
     enabled: bool = False
     admission_requires_worker: bool = False
@@ -73,10 +76,41 @@ class PrismSettings(ChallengeSettings):
     model_config = SettingsConfigDict(
         env_prefix="PRISM_",
         env_file=".env",
-        extra="ignore",
+        extra="forbid",
         populate_by_name=True,
         env_nested_delimiter="__",
     )
+
+    def __init__(self, **values: Any) -> None:
+        known = {
+            *self._known_environment_names(),
+            "PRISM_ENV_FILE",
+        }
+        unknown = sorted(
+            name for name in os.environ if name.startswith("PRISM_") and name not in known
+        )
+        if unknown:
+            raise ValueError(f"Unknown Prism configuration key: {unknown[0]}")
+        super().__init__(**values)
+
+    @classmethod
+    def _known_environment_names(cls) -> set[str]:
+        names: set[str] = set()
+        for field_name, field in cls.model_fields.items():
+            aliases = field.validation_alias
+            if isinstance(aliases, AliasChoices):
+                names.update(
+                    alias
+                    for alias in aliases.choices
+                    if isinstance(alias, str) and alias.startswith("PRISM_")
+                )
+            elif isinstance(aliases, str) and aliases.startswith("PRISM_"):
+                names.add(aliases)
+            names.add(f"PRISM_{field_name.upper()}")
+            if field_name == "worker_plane":
+                for nested_name in WorkerPlaneConfig.model_fields:
+                    names.add(f"PRISM_WORKER_PLANE__{nested_name.upper()}")
+        return names
 
     worker_plane: WorkerPlaneConfig = Field(default_factory=WorkerPlaneConfig)
 
@@ -89,6 +123,17 @@ class PrismSettings(ChallengeSettings):
     version: str = "0.1.0"
     api_version: str = "1.0"
     sdk_version: str = "1.0.0"
+    tee_verification_enabled: bool = True
+    raw_weight_push_enabled: bool = True
+    capabilities: tuple[str, ...] = Field(
+        default_factory=lambda: (
+            "challenge.scoring",
+            "challenge.ordinary_proof",
+            "challenge.tee_verification",
+            "challenge.state",
+            "challenge.raw_weight_push",
+        )
+    )
     port: int = 8080
     database_path: Path = Path("/tmp/prism.sqlite3")
     shared_token: str | None = Field(
@@ -116,7 +161,7 @@ class PrismSettings(ChallengeSettings):
     static_instantiation_memory_headroom_bytes: int = 8_589_934_592
     fineweb_sample_count: int = 128
     execution_backend: str = "base_gpu"
-    prism_role: str = "master"
+    prism_role: Literal["challenge"] = "challenge"
     # Root stdlib log level applied by ``configure_logging`` on the deploy entrypoints (the uvicorn
     # ``prism_challenge.app:app`` API/combined process and the standalone ``prism-worker`` CLI).
     # Uvicorn configures only its own ``uvicorn.*`` loggers, so without this application INFO

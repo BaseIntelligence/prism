@@ -65,11 +65,9 @@ def test_gateway_token_only_sourced_from_secret_file(
     _clear_llm_env(monkeypatch)
     secret = tmp_path / "base_gateway_token"
     secret.write_text("scoped-secret\n", encoding="utf-8")
-
     settings = PrismSettings(llm_gateway_token_file=secret)
     assert settings.llm_gateway_token_value() == "scoped-secret"
 
-    # With no inline token and a missing file, nothing is resolved (fails closed).
     missing = PrismSettings(llm_gateway_token=None, llm_gateway_token_file=tmp_path / "nope")
     assert missing.llm_gateway_token_value() is None
 
@@ -87,14 +85,12 @@ def test_hf_token_only_sourced_from_secret_file(tmp_path: Path) -> None:
 
 
 def test_legacy_chutes_env_alias_no_longer_recognized(monkeypatch: pytest.MonkeyPatch) -> None:
-    # The legacy PRISM_CHUTES_* / PRISM_OPENROUTER_* env aliases are gone (extra=ignore), so they
-    # cannot re-introduce a provider base URL / model onto settings.
+    # Legacy provider keys are deprecated and rejected rather than being silently ignored.
     _clear_llm_env(monkeypatch)
     monkeypatch.setenv("PRISM_CHUTES_MODEL", "openai/gpt-4o-mini")
     monkeypatch.setenv("PRISM_OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
-    settings = PrismSettings()
-    assert not hasattr(settings, "openrouter_model")
-    assert not hasattr(settings, "openrouter_base_url")
+    with pytest.raises(ValueError, match="Unknown Prism configuration key"):
+        PrismSettings()
 
 
 def test_llm_review_config_defaults_are_gateway_only() -> None:
