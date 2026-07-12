@@ -440,7 +440,8 @@ async def _migrate_legacy_llm_state(conn: aiosqlite.Connection) -> None:
     if "submissions" in tables:
         await conn.execute(
             "UPDATE submissions SET status='rejected', "
-            "error=COALESCE(NULLIF(error, ''), 'legacy held/quarantine rejected during gateway removal'), "
+            "error=COALESCE(NULLIF(error, ''), "
+            "'legacy held/quarantine rejected during gateway removal'), "
             "updated_at=COALESCE(updated_at, CURRENT_TIMESTAMP) "
             "WHERE status IN ('held', 'quarantined')"
         )

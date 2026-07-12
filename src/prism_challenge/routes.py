@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import logging
 from datetime import UTC, datetime
 from typing import Any, SupportsFloat, SupportsInt, cast
@@ -8,9 +7,7 @@ from typing import Any, SupportsFloat, SupportsInt, cast
 from base.challenge_sdk.roles import public_route
 from fastapi import (
     APIRouter,
-    BackgroundTasks,
     Depends,
-    FastAPI,
     HTTPException,
     Query,
     Request,
