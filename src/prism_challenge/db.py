@@ -216,6 +216,26 @@ REQUIRED_TABLES = frozenset(
     }
 )
 
+RAW_WEIGHT_PUSH_LEDGER_DDL = (
+    "CREATE TABLE IF NOT EXISTS raw_weight_push_ledger ("
+    "id INTEGER PRIMARY KEY CHECK (id = 1),"
+    "challenge_slug TEXT NOT NULL,"
+    "last_epoch INTEGER,"
+    "last_revision INTEGER,"
+    "last_payload_digest TEXT,"
+    "last_snapshot_id TEXT,"
+    "last_canonical_payload TEXT,"
+    "last_nonce TEXT,"
+    "acknowledged_at TEXT,"
+    "pending_epoch INTEGER,"
+    "pending_revision INTEGER,"
+    "pending_payload_digest TEXT,"
+    "pending_canonical_payload TEXT,"
+    "pending_nonce TEXT,"
+    "pending_attempted_at TEXT,"
+    "updated_at TEXT NOT NULL);"
+)
+
 
 class Database:
     def __init__(self, path: Path) -> None:
@@ -225,6 +245,7 @@ class Database:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         async with aiosqlite.connect(self.path) as conn:
             await conn.executescript(SCHEMA)
+            await conn.execute(RAW_WEIGHT_PUSH_LEDGER_DDL)
             await _run_migrations(conn)
             await conn.commit()
 
