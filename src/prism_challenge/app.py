@@ -2,12 +2,12 @@ from __future__ import annotations
 
 import base64
 import binascii
-import importlib
 import json
 from collections.abc import Callable, Coroutine, Mapping
 from typing import Annotated, Any
 
 from base.challenge_sdk.app_factory import create_challenge_app
+from base.challenge_sdk.schemas import ExternalResultEnvelope
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, status
 
 from .admission import enforce_admission
@@ -36,16 +36,6 @@ from .queue import PrismWorker
 from .repository import PrismRepository
 from .routes import router
 from .weights import get_weights
-
-_ExternalResultEnvelope: Any
-try:
-    _ExternalResultEnvelope = getattr(
-        importlib.import_module("base.challenge_sdk.schemas"),
-        "ExternalResultEnvelope",
-        None,
-    )
-except ImportError:  # Base v3.1.1 compatibility until the next immutable SDK release.
-    _ExternalResultEnvelope = None
 
 
 def create_app(
@@ -263,9 +253,12 @@ def create_app(
             raise HTTPException(status.HTTP_400_BAD_REQUEST, "invalid JSON result body") from exc
         if not isinstance(payload, dict):
             raise HTTPException(status.HTTP_400_BAD_REQUEST, "result body must be an object")
-        if _ExternalResultEnvelope is not None and "api_version" in payload:
+        work_unit_id: object
+        submission_ref: object
+        result_payload: object
+        if "api_version" in payload:
             try:
-                envelope = _ExternalResultEnvelope.model_validate(payload)
+                envelope = ExternalResultEnvelope.model_validate(payload)
             except Exception as exc:
                 raise HTTPException(
                     status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -294,16 +287,14 @@ def create_app(
                 )
             work_unit_id = envelope.work_unit_id
             submission_ref = envelope.submission_ref
-            result_payload: dict[str, Any] = dict(
-                {
-                    **envelope.result,
-                    "execution_proof": envelope.proof.model_dump(mode="json"),
-                }
-            )
+            result_payload = {
+                **envelope.result,
+                "execution_proof": envelope.proof.model_dump(mode="json"),
+            }
         else:
             work_unit_id = payload.get("work_unit_id")
             submission_ref = payload.get("submission_ref")
-            result_payload = payload.get("result")  # type: ignore[assignment]
+            result_payload = payload.get("result")
         if not isinstance(work_unit_id, str) or not work_unit_id:
             raise HTTPException(status.HTTP_400_BAD_REQUEST, "work_unit_id is required")
         if not isinstance(submission_ref, str):

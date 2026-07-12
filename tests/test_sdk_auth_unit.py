@@ -4,6 +4,7 @@ import pytest
 from base.challenge_sdk.auth import build_internal_auth_dependency, load_shared_token
 from base.challenge_sdk.config import ChallengeSettings
 from fastapi import HTTPException
+from pydantic import ValidationError
 
 
 def _settings(**overrides) -> ChallengeSettings:
@@ -17,7 +18,8 @@ def test_load_shared_token_returns_inline_token():
 
 
 def test_load_shared_token_none_when_nothing_configured():
-    assert load_shared_token(_settings()) is None
+    with pytest.raises(ValidationError, match="challenge authentication"):
+        _settings()
 
 
 def test_load_shared_token_none_when_file_missing(tmp_path):
@@ -38,7 +40,9 @@ def test_load_shared_token_empty_file_is_none(tmp_path):
 
 
 async def test_dependency_503_when_no_token_configured():
-    verify = build_internal_auth_dependency(_settings())
+    verify = build_internal_auth_dependency(
+        _settings(shared_token_file="/tmp/missing-prism-test-token")
+    )
     with pytest.raises(HTTPException) as exc:
         await verify(authorization="Bearer anything", challenge_slug="prism")
     assert exc.value.status_code == 503

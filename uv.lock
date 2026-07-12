@@ -294,8 +294,8 @@ wheels = [
 
 [[package]]
 name = "base"
-version = "3.1.1"
-source = { url = "https://github.com/BaseIntelligence/base/releases/download/v3.1.1/base-3.1.1-py3-none-any.whl" }
+version = "3.1.2"
+source = { url = "https://github.com/BaseIntelligence/base/releases/download/v3.1.2/base-3.1.2-py3-none-any.whl" }
 dependencies = [
     { name = "aiosqlite" },
     { name = "alembic" },
@@ -318,7 +318,7 @@ dependencies = [
     { name = "uvicorn", extra = ["standard"] },
 ]
 wheels = [
-    { url = "https://github.com/BaseIntelligence/base/releases/download/v3.1.1/base-3.1.1-py3-none-any.whl", hash = "sha256:325d55e5279741fc18440cb9880579ef5c12f50839d3c00acef7f9219cb4415b" },
+    { url = "https://github.com/BaseIntelligence/base/releases/download/v3.1.2/base-3.1.2-py3-none-any.whl", hash = "sha256:3a61c2d3a343ed6de55e80215486e3de0c9639276443d08f2ed316bc807f2ff0" },
 ]
 
 [package.metadata]
@@ -2246,7 +2246,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "aiosqlite", specifier = ">=0.20" },
-    { name = "base", url = "https://github.com/BaseIntelligence/base/releases/download/v3.1.1/base-3.1.1-py3-none-any.whl" },
+    { name = "base", url = "https://github.com/BaseIntelligence/base/releases/download/v3.1.2/base-3.1.2-py3-none-any.whl" },
     { name = "bittensor", marker = "extra == 'bittensor'", specifier = ">=9" },
     { name = "bittensor", marker = "extra == 'dev'", specifier = ">=9" },
     { name = "fastapi", specifier = ">=0.115" },
