@@ -83,6 +83,37 @@ class WorkerPlaneConfig(BaseModel):
     cpu_reexec_train_lines: int = Field(default=64, ge=1)
 
 
+
+REMOVED_LLM_SETTING_NAMES = frozenset({
+    "llm_review_enabled",
+    "llm_review_required",
+    "llm_gateway_url",
+    "llm_gateway_token",
+    "llm_gateway_token_file",
+    "llm_review_timeout_seconds",
+    "held_review_timeout_seconds",
+    "llm_review_temperature",
+    "llm_review_max_tokens",
+    "llm_review_max_retries",
+    "llm_review_max_source_chars",
+})
+REMOVED_LLM_ENV_NAMES = frozenset({
+    "PRISM_LLM_REVIEW_ENABLED",
+    "PRISM_LLM_REVIEW_REQUIRED",
+    "PRISM_LLM_GATEWAY_URL",
+    "PRISM_GATEWAY_TOKEN",
+    "PRISM_GATEWAY_TOKEN_FILE",
+    "BASE_LLM_GATEWAY_URL",
+    "BASE_GATEWAY_TOKEN",
+    "BASE_GATEWAY_TOKEN_FILE",
+    "PRISM_LLM_REVIEW_TIMEOUT_SECONDS",
+    "PRISM_HELD_REVIEW_TIMEOUT_SECONDS",
+    "PRISM_LLM_REVIEW_TEMPERATURE",
+    "PRISM_LLM_REVIEW_MAX_TOKENS",
+    "PRISM_LLM_REVIEW_MAX_RETRIES",
+    "PRISM_LLM_REVIEW_MAX_SOURCE_CHARS",
+})
+
 class PrismSettings(ChallengeSettings):
     model_config = SettingsConfigDict(
         env_prefix="PRISM_",
@@ -93,6 +124,22 @@ class PrismSettings(ChallengeSettings):
     )
 
     def __init__(self, **values: Any) -> None:
+        removed = sorted(set(values) & REMOVED_LLM_SETTING_NAMES)
+        if removed:
+            raise ValueError(
+                "Unsupported removed Prism LLM configuration keys: "
+                + ", ".join(removed)
+                + ". Deterministic admission no longer accepts gateway/review settings."
+            )
+        env_hits = sorted(name for name in os.environ if name in REMOVED_LLM_ENV_NAMES or (
+            name.startswith("PRISM_") and "LLM" in name and "GATEWAY" in name
+        ) or name in {"BASE_LLM_GATEWAY_URL", "BASE_GATEWAY_TOKEN", "BASE_GATEWAY_TOKEN_FILE"})
+        if env_hits:
+            raise ValueError(
+                "Unsupported removed Prism LLM environment keys: "
+                + ", ".join(env_hits)
+                + ". Deterministic admission no longer accepts gateway/review settings."
+            )
         known = {
             *self._known_environment_names(),
             *_PROOF_RUNTIME_ENVIRONMENT_NAMES,
@@ -225,29 +272,6 @@ class PrismSettings(ChallengeSettings):
     training_metric_default_std: float = Field(default=0.0, ge=0)
     component_eval_seed_count: int = Field(default=1, ge=1)
     component_eval_repeat_count: int = Field(default=1, ge=1)
-    llm_review_enabled: bool = True
-    # Fail-closed default (architecture.md sec 8, H4): when the LLM safety gate is disabled or
-    # absent, the disabled-but-required branch in evaluator/llm_review.py rejects (approved=False)
-    # rather than silently allowing every submission after only deterministic static checks.
-    llm_review_required: bool = True
-    # The prism llm_review gate routes ONLY through the MASTER LLM gateway (yunwu-only,
-    # provider-agnostic; architecture.md sec 10 + library/llm-yunwu-contract.md). The gateway
-    # injects the provider key AND the model server-side keyed by the token ``source`` claim, so
-    # the challenge/validator holds NO provider key and pins NO model -- only a scoped gateway
-    # token routed at ``{root}/llm/v1``. There is no direct-provider fallback.
-    llm_gateway_url: str | None = Field(
-        default=None,
-        validation_alias=AliasChoices("PRISM_LLM_GATEWAY_URL", "BASE_LLM_GATEWAY_URL"),
-    )
-    llm_gateway_token: str | None = Field(
-        default=None,
-        repr=False,
-        validation_alias=AliasChoices("PRISM_GATEWAY_TOKEN", "BASE_GATEWAY_TOKEN"),
-    )
-    llm_gateway_token_file: Path | None = Field(
-        default=Path("/run/secrets/base_gateway_token"),
-        validation_alias=AliasChoices("PRISM_GATEWAY_TOKEN_FILE", "BASE_GATEWAY_TOKEN_FILE"),
-    )
     hf_token: str | None = Field(
         default=None,
         repr=False,
@@ -257,10 +281,6 @@ class PrismSettings(ChallengeSettings):
         default=Path("/run/secrets/hf_token"),
         validation_alias=AliasChoices("PRISM_HF_TOKEN_FILE", "HF_TOKEN_FILE"),
     )
-    # Crash-recovery checkpoint cadence (architecture.md section 7). The validator persists a
-    # training checkpoint on this cadence and pushes it to the master, which publishes it to
-    # HuggingFace; a reassigned run resumes from the last public checkpoint. Hourly by default; a
-    # smaller cadence (e.g. in tests) persists/publishes more frequently. Never part of the score.
     checkpoint_cadence_seconds: int = Field(
         default=3600,
         ge=1,
@@ -268,21 +288,10 @@ class PrismSettings(ChallengeSettings):
             "PRISM_CHECKPOINT_CADENCE_SECONDS", "PRISM_HF_CHECKPOINT_CADENCE_SECONDS"
         ),
     )
-    # HuggingFace model repo the master publishes crash-recovery checkpoints to (architecture.md
-    # section 7). The publisher is an interface (mocked in tests); this only names the deploy repo.
     checkpoint_repo_id: str = Field(
         default="baseintelligence/prism-checkpoints",
         validation_alias=AliasChoices("PRISM_CHECKPOINT_REPO_ID", "PRISM_HF_CHECKPOINT_REPO_ID"),
     )
-    llm_review_timeout_seconds: int = 60
-    held_review_timeout_seconds: int = 86400
-    llm_review_temperature: float = 0.0
-    # Must be large enough to hold the forced SubmitMermaid tool call on real (~14KB) prompts;
-    # 512 truncates it (finish_reason=length, empty tool_calls) -> the gate fails closed for every
-    # real submission. 4096 leaves ample headroom (~630 output tokens observed in production).
-    llm_review_max_tokens: int = 4096
-    llm_review_max_retries: int = 1
-    llm_review_max_source_chars: int = 200_000
     subnet_rules_json: str | None = None
     subnet_rules_file: Path | None = None
     plagiarism_enabled: bool = True
@@ -539,13 +548,6 @@ class PrismSettings(ChallengeSettings):
             return self.eval_log_dir
         return self.resolved_database_path.parent / "eval-logs"
 
-    def llm_gateway_token_value(self) -> str | None:
-        if self.llm_gateway_token:
-            return self.llm_gateway_token
-        if self.llm_gateway_token_file and self.llm_gateway_token_file.exists():
-            token = self.llm_gateway_token_file.read_text(encoding="utf-8").strip()
-            return token or None
-        return None
 
     def hf_token_value(self) -> str | None:
         if self.hf_token:

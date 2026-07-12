@@ -17,7 +17,6 @@ class SubmissionStatus(StrEnum):
     COMPLETED = "completed"
     FAILED = "failed"
     REJECTED = "rejected"
-    HELD = "held"
 
 
 class JobLevel(StrEnum):
@@ -216,13 +215,4 @@ class SubmissionCurveResponse(BaseModel):
     compute: CurveCompute
 
 
-class ArchitectureReport(BaseModel):
-    status: str
-    content: str | None
-    model: str | None
-    generated_at: datetime | None
 
-
-class ArchitectureReportResponse(BaseModel):
-    architecture_id: str
-    report: ArchitectureReport

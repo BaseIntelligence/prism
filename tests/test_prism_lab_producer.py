@@ -139,8 +139,6 @@ def _settings(tmp_path) -> PrismSettings:
         docker_broker_token="secret",
         base_eval_artifact_root=tmp_path / "artifacts",
         plagiarism_enabled=False,
-        llm_review_enabled=False,
-        llm_review_required=False,
         distributed_contract_policy="off",
     )
 

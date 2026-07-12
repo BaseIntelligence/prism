@@ -215,8 +215,6 @@ def _make_client(tmp_path: Path, **overrides: object) -> TestClient:
         allow_insecure_signatures=True,
         fineweb_sample_count=4,
         # No OpenRouter key in the unit env; disable the gate (covered in test_*llm*).
-        llm_review_enabled=False,
-        llm_review_required=False,
         # Single-process training doubles; the multi-GPU static contract (default reject) is
         # exercised explicitly in test_prism_distributed_contract.py.
         distributed_contract_policy="off",

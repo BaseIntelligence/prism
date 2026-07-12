@@ -96,8 +96,6 @@ def test_base_gpu_worker_runs_submission_in_container(tmp_path, monkeypatch):
         shared_token="secret",
         allow_insecure_signatures=True,
         # No OpenRouter key in the unit env; disable the gate (covered in test_*llm*).
-        llm_review_enabled=False,
-        llm_review_required=False,
         execution_backend="base_gpu",
         docker_enabled=True,
         docker_backend="broker",
@@ -175,8 +173,6 @@ def get_recipe(ctx):
         shared_token="secret",
         allow_insecure_signatures=True,
         # No OpenRouter key in the unit env; disable the gate (covered in test_*llm*).
-        llm_review_enabled=False,
-        llm_review_required=False,
         execution_backend="base_gpu",
         docker_enabled=True,
         docker_backend="broker",
@@ -281,8 +277,6 @@ def test_base_gpu_accepts_custom_training_and_inference_hooks(tmp_path, monkeypa
         shared_token="secret",
         allow_insecure_signatures=True,
         # No OpenRouter key in the unit env; disable the gate (covered in test_*llm*).
-        llm_review_enabled=False,
-        llm_review_required=False,
         execution_backend="base_gpu",
         docker_enabled=True,
         docker_backend="broker",

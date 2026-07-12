@@ -746,10 +746,6 @@ def report_client(tmp_path: Path):
         shared_token="secret",
         allow_insecure_signatures=True,
         fineweb_sample_count=4,
-        llm_gateway_url=REPORT_GATEWAY_URL,
-        llm_gateway_token=REPORT_GATEWAY_TOKEN,
-        llm_review_enabled=True,
-        llm_review_required=False,
         distributed_contract_policy="off",
     )
     with TestClient(create_app(settings)) as test_client:
@@ -855,13 +851,13 @@ def test_report_generation_available_reflects_credentials() -> None:
     )
 
     with_gateway = llm_report_config(
-        _bare_settings(llm_gateway_url=REPORT_GATEWAY_URL, llm_gateway_token=REPORT_GATEWAY_TOKEN)
+        _bare_settings(llm_gateway_url=REPORT_GATEWAY_URL)
     )
     assert report_generation_available(with_gateway) is True
 
     # A gateway URL but no resolvable token -> unavailable (no direct-provider fallback).
     no_token = llm_report_config(
-        _bare_settings(llm_gateway_url=REPORT_GATEWAY_URL, llm_gateway_token=None)
+        _bare_settings(llm_gateway_url=REPORT_GATEWAY_URL)
     )
     assert report_generation_available(no_token) is False
 
@@ -913,7 +909,7 @@ def test_generate_report_content_uses_resolved_client(monkeypatch) -> None:
 
     monkeypatch.setattr(report_mod, "_load_chat_openai", lambda: _FakeChat)
     config = report_mod.llm_report_config(
-        _bare_settings(llm_gateway_url=REPORT_GATEWAY_URL, llm_gateway_token=REPORT_GATEWAY_TOKEN)
+        _bare_settings(llm_gateway_url=REPORT_GATEWAY_URL)
     )
     content, model = report_mod.generate_report_content({"name": "A", "compute": {}}, config=config)
     assert content == "## Summary\nfrom fake client"
@@ -940,7 +936,7 @@ def test_generate_report_content_rejects_empty_completion(monkeypatch) -> None:
 
     monkeypatch.setattr(report_mod, "_load_chat_openai", lambda: _FakeChat)
     config = report_mod.llm_report_config(
-        _bare_settings(llm_gateway_url=REPORT_GATEWAY_URL, llm_gateway_token=REPORT_GATEWAY_TOKEN)
+        _bare_settings(llm_gateway_url=REPORT_GATEWAY_URL)
     )
     with pytest.raises(RuntimeError):
         report_mod.generate_report_content({"compute": {}}, config=config)

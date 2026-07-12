@@ -83,7 +83,6 @@ def test_secret_file_helpers(tmp_path) -> None:
         database_url="postgresql://db/prism",
         database_path=tmp_path / "fallback.sqlite3",
         shared_token_file=str(shared),
-        llm_gateway_token_file=gateway,
     )
 
     assert settings.internal_token() == "shared"

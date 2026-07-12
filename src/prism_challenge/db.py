@@ -267,6 +267,8 @@ def loads(data: str | None) -> Any:
 
 
 async def _run_migrations(conn: aiosqlite.Connection) -> None:
+    # Forward-only legacy cleanup: never silently approve held/quarantined submissions.
+    await _migrate_legacy_llm_state(conn)
     await _ensure_columns(
         conn,
         "submissions",
@@ -423,3 +425,23 @@ async def _ensure_columns(conn: aiosqlite.Connection, table: str, columns: dict[
     for column, definition in columns.items():
         if column not in existing:
             await conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+
+
+async def _migrate_legacy_llm_state(conn: aiosqlite.Connection) -> None:
+    """Reject non-final legacy hold/quarantine rows without admitting them.
+
+    Pending incomplete LLM review state becomes rejected. Tables remain until a later
+    purge is safe for offline audits; they are no longer written by the admission path.
+    """
+
+    tables = {str(row[0]) for row in await conn.execute_fetchall(
+        "SELECT name FROM sqlite_master WHERE type='table'"
+    )}
+    if "submissions" in tables:
+        await conn.execute(
+            "UPDATE submissions SET status='rejected', "
+            "error=COALESCE(NULLIF(error, ''), 'legacy held/quarantine rejected during gateway removal'), "
+            "updated_at=COALESCE(updated_at, CURRENT_TIMESTAMP) "
+            "WHERE status IN ('held', 'quarantined')"
+        )
+    # Leave completed scores untouched. Do not convert any held row into completed/pending.

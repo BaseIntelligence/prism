@@ -325,7 +325,7 @@ class PrismRepository:
             if final_state == "quarantined":
                 await conn.execute(
                     "UPDATE submissions SET status=?, error=?, updated_at=? WHERE id=?",
-                    (SubmissionStatus.HELD.value, reason, now_iso(), submission_id),
+                    (SubmissionStatus.REJECTED.value, reason, now_iso(), submission_id),
                 )
 
     async def record_llm_review_event(
@@ -475,7 +475,7 @@ class PrismRepository:
             elif final_state == "quarantined":
                 await conn.execute(
                     "UPDATE submissions SET status=?, error=?, updated_at=? WHERE id=?",
-                    (SubmissionStatus.HELD.value, reason, now, submission_id),
+                    (SubmissionStatus.REJECTED.value, reason, now, submission_id),
                 )
 
     async def quarantine_submission_for_llm_review(
@@ -485,7 +485,7 @@ class PrismRepository:
         async with self.database.connect() as conn:
             await conn.execute(
                 "UPDATE submissions SET status=?, error=?, updated_at=? WHERE id=?",
-                (SubmissionStatus.HELD.value, reason, now, submission_id),
+                (SubmissionStatus.REJECTED.value, reason, now, submission_id),
             )
             await self._record_llm_review_event(
                 conn,
@@ -822,7 +822,7 @@ class PrismRepository:
         async with self.database.connect() as conn:
             rows = await conn.execute_fetchall(
                 "SELECT id FROM submissions WHERE status=? AND updated_at < ?",
-                (SubmissionStatus.HELD.value, cutoff),
+                ("held", cutoff),
             )
             expired = [str(row["id"]) for row in rows]
             if expired:
@@ -833,7 +833,7 @@ class PrismRepository:
                         SubmissionStatus.REJECTED.value,
                         reason,
                         now,
-                        SubmissionStatus.HELD.value,
+                        "held",
                         cutoff,
                     ),
                 )

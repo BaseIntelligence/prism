@@ -53,7 +53,6 @@ def create_app(
         database,
         app_settings.epoch_seconds,
         worker_claim_timeout_seconds=app_settings.worker_claim_timeout_seconds,
-        held_review_timeout_seconds=app_settings.held_review_timeout_seconds,
     )
     if app_settings.worker_plane.cpu_reexec_test_mode:
         # Explicit CPU re-exec test mode: install the repo's own CPU seam (no GPU/Docker/broker)
@@ -121,12 +120,6 @@ def create_app(
     app.state.worker = worker
     app.state.checkpoint_publisher = publisher
     app.state.checkpoint_intake = checkpoint_intake
-    # In-process guards for lazy, non-blocking LLM auto-report generation: ``report_inflight``
-    # dedupes concurrent generations for the same architecture; ``report_failed`` maps an
-    # architecture_id to the best-submission cache key whose last generation errored (so GETs
-    # return ``unavailable`` until a new best arrives and a retry is allowed).
-    app.state.report_inflight = set()
-    app.state.report_failed = {}
 
     @app.post("/internal/v1/worker/process-next", dependencies=[Depends(authenticate_internal)])
     async def process_next() -> dict[str, str | None]:

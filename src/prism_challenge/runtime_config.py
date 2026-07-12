@@ -104,15 +104,6 @@ class DuplicateThresholds(BaseModel):
     static_reject_similarity: float = Field(default=0.96, ge=0, le=1)
 
 
-class LlmReviewPolicy(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    enabled: bool = False
-    required: bool = False
-    min_confidence: float = Field(default=0.72, ge=0, le=1)
-    timeout_seconds: int = Field(default=60, ge=1)
-    evidence_required_for_rejection: bool = True
-
 
 class GpuPolicy(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -194,7 +185,6 @@ class RuntimePolicy(BaseModel):
     score_weights: ScoreWeights
     benchmark_weights: BenchmarkWeights
     duplicate_thresholds: DuplicateThresholds
-    llm_review_policy: LlmReviewPolicy
     gpu_policy: GpuPolicy
     dataset_configs: DatasetConfigs
     execution_mode_targets: ExecutionModeTargets
@@ -241,13 +231,6 @@ def runtime_policy_defaults(settings: PrismSettings) -> dict[str, Any]:
             "quarantine_source_similarity": 0.85,
             "same_architecture_similarity": settings.component_agent_same_threshold,
             "static_reject_similarity": settings.plagiarism_static_reject_threshold,
-        },
-        "llm_review_policy": {
-            "enabled": settings.llm_review_enabled,
-            "required": settings.llm_review_required,
-            "min_confidence": settings.component_agent_min_confidence,
-            "timeout_seconds": settings.llm_review_timeout_seconds,
-            "evidence_required_for_rejection": True,
         },
         "gpu_policy": {
             "max_gpu_count": settings.base_eval_max_gpu_count,

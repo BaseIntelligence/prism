@@ -13,7 +13,7 @@ from base.challenge_sdk.executor import DockerExecutor, DockerLimits, DockerMoun
 
 from .config import PrismSettings
 from .db import dumps
-from .evaluator import llm_review, source_similarity
+from .evaluator import source_similarity
 from .evaluator.anti_cheat import evaluate_anti_cheat
 from .evaluator.checkpoint_publisher import CheckpointPublisher
 from .evaluator.component_signatures import (
@@ -121,7 +121,6 @@ class StaticReviewOutcome:
     rejected: bool
     reason: str | None = None
     violations: tuple[str, ...] = ()
-    held: bool = False
 
 
 @dataclass(frozen=True)
@@ -389,7 +388,8 @@ class PrismWorker:
             await self._reject_submission(submission_id, str(exc))
             return submission_id
 
-        # LLM hard gate + plagiarism run only AFTER the static gates have passed.
+        # Deterministic similarity/admission runs only AFTER the static gates have passed.
+        # LLM hard-gate approval is removed: no gateway/provider call, no held quarantine.
         try:
             review = await self._review_static_submission(
                 submission_id=submission_id,
@@ -402,8 +402,6 @@ class PrismWorker:
             )
             if review.rejected:
                 await self._reject_submission(submission_id, review.reason or "review rejected")
-                return submission_id
-            if review.held:
                 return submission_id
             code = review.code
         except Exception as exc:
@@ -726,70 +724,13 @@ class PrismWorker:
         code_hash: str,
     ) -> StaticReviewOutcome:
         # Invoked ONLY after the static AST sandbox / param-cap / distributed-contract gates have
-        # passed, so a static rejection never reaches (or records any event for) the LLM gate.
-        await self.repository.record_llm_review_event(
-            submission_id=submission_id,
-            state="received",
-            actor="system",
-            tool_name="submission_receiver",
-            payload={"filename": filename, "code_hash": code_hash},
-            reason="submission received for LLM review flow",
-            idempotency_key="state:received",
-        )
-        await self.repository.record_llm_review_event(
-            submission_id=submission_id,
-            state="static_validation_passed",
-            actor="system",
-            tool_name="static_validator",
-            payload={"entrypoint": component_review.components.entrypoint},
-            reason="submission passed static review preconditions",
-            idempotency_key="state:static_validation_passed",
-        )
-        await self.repository.record_llm_review_event(
-            submission_id=submission_id,
-            state="architecture_analyzed",
-            actor="system",
-            tool_name="architecture_analyzer",
-            payload={
-                "family_hash": component_review.fingerprints.family_hash,
-                "architecture_graph_hash": (
-                    component_review.semantic_signature.architecture_graph_hash
-                ),
-            },
-            reason="architecture graph analyzed for review context",
-            idempotency_key="state:architecture_analyzed",
-        )
+        # passed. Deterministic similarity replaces the removed LLM hard-gate and quarantine hold.
         await self.repository.store_source_snapshot(
             submission_id=submission_id,
             hotkey=hotkey,
             code_hash=code_hash,
             payload=snapshot.to_payload(),
         )
-        rules = self._review_rules()
-        llm_config = self._llm_config()
-        safety = await asyncio.to_thread(
-            llm_review.review_code,
-            snapshot.combined_python(),
-            config=llm_config,
-            rules=rules,
-            subject="Prism project",
-        )
-        await self.repository.store_llm_review(
-            submission_id=submission_id,
-            approved=safety.approved,
-            reason=safety.reason,
-            violations=safety.violations,
-            confidence=safety.confidence,
-            raw=safety.raw,
-            mermaid=safety.mermaid,
-            evidence=safety.evidence,
-            held=safety.held,
-        )
-        if safety.held:
-            logger.warning("submission %s held by LLM review: %s", submission_id, safety.reason)
-            return StaticReviewOutcome(code_for_eval, False, safety.reason, held=True)
-        if not safety.approved:
-            return StaticReviewOutcome(code_for_eval, True, safety.reason, tuple(safety.violations))
         if not self.settings.plagiarism_enabled:
             return StaticReviewOutcome(code_for_eval, False)
         runtime_config = await self.repository.runtime_config(self.settings, official=True)
@@ -806,10 +747,8 @@ class PrismWorker:
             top_k=self.settings.plagiarism_top_k,
         )
         if duplicate.candidate is not None:
-            # v2 has no operator hold-resolution surface (the NAS review endpoints were
-            # decommissioned), so the borderline-duplicate quarantine band would strand a
-            # submission in HELD forever. Fold it into a terminal rejection at ingress;
-            # exact-source-hash dedup is the same path.
+            # Borderline duplicate formerly became HELD/quarantine. After gateway removal that
+            # band is terminally rejected (never held) so no submission needs LLM review.
             rejected = duplicate.rejected or duplicate.held
             violations = ["duplicate_similarity"] if rejected else []
             await self.repository.store_plagiarism_review(
@@ -865,20 +804,6 @@ class PrismWorker:
             defaults=DEFAULT_REVIEW_RULES,
             rules_json=self.settings.subnet_rules_json,
             rules_file=self.settings.subnet_rules_file,
-        )
-
-    def _llm_config(self) -> llm_review.LlmReviewConfig:
-        return llm_review.LlmReviewConfig(
-            enabled=self.settings.llm_review_enabled,
-            required=self.settings.llm_review_required,
-            gateway_url=self.settings.llm_gateway_url,
-            gateway_token=self.settings.llm_gateway_token_value(),
-            gateway_token_file=self.settings.llm_gateway_token_file,
-            timeout_seconds=self.settings.llm_review_timeout_seconds,
-            temperature=self.settings.llm_review_temperature,
-            max_tokens=self.settings.llm_review_max_tokens,
-            max_retries=self.settings.llm_review_max_retries,
-            max_source_chars=self.settings.llm_review_max_source_chars,
         )
 
     def _pair_sandbox_runner(self, submission_id: str) -> source_similarity.SandboxRunner:

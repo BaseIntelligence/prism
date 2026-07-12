@@ -103,8 +103,6 @@ def _settings(tmp_path: Path, *, worker_plane: WorkerPlaneConfig) -> PrismSettin
         database_url=f"sqlite+aiosqlite:///{tmp_path / 'robust.sqlite3'}",
         shared_token="secret",
         allow_insecure_signatures=True,
-        llm_review_enabled=False,
-        llm_review_required=False,
         execution_backend="base_gpu",
         docker_enabled=True,
         docker_backend="broker",

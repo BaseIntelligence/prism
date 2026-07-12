@@ -94,8 +94,6 @@ def client(tmp_path: Path) -> TestClient:
         # API key; disable it here so pipeline tests exercise their own subject. The gate itself
         # is covered in the test_*llm* suites. llm_review_required is pinned False so the disabled
         # gate keeps the allow path (the production default is now fail-closed True).
-        llm_review_enabled=False,
-        llm_review_required=False,
         # Most pipeline tests use minimal single-process training doubles; the multi-GPU static
         # contract (production default: reject) is an isolation knob here and is exercised
         # explicitly in test_prism_distributed_contract.py.

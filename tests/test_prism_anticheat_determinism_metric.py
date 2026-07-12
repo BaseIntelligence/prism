@@ -540,8 +540,6 @@ def test_anticheat_rejection_reason_reproducible_across_resubmissions(tmp_path: 
         allow_insecure_signatures=True,
         fineweb_sample_count=4,
         # No OpenRouter key in the unit env; disable the gate (covered in test_*llm*).
-        llm_review_enabled=False,
-        llm_review_required=False,
         distributed_contract_policy="off",
         plagiarism_enabled=False,
     )

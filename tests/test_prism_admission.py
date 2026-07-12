@@ -120,8 +120,6 @@ def _settings(
         shared_token="secret",
         allow_insecure_signatures=True,
         fineweb_sample_count=4,
-        llm_review_enabled=False,
-        llm_review_required=False,
         distributed_contract_policy="off",
         max_code_bytes=max_code_bytes,
         validator_hotkeys=validator_hotkeys,

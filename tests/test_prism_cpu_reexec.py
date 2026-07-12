@@ -436,8 +436,6 @@ def _e2e_settings(tmp_path: Path) -> PrismSettings:
         database_url=f"sqlite+aiosqlite:///{tmp_path / 'e2e.sqlite3'}",
         shared_token="secret",
         allow_insecure_signatures=True,
-        llm_review_enabled=False,
-        llm_review_required=False,
         execution_backend="base_gpu",
         docker_enabled=True,
         docker_backend="broker",

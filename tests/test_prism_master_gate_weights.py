@@ -195,10 +195,10 @@ def test_gateway_configured_without_token_holds_no_direct_provider_call(monkeypa
 def test_settings_gateway_token_only_sourced_from_secret_file(tmp_path: Path) -> None:
     secret = tmp_path / "base_gateway_token"
     secret.write_text(GATEWAY_TOKEN + "\n", encoding="utf-8")
-    settings = PrismSettings(llm_gateway_url=GATEWAY_URL, llm_gateway_token_file=secret)
+    settings = PrismSettings(llm_gateway_url=GATEWAY_URL)
     assert settings.llm_gateway_token_value() == GATEWAY_TOKEN
 
-    missing = PrismSettings(llm_gateway_token=None, llm_gateway_token_file=tmp_path / "nope")
+    missing = PrismSettings(llm_gateway_token=None)
     assert missing.llm_gateway_token_value() is None
 
 
@@ -277,7 +277,6 @@ def test_oversized_source_rejected_before_any_model_call(monkeypatch) -> None:
 def test_eval_container_env_carries_no_provider_key(tmp_path: Path) -> None:
     settings = PrismSettings(
         base_eval_artifact_root=tmp_path / "artifacts",
-        llm_gateway_token=GATEWAY_TOKEN,
     )
     ctx = PrismContext(vocab_size=128, sequence_length=16, seed=1337, max_parameters=5_000_000)
     evaluator = PrismContainerEvaluator(settings=settings, ctx=ctx)
@@ -571,9 +570,6 @@ def _pipeline_settings(tmp_path: Path, name: str, **overrides: Any) -> PrismSett
         database_url=f"sqlite+aiosqlite:///{tmp_path / name}",
         shared_token="secret",
         allow_insecure_signatures=True,
-        llm_review_enabled=True,
-        llm_gateway_url=GATEWAY_URL,
-        llm_gateway_token=GATEWAY_TOKEN,
         execution_backend="base_gpu",
         docker_enabled=True,
         docker_backend="broker",

@@ -254,8 +254,6 @@ def test_container_path_scores_prequential_bpb_from_challenge_manifest(tmp_path,
         base_eval_artifact_root=tmp_path / "artifacts",
         plagiarism_enabled=False,
         # No OpenRouter key in the unit env; disable the gate (covered in test_*llm*).
-        llm_review_enabled=False,
-        llm_review_required=False,
         # Single-process training double; the multi-GPU static contract (default reject) is
         # exercised explicitly in test_prism_distributed_contract.py.
         distributed_contract_policy="off",

@@ -20,16 +20,9 @@ from pydantic import ValidationError
 
 from .admission import enforce_admission
 from .auth import authenticate_miner
-from .evaluator.architecture_report import (
-    generate_report_content,
-    llm_report_config,
-    report_generation_available,
-)
 from .models import (
     ArchitectureDetailResponse,
     ArchitectureListResponse,
-    ArchitectureReport,
-    ArchitectureReportResponse,
     ArchitectureSummary,
     ArchitectureVariantsResponse,
     CurveBpb,
@@ -325,136 +318,6 @@ async def submission_curve(
             peak_rss_bytes=_opt_int(compute.get("peak_rss_bytes")),
         ),
     )
-
-
-@public_route(tags=["architectures"])
-@router.get("/architectures/{architecture_id}/report", response_model=ArchitectureReportResponse)
-async def architecture_report(
-    architecture_id: str,
-    request: Request,
-    background_tasks: BackgroundTasks,
-    repository: PrismRepository = Depends(repo_from_request),
-) -> ArchitectureReportResponse:
-    architecture = await repository.get_architecture(architecture_id)
-    if architecture is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "architecture not found")
-    best_submission_id = str(architecture["best_submission_id"])
-    cached = await repository.get_architecture_report(architecture_id)
-    if (
-        cached is not None
-        and cached.get("source_submission_id") == best_submission_id
-        and cached.get("content")
-    ):
-        generated_at = cached.get("generated_at")
-        return _report_response(
-            architecture_id,
-            status_value="ready",
-            content=str(cached["content"]),
-            model=str(cached["model"]) if cached.get("model") is not None else None,
-            generated_at=datetime.fromisoformat(str(generated_at)) if generated_at else None,
-        )
-    settings = request.app.state.settings
-    if not report_generation_available(llm_report_config(settings)):
-        return _report_response(architecture_id, status_value="unavailable")
-    inflight = request.app.state.report_inflight
-    failed = request.app.state.report_failed
-    # Single-event-loop dedupe: the check-and-add below has no intervening await, so two concurrent
-    # requests cannot both schedule a generation for the same architecture. A prior failure for the
-    # SAME best submission stays ``unavailable`` until a new best arrives (then the marker no longer
-    # matches and a retry is scheduled).
-    if architecture_id in inflight:
-        return _report_response(architecture_id, status_value="pending")
-    if failed.get(architecture_id) == best_submission_id:
-        return _report_response(architecture_id, status_value="unavailable")
-    inflight.add(architecture_id)
-    background_tasks.add_task(
-        _run_architecture_report,
-        request.app,
-        repository,
-        architecture_id,
-        best_submission_id,
-    )
-    return _report_response(architecture_id, status_value="pending")
-
-
-def _report_response(
-    architecture_id: str,
-    *,
-    status_value: str,
-    content: str | None = None,
-    model: str | None = None,
-    generated_at: datetime | None = None,
-) -> ArchitectureReportResponse:
-    return ArchitectureReportResponse(
-        architecture_id=architecture_id,
-        report=ArchitectureReport(
-            status=status_value, content=content, model=model, generated_at=generated_at
-        ),
-    )
-
-
-async def _run_architecture_report(
-    app: FastAPI,
-    repository: PrismRepository,
-    architecture_id: str,
-    best_submission_id: str,
-) -> None:
-    """Background generation of one architecture's report (never blocks the GET that scheduled it).
-
-    On success the cache row is upserted (keyed to ``best_submission_id``); on any error the
-    architecture is marked failed for this best submission so subsequent GETs report
-    ``unavailable``. The in-flight guard is always cleared so a later best can retry.
-    """
-    try:
-        facts = await _gather_report_facts(repository, architecture_id, best_submission_id)
-        config = llm_report_config(app.state.settings)
-        content, model = await asyncio.to_thread(generate_report_content, facts, config=config)
-        await repository.store_architecture_report(
-            architecture_id=architecture_id,
-            content=content,
-            model=model,
-            source_submission_id=best_submission_id,
-        )
-        app.state.report_failed.pop(architecture_id, None)
-    except Exception:
-        logger.warning(
-            "architecture report generation failed for %s", architecture_id, exc_info=True
-        )
-        app.state.report_failed[architecture_id] = best_submission_id
-    finally:
-        app.state.report_inflight.discard(architecture_id)
-
-
-async def _gather_report_facts(
-    repository: PrismRepository, architecture_id: str, best_submission_id: str
-) -> dict[str, Any]:
-    architecture = await repository.get_architecture(architecture_id)
-    facts: dict[str, Any] = {
-        "name": architecture.get("name") if architecture else None,
-        "owner_hotkey": architecture.get("owner_hotkey") if architecture else None,
-        "best_final_score": architecture.get("best_final_score") if architecture else None,
-        "variant_count": architecture.get("variant_count") if architecture else None,
-        "compute": {},
-        "prequential_bpb": None,
-        "tokens_consumed": None,
-        "first_loss": None,
-        "last_loss": None,
-        "loss_samples": None,
-    }
-    curve = None
-    if best_submission_id:
-        curve = await repository.get_submission_curve(best_submission_id)
-    if curve is not None:
-        compute = curve.get("compute")
-        facts["compute"] = compute if isinstance(compute, dict) else {}
-        facts["prequential_bpb"] = curve.get("prequential_bpb")
-        facts["tokens_consumed"] = curve.get("tokens_consumed")
-        loss = curve.get("online_loss") or []
-        if loss:
-            facts["first_loss"] = loss[0]
-            facts["last_loss"] = loss[-1]
-            facts["loss_samples"] = len(loss)
-    return facts
 
 
 def _downsample_indices(n: int, cap: int) -> list[int]:

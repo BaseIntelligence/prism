@@ -88,8 +88,6 @@ def test_wall_time_overrun_force_kills_and_releases_lease(tmp_path, monkeypatch)
         database_url=f"sqlite+aiosqlite:///{db_file}",
         shared_token="secret",
         allow_insecure_signatures=True,
-        llm_review_enabled=False,
-        llm_review_required=False,
         plagiarism_enabled=False,
         distributed_contract_policy="off",
         execution_backend="base_gpu",

@@ -247,8 +247,6 @@ def _enforcing_client(tmp_path) -> TestClient:
         allow_insecure_signatures=True,
         fineweb_sample_count=4,
         plagiarism_enabled=False,
-        llm_review_enabled=False,
-        llm_review_required=False,
         base_gpu_targets="[]",
         distributed_contract_policy="reject",
     )

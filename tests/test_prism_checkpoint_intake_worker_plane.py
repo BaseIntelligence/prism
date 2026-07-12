@@ -39,8 +39,6 @@ def _settings(tmp_path: Path) -> PrismSettings:
         database_url=f"sqlite+aiosqlite:///{tmp_path / 'ckpt.sqlite3'}",
         shared_token=INTERNAL_TOKEN,
         allow_insecure_signatures=True,
-        llm_review_enabled=False,
-        llm_review_required=False,
         validator_hotkeys=[VALIDATOR_HOTKEY],
         # Worker plane ON: the trust boundary must NOT widen.
         worker_plane=WorkerPlaneConfig(enabled=True),
