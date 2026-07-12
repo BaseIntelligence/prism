@@ -9,6 +9,17 @@ from base.challenge_sdk.config import ChallengeSettings
 from pydantic import AliasChoices, BaseModel, Field
 from pydantic_settings import SettingsConfigDict
 
+_PROOF_RUNTIME_ENVIRONMENT_NAMES = frozenset(
+    {
+        "PRISM_ATTESTATION",
+        "PRISM_EXECUTOR_ID",
+        "PRISM_IMAGE_DIGEST",
+        "PRISM_MINER_HOTKEY",
+        "PRISM_POD_ID",
+        "PRISM_PROVIDER_NAME",
+    }
+)
+
 
 class WorkerPlaneConfig(BaseModel):
     """Prism worker-plane feature block (architecture.md 3.4/3.5).
@@ -84,6 +95,7 @@ class PrismSettings(ChallengeSettings):
     def __init__(self, **values: Any) -> None:
         known = {
             *self._known_environment_names(),
+            *_PROOF_RUNTIME_ENVIRONMENT_NAMES,
             "PRISM_ENV_FILE",
         }
         unknown = sorted(

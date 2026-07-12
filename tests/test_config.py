@@ -5,6 +5,7 @@ from pathlib import Path
 import yaml
 
 from prism_challenge.config import PrismSettings
+from prism_challenge.proof import PROVIDER_ENV_KEYS
 
 
 def test_base_challenge_env_aliases_are_loaded(monkeypatch):
@@ -61,6 +62,15 @@ def test_settings_still_accept_field_names() -> None:
     assert settings.docker_enabled is True
     assert settings.docker_backend == "broker"
     assert settings.docker_broker_url == "http://broker"
+
+
+def test_proof_runtime_environment_is_not_treated_as_settings(monkeypatch) -> None:
+    for index, name in enumerate(PROVIDER_ENV_KEYS):
+        monkeypatch.setenv(name, f"runtime-metadata-{index}")
+
+    settings = PrismSettings()
+
+    assert settings.prism_role == "challenge"
 
 
 def test_secret_file_helpers(tmp_path) -> None:
