@@ -216,6 +216,22 @@ REQUIRED_TABLES = frozenset(
     }
 )
 
+# Declared SQLite runtime policy used on every real connection
+# (VAL-WEIGHT-092 / VAL-GATE-043).
+PRISM_SCHEMA_REVISION = "prism-schema.v2"
+PRISM_BUSY_TIMEOUT_MS = 5_000
+SQLITE_CONNECTION_PRAGMAS: tuple[str, ...] = (
+    "PRAGMA foreign_keys=ON;",
+    f"PRAGMA busy_timeout={PRISM_BUSY_TIMEOUT_MS};",
+    "PRAGMA journal_mode=WAL;",
+)
+SCHEMA_REVISION_DDL = (
+    "CREATE TABLE IF NOT EXISTS prism_schema_migrations ("
+    "revision TEXT PRIMARY KEY,"
+    "checksum TEXT NOT NULL,"
+    "applied_at TEXT NOT NULL);"
+)
+
 RAW_WEIGHT_PUSH_LEDGER_DDL = (
     "CREATE TABLE IF NOT EXISTS raw_weight_push_ledger ("
     "id INTEGER PRIMARY KEY CHECK (id = 1),"
@@ -237,17 +253,38 @@ RAW_WEIGHT_PUSH_LEDGER_DDL = (
 )
 
 
+async def apply_sqlite_connection_policy(conn: aiosqlite.Connection) -> None:
+    """Apply the declared foreign_keys/WAL/busy_timeout policy to ``conn``."""
+
+    for statement in SQLITE_CONNECTION_PRAGMAS:
+        await conn.execute(statement)
+
+
+async def open_sqlite(path: Path) -> aiosqlite.Connection:
+    """Open a SQLite connection with the declared Prism runtime policy."""
+
+    conn = await aiosqlite.connect(path)
+    conn.row_factory = aiosqlite.Row
+    await apply_sqlite_connection_policy(conn)
+    return conn
+
+
 class Database:
     def __init__(self, path: Path) -> None:
         self.path = path
 
     async def init(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        async with aiosqlite.connect(self.path) as conn:
+        conn = await open_sqlite(self.path)
+        try:
             await conn.executescript(SCHEMA)
             await conn.execute(RAW_WEIGHT_PUSH_LEDGER_DDL)
+            await conn.execute(SCHEMA_REVISION_DDL)
             await _run_migrations(conn)
+            await _record_schema_revision(conn, PRISM_SCHEMA_REVISION)
             await conn.commit()
+        finally:
+            await conn.close()
 
     async def close(self) -> None:
         return None
@@ -255,7 +292,8 @@ class Database:
     async def healthcheck(self) -> bool:
         """Verify that the challenge database and canonical schema are readable."""
 
-        async with aiosqlite.connect(self.path) as conn:
+        conn = await open_sqlite(self.path)
+        try:
             cursor = await conn.execute(
                 "SELECT name FROM sqlite_master "
                 "WHERE type = 'table' AND name IN "
@@ -264,13 +302,13 @@ class Database:
             )
             rows = await cursor.fetchall()
             return {row[0] for row in rows} == REQUIRED_TABLES
+        finally:
+            await conn.close()
 
     @asynccontextmanager
     async def connect(self) -> AsyncIterator[aiosqlite.Connection]:
-        conn = await aiosqlite.connect(self.path)
-        conn.row_factory = aiosqlite.Row
+        conn = await open_sqlite(self.path)
         try:
-            await conn.execute("PRAGMA foreign_keys=ON")
             yield conn
             await conn.commit()
         finally:
@@ -455,9 +493,10 @@ async def _migrate_legacy_llm_state(conn: aiosqlite.Connection) -> None:
     purge is safe for offline audits; they are no longer written by the admission path.
     """
 
-    tables = {str(row[0]) for row in await conn.execute_fetchall(
-        "SELECT name FROM sqlite_master WHERE type='table'"
-    )}
+    tables = {
+        str(row[0])
+        for row in await conn.execute_fetchall("SELECT name FROM sqlite_master WHERE type='table'")
+    }
     if "submissions" in tables:
         await conn.execute(
             "UPDATE submissions SET status='rejected', "
@@ -467,3 +506,30 @@ async def _migrate_legacy_llm_state(conn: aiosqlite.Connection) -> None:
             "WHERE status IN ('held', 'quarantined')"
         )
     # Leave completed scores untouched. Do not convert any held row into completed/pending.
+
+
+async def _record_schema_revision(conn: aiosqlite.Connection, revision: str) -> None:
+    """Record a forward-only schema revision with a content checksum.
+
+    Unknown future revisions are refused so partial/skewed volumes stay non-ready
+    until an operator upgrades (VAL-GATE-043/044).
+    """
+
+    from datetime import UTC, datetime
+    from hashlib import sha256
+
+    checksum = sha256(revision.encode("utf-8")).hexdigest()
+    rows = await conn.execute_fetchall(
+        "SELECT revision FROM prism_schema_migrations ORDER BY applied_at DESC"
+    )
+    known = {str(row[0]) for row in rows}
+    if any(item.startswith("prism-schema.v") and item > revision for item in known):
+        raise RuntimeError(
+            f"unknown future Prism schema revision present; expected at most {revision}"
+        )
+    if revision in known:
+        return
+    await conn.execute(
+        "INSERT INTO prism_schema_migrations(revision, checksum, applied_at) VALUES (?, ?, ?)",
+        (revision, checksum, datetime.now(UTC).isoformat()),
+    )
