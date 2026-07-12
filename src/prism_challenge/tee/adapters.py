@@ -3,9 +3,17 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Any, Protocol
 
 from .config import TeeVerifierConfig
+from .readiness import (
+    ProviderReadinessReport,
+    SafeProbeReport,
+    WatchtowerEvaluation,
+    classify_safe_probe,
+    evaluate_provider_readiness,
+    evaluate_watchtower_digest,
+)
 from .types import TeeClassification, TeeProviderKind, TeeReasonCode, fail_decision
 
 
@@ -14,22 +22,19 @@ class ProviderAdapter(Protocol):
 
     def readiness(self, config: TeeVerifierConfig) -> tuple[bool, TeeReasonCode, str]: ...
 
+    def readiness_report(self, config: TeeVerifierConfig) -> ProviderReadinessReport: ...
+
 
 @dataclass(frozen=True)
 class LocalFixtureAdapter:
     name: TeeProviderKind = TeeProviderKind.LOCAL_FIXTURE
 
     def readiness(self, config: TeeVerifierConfig) -> tuple[bool, TeeReasonCode, str]:
-        if config.mode != "local_fixture" and config.expected_provider != "local_fixture":
-            return False, TeeReasonCode.ADAPTER_NOT_READY, "local adapter not selected"
-        gaps = config.readiness_gaps()
-        if gaps:
-            return (
-                False,
-                TeeReasonCode.VERIFIER_MISCONFIGURED,
-                f"missing: {','.join(gaps)}",
-            )
-        return True, TeeReasonCode.ACCEPTED_LOCAL_FIXTURE, "local fixture ready"
+        report = self.readiness_report(config)
+        return report.ready, report.reason, report.detail
+
+    def readiness_report(self, config: TeeVerifierConfig) -> ProviderReadinessReport:
+        return evaluate_provider_readiness(TeeProviderKind.LOCAL_FIXTURE, config)
 
 
 @dataclass(frozen=True)
@@ -39,28 +44,56 @@ class LiumAdapter:
     name: TeeProviderKind = TeeProviderKind.LIUM
 
     def readiness(self, config: TeeVerifierConfig) -> tuple[bool, TeeReasonCode, str]:
-        if config.lium_ready:
-            # Hard gate: even if an operator flips the flag, every dependency must exist.
-            gaps = list(config.readiness_gaps())
-            if not gaps:
-                # Still blocked for REAL PASS until external authoritative contract exists.
-                return (
-                    False,
-                    TeeReasonCode.PROVIDER_BLOCKED,
-                    "lium contract not authoritative for real attestation",
-                )
-            return False, TeeReasonCode.ADAPTER_NOT_READY, f"lium incomplete: {','.join(gaps)}"
-        return (
-            False,
-            TeeReasonCode.PROVIDER_BLOCKED,
-            "lium real-provider validation blocked pending authoritative contract",
-        )
+        report = self.readiness_report(config)
+        # ready is always False for real Lium in this mission.
+        return report.ready, report.reason, report.detail
 
-    def classify_probe(self) -> dict[str, str]:
-        return {
-            "provider_api_reachable": "unknown",
-            "tee_validation": TeeClassification.BLOCKED.value,
-        }
+    def readiness_report(self, config: TeeVerifierConfig) -> ProviderReadinessReport:
+        return evaluate_provider_readiness(TeeProviderKind.LIUM, config)
+
+    def classify_probe(
+        self,
+        *,
+        api_reachable: bool | None = None,
+        http_status: int | None = None,
+        path: str | None = None,
+        method: str = "GET",
+        config: TeeVerifierConfig | None = None,
+    ) -> dict[str, Any]:
+        readiness = self.readiness_report(config) if config is not None else None
+        report = classify_safe_probe(
+            TeeProviderKind.LIUM,
+            api_reachable=api_reachable,
+            http_status=http_status,
+            path=path,
+            method=method,
+            readiness=readiness,
+        )
+        return report.as_dict()
+
+    def evaluate_watchtower(
+        self,
+        payload: dict[str, Any] | None,
+        *,
+        config: TeeVerifierConfig | None = None,
+        expected_image_digest: str | None = None,
+        now: Any | None = None,
+        max_age_seconds: int | None = None,
+    ) -> WatchtowerEvaluation:
+        digest = expected_image_digest
+        if digest is None and config is not None:
+            digest = config.expected_image_digest
+        age = max_age_seconds
+        if age is None and config is not None:
+            age = int(config.max_age_seconds)
+        if age is None:
+            age = 3_600
+        return evaluate_watchtower_digest(
+            payload,
+            expected_image_digest=digest,
+            max_age_seconds=age,
+            now=now,
+        )
 
 
 @dataclass(frozen=True)
@@ -70,31 +103,39 @@ class TargonAdapter:
     name: TeeProviderKind = TeeProviderKind.TARGON
 
     def readiness(self, config: TeeVerifierConfig) -> tuple[bool, TeeReasonCode, str]:
-        if config.targon_ready:
-            gaps = list(config.readiness_gaps())
-            if gaps:
-                return (
-                    False,
-                    TeeReasonCode.ADAPTER_NOT_READY,
-                    f"targon incomplete: {','.join(gaps)}",
-                )
-            return (
-                False,
-                TeeReasonCode.PROVIDER_FUTURE_BLOCKED,
-                "targon future enablement still lacks authoritative contract",
-            )
-        return (
-            False,
-            TeeReasonCode.PROVIDER_FUTURE_BLOCKED,
-            "targon future/blocked by default",
+        report = self.readiness_report(config)
+        return report.ready, report.reason, report.detail
+
+    def readiness_report(self, config: TeeVerifierConfig) -> ProviderReadinessReport:
+        return evaluate_provider_readiness(TeeProviderKind.TARGON, config)
+
+    def classify_probe(
+        self,
+        *,
+        api_reachable: bool | None = None,
+        http_status: int | None = None,
+        path: str | None = None,
+        method: str = "GET",
+        config: TeeVerifierConfig | None = None,
+    ) -> dict[str, Any]:
+        readiness = self.readiness_report(config) if config is not None else None
+        report = classify_safe_probe(
+            TeeProviderKind.TARGON,
+            api_reachable=api_reachable,
+            http_status=http_status,
+            path=path,
+            method=method,
+            readiness=readiness,
         )
+        return report.as_dict()
 
 
 def select_adapter(
     provider: TeeProviderKind | str, config: TeeVerifierConfig
-) -> ProviderAdapter | None:
+) -> LocalFixtureAdapter | LiumAdapter | TargonAdapter | None:
     """Return the exact provider-scoped adapter or None for unknown names."""
 
+    _ = config  # selection is name-scoped; readiness still takes the config
     name = provider.value if isinstance(provider, TeeProviderKind) else str(provider)
     if name in {"local_fixture", TeeProviderKind.LOCAL_FIXTURE.value}:
         return LocalFixtureAdapter()
@@ -114,22 +155,41 @@ def blocked_for_provider(provider: TeeProviderKind, config: TeeVerifierConfig):
             classification=TeeClassification.FAIL,
             detail=f"no adapter for provider {provider}",
         )
-    ready, reason, detail = adapter.readiness(config)
-    if ready:
+    report = adapter.readiness_report(config)
+    if report.ready:
         return None
     classification = (
         TeeClassification.BLOCKED
-        if reason
+        if report.reason
         in {
             TeeReasonCode.PROVIDER_BLOCKED,
             TeeReasonCode.PROVIDER_FUTURE_BLOCKED,
             TeeReasonCode.ADAPTER_NOT_READY,
+            TeeReasonCode.VERIFIER_MISCONFIGURED,
         }
         else TeeClassification.FAIL
+        if report.classification is TeeClassification.FAIL
+        else TeeClassification.BLOCKED
     )
     return fail_decision(
-        reason=reason,
+        reason=report.reason,
         provider=provider,
         classification=classification,
-        detail=detail,
+        detail=report.detail,
     )
+
+
+__all__ = [
+    "LiumAdapter",
+    "LocalFixtureAdapter",
+    "ProviderAdapter",
+    "ProviderReadinessReport",
+    "SafeProbeReport",
+    "TargonAdapter",
+    "WatchtowerEvaluation",
+    "blocked_for_provider",
+    "classify_safe_probe",
+    "evaluate_provider_readiness",
+    "evaluate_watchtower_digest",
+    "select_adapter",
+]

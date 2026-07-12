@@ -105,27 +105,26 @@ class TeeVerifier:
                 evidence_digest=parsed.evidence_digest(),
             )
 
-        # Real providers remain blocked (feature scope: local fixture only for PASS).
-        if provider is TeeProviderKind.LIUM:
-            return fail_decision(
-                reason=TeeReasonCode.PROVIDER_BLOCKED,
-                provider=provider,
+        # Provider-scoped readiness gate (Lium/Targon never grant REAL-PROVIDER PASS).
+        # Local fixture may proceed only when its readiness report is ready.
+        readiness = adapter.readiness_report(self.config)
+        if provider is TeeProviderKind.LIUM or provider is TeeProviderKind.TARGON:
+            return TeeDecision(
+                accepted=False,
                 classification=TeeClassification.BLOCKED,
-                detail="lium real-provider validation blocked pending authoritative contract",
-                work_unit_id=work_unit_id,
-                evidence_digest=parsed.evidence_digest(),
-            )
-        if provider is TeeProviderKind.TARGON:
-            return fail_decision(
-                reason=TeeReasonCode.PROVIDER_FUTURE_BLOCKED,
+                reason=readiness.reason,
                 provider=provider,
-                classification=TeeClassification.BLOCKED,
-                detail="targon future/blocked",
-                work_unit_id=work_unit_id,
+                effective_tier=0,
                 evidence_digest=parsed.evidence_digest(),
+                work_unit_id=work_unit_id,
+                detail=readiness.detail,
+                metadata={
+                    "readiness": readiness.as_dict(),
+                    "missing_items": list(readiness.missing_items),
+                    "would_grant_real_provider_pass": False,
+                },
             )
 
-        # Local fixture path.
         if provider is not TeeProviderKind.LOCAL_FIXTURE:
             return fail_decision(
                 reason=TeeReasonCode.EVIDENCE_UNKNOWN_PROVIDER,

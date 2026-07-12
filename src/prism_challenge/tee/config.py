@@ -58,6 +58,9 @@ class TeeVerifierConfig:
     lium_ready: bool = False
     targon_ready: bool = False
     allow_network: bool = False
+    # Optional provider contract snapshot. Authority markers inside this mapping
+    # are required for real-provider readiness (never inferred from credentials).
+    provider_contract: Mapping[str, Any] = field(default_factory=dict)
     max_quote_b64_chars: int = MAX_QUOTE_B64_CHARS
     max_jwt_chars: int = MAX_JWT_CHARS
     max_evidence_json_bytes: int = MAX_EVIDENCE_JSON_BYTES
@@ -163,4 +166,5 @@ def tee_config_from_settings(settings: PrismSettings) -> TeeVerifierConfig:
         lium_ready=bool(data.get("lium_ready", False)),
         targon_ready=bool(data.get("targon_ready", False)),
         allow_network=bool(data.get("allow_network", False)),
+        provider_contract=dict(data.get("provider_contract") or {}),
     )

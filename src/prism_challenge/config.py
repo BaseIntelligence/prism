@@ -112,6 +112,9 @@ class TeeConfig(BaseModel):
     lium_ready: bool = False
     targon_ready: bool = False
     allow_network: bool = False
+    # Provider contract snapshot (authority markers only). Empty by default so
+    # Lium/Targon remain BLOCKED; never populated from credentials alone.
+    provider_contract: dict[str, Any] = Field(default_factory=dict)
 
 
 REMOVED_LLM_SETTING_NAMES = frozenset(

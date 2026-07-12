@@ -116,11 +116,15 @@ def verify_tdx_quote(
     root = certs[-1]
     root_match = None
     for candidate in root_candidates:
-        if (
-            _cert_pem(candidate) == _cert_pem(root)
-            or candidate.public_key().public_numbers() == root.public_key().public_numbers()
-        ):  # type: ignore[union-attr]
+        if _cert_pem(candidate) == _cert_pem(root):
             # Also allow leaf signed directly by candidate when intermediate omitted matches.
+            root_match = candidate
+            break
+        cand_key = candidate.public_key()
+        root_key = root.public_key()
+        cand_nums = getattr(cand_key, "public_numbers", None)
+        root_nums = getattr(root_key, "public_numbers", None)
+        if callable(cand_nums) and callable(root_nums) and cand_nums() == root_nums():
             root_match = candidate
             break
         # Compare subject/public key fingerprint.
