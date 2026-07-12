@@ -45,6 +45,8 @@ from .proof import (
     verify_execution_proof,
 )
 from .queue import PrismWorker, WorkerFinalizationError
+from .tee.types import TeeDecision
+from .tee.verifier import TeeVerifier
 
 logger = logging.getLogger(__name__)
 
@@ -204,18 +206,24 @@ async def ingest_work_unit_result(
     pinned_image_digest: str | None = None,
     audit_sampler: AuditSampler | None = None,
     verify: SignatureVerifier = verify_hotkey_signature,
+    tee_verifier: TeeVerifier | None = None,
+    expected_tee_nonce: str | None = None,
 ) -> IngestionOutcome:
     """Verify a forwarded worker result and finalize the submission idempotently.
 
     ``work_unit_id`` is prism's stable unit id (``== submission_id``). Verification (shape ->
-    integrity) runs BEFORE any scoring; a rejected result raises :class:`ResultIngestionError` and
-    leaves the submission untouched (eligible for retry). A verified first delivery is then run
-    through the plausibility gate (architecture.md 3.5; VAL-PRISM-009): an implausible manifest
-    raises :class:`~prism_challenge.plausibility.PlausibilityError` (a reason DISTINCT from the
+    integrity -> TEE when claimed) runs BEFORE any scoring; a rejected result raises
+    :class:`ResultIngestionError` and leaves the submission untouched (eligible for retry). A
+    verified first delivery is then run through the plausibility gate (architecture.md 3.5;
+    VAL-PRISM-009): an implausible manifest raises
+    :class:`~prism_challenge.plausibility.PlausibilityError` (a reason DISTINCT from the
     proof-verification reasons) and is never scored, while a plausible manifest passes through
     UNCHANGED and finalizes via the CAS-guarded worker path. A duplicate is an idempotent no-op and
     a conflicting redelivery for an already-accepted unit is refused so the stored score/leaderboard
     is never mutated.
+
+    TEE evidence is verifier-derived only: populated attestation fields never elevate effective
+    tier without a successful Prism :class:`~prism_challenge.tee.TeeVerifier` decision.
     """
 
     if not isinstance(result, Mapping):
@@ -226,7 +234,41 @@ async def ingest_work_unit_result(
     manifest = raw_manifest if isinstance(raw_manifest, Mapping) else None
     verify_proof_integrity(proof, unit_id=work_unit_id, manifest=manifest, verify=verify)
 
-    tier = effective_tier(proof, pinned_image_digest=pinned_image_digest)
+    tee_decision: TeeDecision | None = None
+    if tee_verifier is not None and proof.attestation is not None:
+        # Always run before score/finalization so elevated tier cannot precede verification.
+        tee_decision = await tee_verifier.verify_proof(
+            proof,
+            work_unit_id=work_unit_id,
+            submission_id=submission_ref or work_unit_id,
+            expected_nonce=expected_tee_nonce
+            or (result.get("tee_nonce") if isinstance(result.get("tee_nonce"), str) else None),
+        )
+        # Durable non-secret decision metadata when the store supports it.
+        store = getattr(tee_verifier, "nonce_store", None)
+        record = getattr(store, "record_decision", None)
+        if callable(record) and tee_decision is not None:
+            try:
+                await record(
+                    work_unit_id=work_unit_id,
+                    evidence_digest=tee_decision.evidence_digest or "",
+                    provider=tee_decision.provider.value,
+                    classification=tee_decision.classification.value,
+                    reason=tee_decision.reason.value,
+                    effective_tier=tee_decision.effective_tier if tee_decision.accepted else 0,
+                    claimed_tier=int(proof.tier),
+                    trust_root_fingerprint=tee_decision.trust_root_fingerprint,
+                    gpu_key_fingerprint=tee_decision.gpu_key_fingerprint,
+                    image_digest=tee_decision.image_digest,
+                    nonce_digest_value=tee_decision.nonce_digest,
+                    validated_claims=",".join(tee_decision.validated_claims),
+                )
+            except Exception:  # noqa: BLE001 - decision persistence must not break fail-closed tier
+                logger.exception("failed to persist tee decision for unit %s", work_unit_id)
+
+    tier = effective_tier(
+        proof, pinned_image_digest=pinned_image_digest, tee_decision=tee_decision
+    )
     claimed_tier = int(proof.tier)
     downgraded = claimed_tier != tier
     submission_id = work_unit_id

@@ -27,9 +27,15 @@ def _proof(
     image_digest: str | None = None,
     attestation: dict[str, object] | None = None,
 ) -> ExecutionProof:
+    # Schema requires image_digest for claimed tier>=1; default a digest so callers can
+    # express intentional mismatch/none only by explicit kwargs.
+    if tier >= 1 and image_digest is None:
+        image_digest = PINNED
+    if tier == 2 and attestation is None:
+        attestation = {"tdx_quote_b64": "opaque", "gpu_eat_jwt": "opaque"}
     return ExecutionProof(
         version=1,
-        tier=tier,
+        tier=tier,  # type: ignore[arg-type]
         manifest_sha256="c" * 64,
         image_digest=image_digest,
         provider=ProviderInfo(name="lium", pod_id="pod-1"),
@@ -41,18 +47,21 @@ def _proof(
 # --- Downgrade rules (VAL-PRISM-019 a/b) --------------------------------------------------------
 
 
-def test_tier2_claim_downgrades_without_valid_attestation() -> None:
-    valid = _proof(tier=2, attestation={"tdx_quote_b64": "abc"})
-    null_attest = _proof(tier=2, attestation=None)
-    empty_attest = _proof(tier=2, attestation={"unrelated": "x"})
+def test_tier2_claim_downgrades_without_verified_attestation() -> None:
+    """Opaque or missing attestation cannot elevate: effective remains 0 without TeeDecision."""
+    opaque = _proof(tier=2, attestation={"tdx_quote_b64": "abc", "gpu_eat_jwt": "jwt"})
+    empty_attest = _proof(tier=2, attestation={"tdx_quote_b64": "x", "gpu_eat_jwt": "y"})
 
-    assert effective_tier(valid, pinned_image_digest=PINNED) == 2
-    assert is_tier_downgraded(valid, pinned_image_digest=PINNED) is False
-    # A tier-2 claim with a null / keyless attestation is effective tier 0 (never 2, never 1) --
+    assert effective_tier(opaque, pinned_image_digest=PINNED) == 0
+    assert is_tier_downgraded(opaque, pinned_image_digest=PINNED) is True
+    # A tier-2 claim without verification is effective tier 0 (never 2, never 1) --
     # even when it also carries a matching digest.
-    assert effective_tier(null_attest, pinned_image_digest=PINNED) == 0
     assert effective_tier(empty_attest, pinned_image_digest=PINNED) == 0
-    with_digest = _proof(tier=2, image_digest=PINNED, attestation=None)
+    with_digest = _proof(
+        tier=2,
+        image_digest=PINNED,
+        attestation={"tdx_quote_b64": "h", "gpu_eat_jwt": "h"},
+    )
     assert effective_tier(with_digest, pinned_image_digest=PINNED) == 0
     assert is_tier_downgraded(with_digest, pinned_image_digest=PINNED) is True
 
@@ -60,12 +69,14 @@ def test_tier2_claim_downgrades_without_valid_attestation() -> None:
 def test_tier1_claim_requires_matching_pinned_digest() -> None:
     matching = _proof(tier=1, image_digest=PINNED)
     mismatched = _proof(tier=1, image_digest=OTHER)
-    missing = _proof(tier=1, image_digest=None)
+    # Schema forbids tier-1 without image_digest; uncovered digest=empty via mismatched.
+    emptyish = _proof(tier=1, image_digest=OTHER)
 
+    # Tier 1 also requires provider pod binding (workload identity).
     assert effective_tier(matching, pinned_image_digest=PINNED) == 1
     assert is_tier_downgraded(matching, pinned_image_digest=PINNED) is False
     assert effective_tier(mismatched, pinned_image_digest=PINNED) == 0
-    assert effective_tier(missing, pinned_image_digest=PINNED) == 0
+    assert effective_tier(emptyish, pinned_image_digest=PINNED) == 0
     # With no pinned digest configured, no tier-1 claim is verifiable.
     assert effective_tier(matching, pinned_image_digest=None) == 0
 
@@ -98,15 +109,17 @@ def test_sampling_statistics_follow_effective_not_claimed_tier() -> None:
     def _bound(p: float) -> float:
         return 4.0 * (p * (1.0 - p) / n) ** 0.5
 
-    honest_t2 = _proof(tier=2, attestation={"gpu_eat_jwt": "jwt"})
+    # Opaque tier-2 claims are no longer treated as verified; without TeeDecision they are tier 0.
+    opaque_t2 = _proof(tier=2, attestation={"tdx_quote_b64": "q", "gpu_eat_jwt": "jwt"})
     honest_t1 = _proof(tier=1, image_digest=PINNED)
-    fake_t2 = _proof(tier=2, attestation=None)  # effective 0
+    fake_t2 = _proof(tier=2, attestation={"tdx_quote_b64": "a", "gpu_eat_jwt": "b"})
     fake_t1 = _proof(tier=1, image_digest=OTHER)  # effective 0
 
-    # Honest claims are sampled at their own tier's rate.
-    assert abs(_sampled_fraction(sampler, honest_t2, n) - 0.02) < _bound(0.02)
+    # Unverified tier-2 claims are sampled at tier-0 rate (fail-closed TEE).
+    assert abs(_sampled_fraction(sampler, opaque_t2, n) - 0.10) < _bound(0.10)
+    # Honest tier-1 claims are sampled at their tier-1 rate.
     assert abs(_sampled_fraction(sampler, honest_t1, n) - 0.05) < _bound(0.05)
-    # Unverifiable claims are sampled at the EFFECTIVE (tier-0) rate, NOT the lower claimed rate.
+    # Unverifiable claims are sampled at the EFFECTIVE (tier-0) rate, NOT the claimed rate.
     assert abs(_sampled_fraction(sampler, fake_t2, n) - 0.10) < _bound(0.10)
     assert abs(_sampled_fraction(sampler, fake_t1, n) - 0.10) < _bound(0.10)
 

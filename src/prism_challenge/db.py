@@ -218,7 +218,36 @@ REQUIRED_TABLES = frozenset(
 
 # Declared SQLite runtime policy used on every real connection
 # (VAL-WEIGHT-092 / VAL-GATE-043).
-PRISM_SCHEMA_REVISION = "prism-schema.v2"
+PRISM_SCHEMA_REVISION = "prism-schema.v3"
+TEE_NONCE_LEDGER_DDL = (
+    "CREATE TABLE IF NOT EXISTS tee_nonce_ledger ("
+    "nonce_digest TEXT PRIMARY KEY,"
+    "provider TEXT NOT NULL,"
+    "work_unit_id TEXT NOT NULL,"
+    "evidence_digest TEXT NOT NULL,"
+    "consumed_at TEXT NOT NULL);"
+    "CREATE INDEX IF NOT EXISTS idx_tee_nonce_ledger_unit "
+    "ON tee_nonce_ledger(work_unit_id, consumed_at);"
+)
+TEE_DECISION_DDL = (
+    "CREATE TABLE IF NOT EXISTS tee_verification_decisions ("
+    "id INTEGER PRIMARY KEY AUTOINCREMENT,"
+    "work_unit_id TEXT NOT NULL,"
+    "evidence_digest TEXT NOT NULL,"
+    "provider TEXT NOT NULL,"
+    "classification TEXT NOT NULL,"
+    "reason TEXT NOT NULL,"
+    "effective_tier INTEGER NOT NULL,"
+    "claimed_tier INTEGER NOT NULL,"
+    "trust_root_fingerprint TEXT,"
+    "gpu_key_fingerprint TEXT,"
+    "image_digest TEXT,"
+    "nonce_digest TEXT,"
+    "validated_claims TEXT NOT NULL,"
+    "created_at TEXT NOT NULL);"
+    "CREATE INDEX IF NOT EXISTS idx_tee_decisions_unit "
+    "ON tee_verification_decisions(work_unit_id, created_at);"
+)
 PRISM_BUSY_TIMEOUT_MS = 5_000
 SQLITE_CONNECTION_PRAGMAS: tuple[str, ...] = (
     "PRAGMA foreign_keys=ON;",
@@ -279,6 +308,8 @@ class Database:
         try:
             await conn.executescript(SCHEMA)
             await conn.execute(RAW_WEIGHT_PUSH_LEDGER_DDL)
+            await conn.executescript(TEE_NONCE_LEDGER_DDL)
+            await conn.executescript(TEE_DECISION_DDL)
             await conn.execute(SCHEMA_REVISION_DDL)
             await _run_migrations(conn)
             await _record_schema_revision(conn, PRISM_SCHEMA_REVISION)

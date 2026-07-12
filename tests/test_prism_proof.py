@@ -151,18 +151,37 @@ def test_tier1_downgrades_to_tier0_without_pod_or_digest() -> None:
     assert p_pod_only.tier == 0
 
 
-# --- VAL-PRISM-005: tier 2 only with a non-null attestation payload -----------------------------
+# --- VAL-PRISM-005 / VAL-TEE: tier-2 claim needs closed structured attestation -----------------
 
 
-def test_tier2_only_with_attestation_payload() -> None:
+def test_opaque_nonempty_attestation_does_not_claim_tier2() -> None:
+    """Opaque strings are insufficient: claimed tier stays image/pod tier-1, never 2."""
     signer = _signer()
     attestation = {"tdx_quote_b64": "QUOTE", "gpu_eat_jwt": "JWT"}
     env = {**_FULL_ENV, proof.ATTESTATION_ENV: json.dumps(attestation)}
     p = build_execution_proof_from_manifest(
         signer=signer, unit_id=UNIT_ID, manifest=MANIFEST_A, env=env
     )
+    assert p.tier != 2
+    assert p.tier == 1
+    assert p.attestation == attestation
+
+
+def test_structured_attestation_claims_tier2_but_is_unverified() -> None:
+    signer = _signer()
+    attestation = {
+        "version": 1,
+        "provider": "local_fixture",
+        "evidence_type": "prism.tee.v1",
+        "tdx_quote_b64": "QUJDRA==",
+        "gpu_eat_jwt": "aaa.bbb.ccc",
+    }
+    env = {**_FULL_ENV, proof.ATTESTATION_ENV: json.dumps(attestation)}
+    p = build_execution_proof_from_manifest(
+        signer=signer, unit_id=UNIT_ID, manifest=MANIFEST_A, env=env
+    )
+    # Emission may claim tier 2; effective elevation requires TeeVerifier.
     assert p.tier == 2
-    # payload preserved verbatim
     assert p.attestation == attestation
 
 

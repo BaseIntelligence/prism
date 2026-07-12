@@ -14,7 +14,9 @@ Tiers (architecture.md 3.4):
 
 * tier 0 -- mandatory, all backends: canonical manifest hash + worker signature.
 * tier 1 -- BOTH a pinned ``image_digest`` AND pod metadata (``provider.pod_id``).
-* tier 2 -- a non-null ``attestation`` payload carrying ``tdx_quote_b64`` and/or ``gpu_eat_jwt``.
+* tier 2 -- CLAIMED when a closed structured attestation is present; EFFECTIVE tier 2 is granted
+  only after Prism TEE verification succeeds (LOCAL-FIXTURE PASS today). Opaque non-empty
+  ``tdx_quote_b64`` / ``gpu_eat_jwt`` alone never elevate effective tier.
 
 Security invariant (VAL-PRISM-008): proof construction reads ONLY the manifest, the work unit id,
 the worker signer, and a FIXED ALLOWLIST of non-secret provider env vars. It never reads the
@@ -151,10 +153,43 @@ def read_manifest_sha256(path: str | os.PathLike[str]) -> str:
 
 
 def has_attestation(attestation: Any) -> bool:
-    """Whether ``attestation`` is a populated payload of the documented shape (tier-2 gate)."""
+    """Whether ``attestation`` has both documented TEE components as non-empty strings.
 
-    return isinstance(attestation, Mapping) and any(
-        attestation.get(key) for key in ATTESTATION_KEYS
+    WARNING: this is ONLY a shape/presence hint for claimed-tier emission. It is NEVER
+    cryptographic verification. Prism must run :class:`~prism_challenge.tee.TeeVerifier`
+    before elevating effective tier; non-empty ``tdx_quote_b64`` / ``gpu_eat_jwt`` alone
+    must not produce effective tier 2.
+    """
+
+    if not isinstance(attestation, Mapping):
+        return False
+    tdx = attestation.get("tdx_quote_b64")
+    gpu = attestation.get("gpu_eat_jwt")
+    return (
+        isinstance(tdx, str)
+        and bool(tdx.strip())
+        and isinstance(gpu, str)
+        and bool(gpu.strip())
+    )
+
+
+def has_structured_attestation_claim(attestation: Any) -> bool:
+    """Whether attestation claims the closed prism.tee.v1 shape (still unverified).
+
+    Used only to decide the CLAIMED emission tier. Effective tier requires verification.
+    """
+
+    if not has_attestation(attestation):
+        return False
+    assert isinstance(attestation, Mapping)
+    version = attestation.get("version")
+    provider = attestation.get("provider")
+    evidence_type = attestation.get("evidence_type")
+    return (
+        version in (1, "1", "1.0")
+        and isinstance(provider, str)
+        and provider in {"local_fixture", "lium", "targon"}
+        and evidence_type == "prism.tee.v1"
     )
 
 
@@ -164,13 +199,16 @@ def compute_tier(
     provider: ProviderInfo | None,
     attestation: Any,
 ) -> ExecutionProofTier:
-    """Compute the proof tier from the available provenance (architecture 3.4).
+    """Compute the CLAIMED proof tier from available provenance (architecture 3.4).
 
-    tier 2 iff a populated attestation payload is present; else tier 1 iff BOTH a pinned image
-    digest AND pod metadata (``provider.pod_id``) are present; else tier 0.
+    tier 2 is claimed only for a closed structured attestation shape (never mere
+    non-empty opaque strings). The claimed tier is NOT trusted at verification:
+    :func:`~prism_challenge.audit.effective_tier` recomputes from verifier results.
+    tier 1 iff BOTH a pinned image digest AND pod metadata (``provider.pod_id``)
+    are present; else tier 0.
     """
 
-    if has_attestation(attestation):
+    if has_structured_attestation_claim(attestation):
         return 2
     if image_digest and provider is not None and provider.pod_id:
         return 1
@@ -344,6 +382,7 @@ __all__ = [
     "compute_tier",
     "execution_proof_signing_payload",
     "has_attestation",
+    "has_structured_attestation_claim",
     "image_digest_from_env",
     "manifest_sha256_from_bytes",
     "provider_from_env",

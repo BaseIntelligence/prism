@@ -4,10 +4,12 @@ The proof tier a worker CLAIMS is an input to the audit rate, so it must never b
 a claim is only worth its tier if the backing metadata is verifiable. :func:`effective_tier` maps a
 proof's CLAIMED tier onto the EFFECTIVE tier the audit scheduler actually consumes:
 
-* claimed tier 2 -> effective 2 iff a populated attestation payload is present, else effective 0
-  (a tier-2 claim with a null/empty attestation is downgraded straight to 0, never to 1);
+* claimed tier 2 -> effective 2 iff Prism TEE verification accepted the evidence
+  (LOCAL-FIXTURE PASS or future REAL-PROVIDER PASS); mere populated ``tdx_quote_b64`` /
+  ``gpu_eat_jwt`` fields, provider name, or credentials never elevate. Failed/blocked TEE
+  claims downgrade straight to 0, never to 1;
 * claimed tier 1 -> effective 1 iff the proof's ``image_digest`` equals the configured pinned
-  evaluator/worker digest, else effective 0;
+  evaluator/worker digest AND provider pod binding is present, else effective 0;
 * claimed tier 0 (or any unknown tier) -> effective 0.
 
 :class:`AuditSampler` then samples finalized results at the per-tier rate of their EFFECTIVE tier.
@@ -23,7 +25,8 @@ from dataclasses import dataclass
 from typing import Protocol
 
 from .config import WorkerPlaneConfig
-from .proof import ExecutionProof, has_attestation
+from .proof import ExecutionProof
+from .tee.types import TeeDecision
 
 #: The three proof tiers the audit rate is keyed on (architecture.md 3.4).
 TIER_0, TIER_1, TIER_2 = 0, 1, 2
@@ -58,30 +61,39 @@ def is_audit_unit_id(work_unit_id: str) -> bool:
     return work_unit_id.startswith(AUDIT_UNIT_PREFIX)
 
 
-def effective_tier(proof: ExecutionProof, *, pinned_image_digest: str | None = None) -> int:
-    """Return the VERIFIED tier for ``proof`` (never higher than what the backing metadata proves).
+def effective_tier(
+    proof: ExecutionProof,
+    *,
+    pinned_image_digest: str | None = None,
+    tee_decision: TeeDecision | None = None,
+) -> int:
+    """Return the VERIFIED tier for ``proof`` (never higher than verifiable backing).
 
-    A claimed tier is honoured only when its backing is verifiable; otherwise it is downgraded to
-    tier 0 (architecture.md 3.4; VAL-PRISM-019). A claimed tier 2 with an unverifiable attestation
-    downgrades to 0 (not 1), even if it also carries a matching image digest.
+    Claimed tier never controls elevation: tier 2 requires an accepted TeeDecision from the
+    Prism-only verifier. Opaque / forged / blocked evidence yields tier 0. Tier 1 remains
+    image/provenance verification only (not hardware attestation).
     """
 
-    claimed = int(proof.tier)
-    if claimed <= TIER_0:
-        return TIER_0
-    if claimed == TIER_1:
-        matches = bool(pinned_image_digest) and proof.image_digest == pinned_image_digest
-        return TIER_1 if matches else TIER_0
-    if claimed == TIER_2:
-        return TIER_2 if has_attestation(proof.attestation) else TIER_0
-    # An out-of-range/unknown claimed tier is not verifiable -> conservative tier 0.
-    return TIER_0
+    from .tee.verifier import compute_effective_tier_with_tee
+
+    return compute_effective_tier_with_tee(
+        proof,
+        pinned_image_digest=pinned_image_digest,
+        tee_decision=tee_decision,
+    )
 
 
-def is_tier_downgraded(proof: ExecutionProof, *, pinned_image_digest: str | None = None) -> bool:
+def is_tier_downgraded(
+    proof: ExecutionProof,
+    *,
+    pinned_image_digest: str | None = None,
+    tee_decision: TeeDecision | None = None,
+) -> bool:
     """Whether ``proof``'s claimed tier is higher than its verified effective tier."""
 
-    return int(proof.tier) != effective_tier(proof, pinned_image_digest=pinned_image_digest)
+    return int(proof.tier) != effective_tier(
+        proof, pinned_image_digest=pinned_image_digest, tee_decision=tee_decision
+    )
 
 
 @dataclass(frozen=True)
@@ -140,10 +152,13 @@ class AuditSampler:
         work_unit_id: str,
         proof: ExecutionProof,
         pinned_image_digest: str | None = None,
+        tee_decision: TeeDecision | None = None,
     ) -> AuditDecision:
         """Verify ``proof``'s tier and decide whether it is sampled at its EFFECTIVE rate."""
 
-        tier = effective_tier(proof, pinned_image_digest=pinned_image_digest)
+        tier = effective_tier(
+            proof, pinned_image_digest=pinned_image_digest, tee_decision=tee_decision
+        )
         return AuditDecision(
             work_unit_id=work_unit_id,
             claimed_tier=int(proof.tier),

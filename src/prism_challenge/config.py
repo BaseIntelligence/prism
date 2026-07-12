@@ -83,6 +83,37 @@ class WorkerPlaneConfig(BaseModel):
     cpu_reexec_train_lines: int = Field(default=64, ge=1)
 
 
+class TeeConfig(BaseModel):
+    """Fail-closed Prism TEE verifier policy (provider-scoped).
+
+    Nested under ``PRISM_TEE__*``. Empty trust material fails closed for elevated
+    tiers. Real Lium/Targon readiness flags remain false until authoritative contracts.
+    """
+
+    model_config = SettingsConfigDict(extra="forbid")
+
+    enabled: bool = True
+    mode: Literal["local_fixture", "production"] = "local_fixture"
+    expected_provider: str = "local_fixture"
+    expected_issuer: str = "prism-local-fixture"
+    expected_audience: str = "prism.tee.verify"
+    expected_purpose: str = "execution_attestation"
+    # PEM blobs for trust material (non-secret public certs/keys). Multiple roots
+    # enable an explicit rotation window when paired with rotation timestamps.
+    tdx_trust_roots_pem: tuple[str, ...] = ()
+    gpu_trusted_keys_pem: dict[str, str] = Field(default_factory=dict)
+    expected_image_digest: str | None = None
+    allowed_measurements: dict[str, str] = Field(default_factory=dict)
+    workload_id: str | None = None
+    workload_version: str | None = "1"
+    max_age_seconds: int = Field(default=3_600, ge=1)
+    clock_skew_seconds: int = Field(default=30, ge=0)
+    require_nonce_store: bool = True
+    lium_ready: bool = False
+    targon_ready: bool = False
+    allow_network: bool = False
+
+
 REMOVED_LLM_SETTING_NAMES = frozenset(
     {
         "llm_review_enabled",
@@ -212,9 +243,13 @@ class PrismSettings(ChallengeSettings):
             if field_name == "worker_plane":
                 for nested_name in WorkerPlaneConfig.model_fields:
                     names.add(f"PRISM_WORKER_PLANE__{nested_name.upper()}")
+            if field_name == "tee":
+                for nested_name in TeeConfig.model_fields:
+                    names.add(f"PRISM_TEE__{nested_name.upper()}")
         return names
 
     worker_plane: WorkerPlaneConfig = Field(default_factory=WorkerPlaneConfig)
+    tee: TeeConfig = Field(default_factory=TeeConfig)
 
     database_url: str = Field(
         default="sqlite+aiosqlite:////data/prism.sqlite3",
