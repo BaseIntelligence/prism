@@ -205,6 +205,18 @@ SCHEMA = (
 )
 
 
+REQUIRED_TABLES = frozenset(
+    {
+        "submissions",
+        "eval_jobs",
+        "gpu_leases",
+        "epochs",
+        "nonces",
+        "runtime_config",
+    }
+)
+
+
 class Database:
     def __init__(self, path: Path) -> None:
         self.path = path
@@ -218,6 +230,19 @@ class Database:
 
     async def close(self) -> None:
         return None
+
+    async def healthcheck(self) -> bool:
+        """Verify that the challenge database and canonical schema are readable."""
+
+        async with aiosqlite.connect(self.path) as conn:
+            cursor = await conn.execute(
+                "SELECT name FROM sqlite_master "
+                "WHERE type = 'table' AND name IN "
+                "('submissions', 'eval_jobs', 'gpu_leases', 'epochs', "
+                "'nonces', 'runtime_config')"
+            )
+            rows = await cursor.fetchall()
+            return {row[0] for row in rows} == REQUIRED_TABLES
 
     @asynccontextmanager
     async def connect(self) -> AsyncIterator[aiosqlite.Connection]:
