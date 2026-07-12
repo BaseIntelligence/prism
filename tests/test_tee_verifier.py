@@ -217,6 +217,37 @@ def test_unknown_version_provider_type_field_fail() -> None:
     assert e5.value.reason is TeeReasonCode.TRUST_LOCATOR_FORBIDDEN
 
 
+@pytest.mark.parametrize(
+    "version",
+    [
+        True,  # bool is int subclass; must not pass via True == 1
+        1.0,  # float equal to 1 must not coerce
+        "1",  # string form rejected at closed schema boundary
+        "1.0",
+        False,
+        0,
+        1.5,
+        None,
+    ],
+)
+def test_version_coerced_ambiguous_forms_rejected(version: object) -> None:
+    """VAL-TEE-006: reject coerced/ambiguous version forms at parse boundary."""
+    auth = _authority()
+    att = {**_fixture(auth), "version": version}
+    with pytest.raises(EvidenceParseError) as exc:
+        parse_attestation_mapping(att)
+    assert exc.value.reason is TeeReasonCode.EVIDENCE_UNKNOWN_VERSION
+
+
+def test_version_strict_int_one_accepted() -> None:
+    """VAL-TEE-006: canonical integer version=1 parses closed schema."""
+    auth = _authority()
+    att = {**_fixture(auth), "version": 1}
+    parsed = parse_attestation_mapping(att)
+    assert parsed.version == "1"
+    assert parsed.provider.value == "local_fixture"
+
+
 def test_oversize_and_encoding_reject() -> None:
     with pytest.raises(EvidenceParseError) as e1:
         parse_attestation_mapping(

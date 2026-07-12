@@ -37,7 +37,9 @@ ALLOWED_EVIDENCE_TOP_LEVEL = frozenset(
 
 ALLOWED_PROVIDERS = frozenset({"local_fixture", "lium", "targon"})
 ALLOWED_EVIDENCE_TYPES = frozenset({"prism.tee.v1"})
-ALLOWED_VERSIONS = frozenset({1, "1", "1.0"})
+# Strict integer schema versions only. Membership alone is unsafe because
+# ``True == 1`` (bool is an int subclass) and ``1.0 == 1``.
+ALLOWED_VERSIONS = frozenset({1})
 _B64_URLSAFE_RE = re.compile(r"^[A-Za-z0-9_\-]+={0,2}$")
 _B64_STD_RE = re.compile(r"^[A-Za-z0-9+/]+={0,2}$")
 
@@ -113,7 +115,9 @@ def parse_attestation_mapping(
             _reject(TeeReasonCode.TRUST_LOCATOR_FORBIDDEN, f"forbidden locator {forbidden}")
 
     version = attestation.get("version")
-    if version not in ALLOWED_VERSIONS:
+    # Require a strict JSON-compatible integer version. Reject bool (int subclass),
+    # float, and string forms that would coerce via Python equality membership.
+    if type(version) is not int or version not in ALLOWED_VERSIONS:
         _reject(TeeReasonCode.EVIDENCE_UNKNOWN_VERSION, f"version={version!r}")
     provider_raw = attestation.get("provider")
     if not isinstance(provider_raw, str) or provider_raw not in ALLOWED_PROVIDERS:
