@@ -4,8 +4,12 @@ import importlib.metadata
 import importlib.util
 import json
 import os
+import shutil
 import subprocess
+import sys
 import zipfile
+from email.parser import BytesParser
+from email.policy import default
 from pathlib import Path
 
 from base.challenge_sdk.app_factory import create_challenge_app
@@ -16,6 +20,44 @@ from base.challenge_sdk.proof import ExecutionProof
 from base.challenge_sdk.roles import public_route
 from base.challenge_sdk.schemas import HealthResponse, VersionResponse, WeightsResponse
 from base.challenge_sdk.version import ARTIFACT_VERSION, RELEASE_MANIFEST
+
+
+def _build_wheel(repository: Path, wheelhouse: Path, environment: dict[str, str]) -> None:
+    uv = shutil.which("uv")
+    if uv is not None:
+        command = [uv, "build", "--wheel", "--out-dir", str(wheelhouse)]
+    else:
+        command = [
+            sys.executable,
+            "-m",
+            "pip",
+            "wheel",
+            "--no-deps",
+            "--wheel-dir",
+            str(wheelhouse),
+            str(repository),
+        ]
+    subprocess.run(
+        command,
+        cwd=repository,
+        check=True,
+        capture_output=True,
+        text=True,
+        env=environment,
+    )
+
+
+def _base_requirement_from_wheel(wheel: Path) -> str:
+    with zipfile.ZipFile(wheel) as archive:
+        metadata_path = next(
+            name for name in archive.namelist() if name.endswith(".dist-info/METADATA")
+        )
+        metadata = BytesParser(policy=default).parsebytes(archive.read(metadata_path))
+    return next(
+        requirement
+        for requirement in metadata.get_all("Requires-Dist", [])
+        if requirement.startswith("base @ ")
+    )
 
 
 def test_prism_uses_only_the_canonical_base_sdk() -> None:
@@ -41,14 +83,9 @@ def test_prism_wheel_contains_no_vendored_sdk(tmp_path: Path) -> None:
     repository = Path(__file__).resolve().parents[1]
     wheelhouse = tmp_path / "wheelhouse"
     wheelhouse.mkdir()
+    clean_environment = {key: value for key, value in os.environ.items() if key != "PYTHONPATH"}
 
-    subprocess.run(
-        ["uv", "build", "--wheel", "--out-dir", str(wheelhouse)],
-        cwd=repository,
-        check=True,
-        capture_output=True,
-        text=True,
-    )
+    _build_wheel(repository, wheelhouse, clean_environment)
     wheel = next(wheelhouse.glob("prism_challenge-*.whl"))
     with zipfile.ZipFile(wheel) as archive:
         names = archive.namelist()
@@ -58,26 +95,17 @@ def test_prism_wheel_contains_no_vendored_sdk(tmp_path: Path) -> None:
 
 def test_clean_artifacts_resolve_one_base_sdk(tmp_path: Path) -> None:
     prism_repository = Path(__file__).resolve().parents[1]
-    base_repository = prism_repository.parent / "platform"
     wheelhouse = tmp_path / "wheelhouse"
     environment = tmp_path / "environment"
     wheelhouse.mkdir()
     clean_environment = {key: value for key, value in os.environ.items() if key != "PYTHONPATH"}
 
-    for repository in (base_repository, prism_repository):
-        subprocess.run(
-            ["uv", "build", "--wheel", "--out-dir", str(wheelhouse)],
-            cwd=repository,
-            check=True,
-            capture_output=True,
-            text=True,
-            env=clean_environment,
-        )
-    base_wheel = next(wheelhouse.glob("base-*.whl"))
+    _build_wheel(prism_repository, wheelhouse, clean_environment)
     prism_wheel = next(wheelhouse.glob("prism_challenge-*.whl"))
+    base_requirement = _base_requirement_from_wheel(prism_wheel)
 
     subprocess.run(
-        ["uv", "venv", "--python", "3.12", str(environment)],
+        [sys.executable, "-m", "venv", str(environment)],
         check=True,
         capture_output=True,
         text=True,
@@ -85,7 +113,7 @@ def test_clean_artifacts_resolve_one_base_sdk(tmp_path: Path) -> None:
     )
     python = environment / "bin" / "python"
     subprocess.run(
-        ["uv", "pip", "install", "--python", str(python), str(base_wheel)],
+        [str(python), "-m", "pip", "install", base_requirement],
         check=True,
         capture_output=True,
         text=True,
@@ -93,11 +121,10 @@ def test_clean_artifacts_resolve_one_base_sdk(tmp_path: Path) -> None:
     )
     subprocess.run(
         [
-            "uv",
+            str(python),
+            "-m",
             "pip",
             "install",
-            "--python",
-            str(python),
             "--no-deps",
             str(prism_wheel),
         ],
