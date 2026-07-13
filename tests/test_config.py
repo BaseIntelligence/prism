@@ -9,6 +9,18 @@ from prism_challenge.proof import PROVIDER_ENV_KEYS
 
 
 def test_base_challenge_env_aliases_are_loaded(monkeypatch):
+    # PRISM_* aliases take precedence over CHALLENGE_*; clear ambient PRISM docker env so the
+    # CHALLENGE_* wiring under test actually wins (CI also starts with an empty prism docker env).
+    for name in (
+        "PRISM_DOCKER_BACKEND",
+        "PRISM_DOCKER_ENABLED",
+        "PRISM_DOCKER_BROKER_URL",
+        "PRISM_DOCKER_BROKER_TOKEN",
+        "PRISM_DOCKER_BROKER_TOKEN_FILE",
+        "PRISM_DATABASE_URL",
+        "PRISM_SHARED_TOKEN_FILE",
+    ):
+        monkeypatch.delenv(name, raising=False)
     monkeypatch.setenv("CHALLENGE_DATABASE_URL", "sqlite+aiosqlite:////data/challenge.sqlite3")
     monkeypatch.setenv("CHALLENGE_SHARED_TOKEN_FILE", "/run/secrets/base/challenge_token")
     monkeypatch.setenv("CHALLENGE_DOCKER_ENABLED", "true")
@@ -29,18 +41,27 @@ def test_base_challenge_env_aliases_are_loaded(monkeypatch):
 def test_docker_backend_default_is_broker_safe_when_env_unset(monkeypatch) -> None:
     monkeypatch.delenv("PRISM_DOCKER_BACKEND", raising=False)
     monkeypatch.delenv("CHALLENGE_DOCKER_BACKEND", raising=False)
+    monkeypatch.delenv("PRISM_DOCKER_BROKER_TOKEN", raising=False)
+    monkeypatch.delenv("PRISM_DOCKER_BROKER_TOKEN_FILE", raising=False)
+    monkeypatch.delenv("CHALLENGE_DOCKER_BROKER_TOKEN", raising=False)
+    monkeypatch.delenv("CHALLENGE_DOCKER_BROKER_TOKEN_FILE", raising=False)
 
+    # Bare construction must succeed for pytest collection / packaging imports that do not
+    # inject live broker secrets: default token *path* satisfies executor validation without
+    # requiring the file (or a live token) to exist on the host.
     settings = PrismSettings()
 
     assert settings.docker_backend == "broker"
     assert settings.docker_backend != "cli"
+    assert settings.docker_broker_token_file == "/run/secrets/base/challenge_token"
 
 
 def test_docker_backend_explicit_env_overrides_default(monkeypatch) -> None:
     for env_name in ("CHALLENGE_DOCKER_BACKEND", "PRISM_DOCKER_BACKEND"):
         monkeypatch.delenv("PRISM_DOCKER_BACKEND", raising=False)
         monkeypatch.delenv("CHALLENGE_DOCKER_BACKEND", raising=False)
-        for explicit in ("cli", "direct", "broker"):
+        # Supported executor backends only (ChallengeSettings rejects unknown values).
+        for explicit in ("cli", "broker"):
             monkeypatch.setenv(env_name, explicit)
             assert PrismSettings().docker_backend == explicit
             monkeypatch.delenv(env_name, raising=False)
@@ -76,8 +97,6 @@ def test_proof_runtime_environment_is_not_treated_as_settings(monkeypatch) -> No
 def test_secret_file_helpers(tmp_path) -> None:
     shared = tmp_path / "shared-token"
     shared.write_text("shared\n", encoding="utf-8")
-    gateway = tmp_path / "gateway-token"
-    gateway.write_text("gateway\n", encoding="utf-8")
 
     settings = PrismSettings(
         database_url="postgresql://db/prism",
@@ -87,11 +106,15 @@ def test_secret_file_helpers(tmp_path) -> None:
 
     assert settings.internal_token() == "shared"
     assert settings.resolved_database_path == tmp_path / "fallback.sqlite3"
-    assert settings.llm_gateway_token_value() == "gateway"
+    # LLM gateway helpers were removed with deterministic admission; residual attrs must stay gone.
+    assert not hasattr(settings, "llm_gateway_token_value")
+    assert not hasattr(settings, "llm_gateway_token")
 
 
 def test_internal_token_requires_secret() -> None:
-    settings = PrismSettings(shared_token_file=None)
+    # ChallengeSettings forbids constructing without a token *or* secret path; pass a
+    # non-existent path so construction succeeds, then assert a missing file fails closed.
+    settings = PrismSettings(shared_token_file="/tmp/prism-missing-shared-token")
 
     try:
         settings.internal_token()
@@ -128,8 +151,8 @@ def test_example_config_parses_with_nas_defaults() -> None:
     assert settings.docker_enabled is False
     assert settings.docker_backend == "cli"
     assert settings.shared_token is None
-    assert settings.llm_gateway_token is None
     assert settings.docker_broker_token is None
+    assert not hasattr(settings, "llm_gateway_token")
     assert not hasattr(settings, "openrouter_api_key")
     assert "shared_token" not in payload
     assert "openrouter_api_key" not in payload

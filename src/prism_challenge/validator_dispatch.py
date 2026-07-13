@@ -26,8 +26,7 @@ from typing import Any
 
 from .app import create_app
 from .audit import is_audit_unit_id
-from .config import PrismSettings
-from .config import settings as default_settings
+from .config import PrismSettings, get_settings
 from .evaluator.checkpoint_publisher import CheckpointPublisher
 from .proof import MANIFEST_PAYLOAD_KEY, PROOF_PAYLOAD_KEY
 from .validator_executor import run_primary_execution_cycle, run_validator_audit_cycle
@@ -134,7 +133,7 @@ async def dispatch_assignment(
 
     _reject_legacy_gateway_payload(payload)
 
-    base_settings = settings or default_settings
+    base_settings = settings if settings is not None else get_settings()
     if base_settings.worker_plane.enabled and is_audit_unit_id(work_unit_id):
         return await _dispatch_audit_only(
             work_unit_id=work_unit_id,

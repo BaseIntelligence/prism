@@ -409,7 +409,11 @@ class PrismSettings(ChallengeSettings):
         validation_alias=AliasChoices("PRISM_DOCKER_BROKER_TOKEN", "CHALLENGE_DOCKER_BROKER_TOKEN"),
     )
     docker_broker_token_file: str | None = Field(
-        default=None,
+        # Mirror shared_token_file: production mounts the challenge/broker token under
+        # /run/secrets/base/. Defaulting the path keeps broker-backend construction valid at
+        # import/collection time without requiring live secrets in the packaging environment
+        # (the path does not need to exist for ChallengeSettings executor validation).
+        default="/run/secrets/base/challenge_token",
         repr=False,
         validation_alias=AliasChoices(
             "PRISM_DOCKER_BROKER_TOKEN_FILE", "CHALLENGE_DOCKER_BROKER_TOKEN_FILE"
@@ -641,10 +645,33 @@ class PrismSettings(ChallengeSettings):
         return None
 
 
-settings = PrismSettings()
+_settings: PrismSettings | None = None
 
 
-def configure_logging(app_settings: PrismSettings = settings) -> None:
+def get_settings() -> PrismSettings:
+    """Return process-wide PrismSettings, constructing them on first use.
+
+    Production settings require a broker token/path when ``docker_backend`` is
+    ``broker`` (the safe default). Eager ``settings = PrismSettings()`` at module
+    import breaks pytest collection and packaging imports that never need production
+    credentials. Deploy entrypoints and ``create_app()`` still materialize full
+    settings via this helper once environment secrets are present.
+    """
+    global _settings
+    if _settings is None:
+        _settings = PrismSettings()
+    return _settings
+
+
+def __getattr__(name: str) -> Any:
+    # Preserve ``from prism_challenge.config import settings`` and attribute access
+    # without instantiating production settings during package import.
+    if name == "settings":
+        return get_settings()
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+def configure_logging(app_settings: PrismSettings | None = None) -> None:
     """Configure stdlib root logging at the settings-driven level (default INFO).
 
     Both deploy entrypoints -- the uvicorn ``prism_challenge.app:app`` API/combined process and the
@@ -655,5 +682,6 @@ def configure_logging(app_settings: PrismSettings = settings) -> None:
     already has handlers, so this never displaces uvicorn's handlers nor a test harness's capture
     handlers; it only installs one when the deploy entrypoint has none.
     """
-    level = logging.getLevelNamesMapping().get(app_settings.log_level.strip().upper(), logging.INFO)
+    resolved = app_settings if app_settings is not None else get_settings()
+    level = logging.getLevelNamesMapping().get(resolved.log_level.strip().upper(), logging.INFO)
     logging.basicConfig(level=level)

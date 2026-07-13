@@ -76,10 +76,10 @@ def test_evidence_backed_rejects_submission(tmp_path):
     anyio.run(run)
 
 
-def test_explicit_held_quarantines(tmp_path):
-    # Inverted gating (m5-llm-hard-gate-verdicts): a reject WITHOUT evidence is now TERMINAL
-    # 'rejected'; only an explicit held=True (e.g. a fail-closed LLM error / plagiarism band)
-    # quarantines to the HELD state.
+def test_explicit_held_is_terminal_rejected(tmp_path):
+    # After gateway removal there is no HELD submission status: held=True quarantine
+    # still records final_state=quarantined on the review row, but the submission is
+    # terminally rejected (no held/wait path, no live LLM gate).
     async def run() -> None:
         repo = await _repo(tmp_path)
         submission_id = await _submission(repo)
@@ -114,7 +114,7 @@ def test_explicit_held_quarantines(tmp_path):
             )
 
         assert status is not None
-        assert status.status.value == "held"
+        assert status.status.value == "rejected"
         assert status.error == "LLM suspects hidden behavior but has no deterministic evidence"
         assert review["final_state"] == "quarantined"
         assert loads(str(review["evidence"])) == []

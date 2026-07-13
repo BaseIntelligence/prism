@@ -2,8 +2,8 @@
 
 Seeds the lab tables directly (the producer-side writers are covered in
 ``test_prism_lab_producer.py``) and asserts the read aggregation/ordering/404s, the curve
-downsampling + compute derivation, and the non-blocking report cache/generation flow with a mocked
-OpenRouter client (no real network).
+downsampling + compute derivation. Architecture LLM auto-report routes were removed with the
+gateway; residual report generator tests stay skip-only below.
 """
 
 from __future__ import annotations
@@ -15,8 +15,6 @@ import anyio
 import pytest
 from fastapi.testclient import TestClient
 
-from prism_challenge.app import create_app
-from prism_challenge.config import PrismSettings
 from prism_challenge.db import Database
 from prism_challenge.repository import PrismRepository
 
@@ -652,8 +650,13 @@ def test_route_curve_404_when_absent(client: TestClient) -> None:
     assert client.get("/v1/submissions/nope/curve").status_code == 404
 
 
-def test_route_report_unavailable_without_llm_key(client: TestClient) -> None:
-    # The shared fixture has no OpenRouter key configured -> generation degrades to unavailable.
+def test_architecture_report_routes_removed(client: TestClient) -> None:
+    """Architecture auto-report / LLM gateway report paths were removed.
+
+    Listing and detail routes remain; the legacy report surface is gone (404).
+    Residual generator module tests live as skipped stubs below.
+    """
+
     async def seed(conn):
         await _insert_family(
             conn,
@@ -665,278 +668,53 @@ def test_route_report_unavailable_without_llm_key(client: TestClient) -> None:
         )
 
     _seed(client, seed)
-    body = client.get("/v1/architectures/af-A/report").json()
-    assert body["architecture_id"] == "af-A"
-    assert body["report"]["status"] == "unavailable"
-    assert body["report"]["content"] is None
-    assert client.get("/v1/architectures/missing/report").status_code == 404
+    response = client.get("/v1/architectures/af-A/report")
+    assert response.status_code == 404
 
 
-def test_route_report_cached_ready(client: TestClient) -> None:
-    async def seed(conn):
-        await _insert_family(
-            conn,
-            architecture_id="af-A",
-            family_hash="hashA",
-            owner_hotkey="hkA",
-            canonical_submission_id="subA",
-            q_arch_best=0.9,
-        )
-
-    _seed(client, seed)
-    # A cache row whose key matches the current best submission is served as ready, even with no
-    # LLM key configured (the cache hit precedes the availability check).
-    repository = client.app.state.repository
-
-    async def store() -> None:
-        await repository.store_architecture_report(
-            architecture_id="af-A",
-            content="## Summary\nok",
-            model="cached-model",
-            source_submission_id="subA",
-            generated_at=NOW,
-        )
-
-    anyio.run(store)
-    report = client.get("/v1/architectures/af-A/report").json()["report"]
-    assert report["status"] == "ready"
-    assert report["content"] == "## Summary\nok"
-    assert report["model"] == "cached-model"
-    assert report["generated_at"] is not None
-
-
-def test_route_report_stale_cache_is_not_served(client: TestClient) -> None:
-    async def seed(conn):
-        await _insert_family(
-            conn,
-            architecture_id="af-A",
-            family_hash="hashA",
-            owner_hotkey="hkA",
-            canonical_submission_id="subNEW",
-            q_arch_best=0.9,
-        )
-
-    _seed(client, seed)
-    repository = client.app.state.repository
-
-    async def store() -> None:
-        await repository.store_architecture_report(
-            architecture_id="af-A",
-            content="stale",
-            model="m",
-            source_submission_id="subOLD",
-            generated_at=NOW,
-        )
-
-    anyio.run(store)
-    # Best submission advanced to subNEW; the cache keyed to subOLD must NOT be returned ready.
-    report = client.get("/v1/architectures/af-A/report").json()["report"]
-    assert report["status"] != "ready"
-    assert report["content"] is None
-
-
-REPORT_GATEWAY_URL = "http://base-master:18080/llm/v1"
-REPORT_GATEWAY_TOKEN = "scoped-report-token"
-
-
-@pytest.fixture
-def report_client(tmp_path: Path):
-    settings = PrismSettings(
-        database_url=f"sqlite+aiosqlite:///{tmp_path / 'report.sqlite3'}",
-        shared_token="secret",
-        allow_insecure_signatures=True,
-        fineweb_sample_count=4,
-        distributed_contract_policy="off",
+pytestmark_report = pytest.mark.skip(
+    reason=(
+        "Architecture LLM report generation removed with gateway; "
+        "see test_architecture_report_routes_removed"
     )
-    with TestClient(create_app(settings)) as test_client:
-        yield test_client
+)
 
 
-def test_route_report_generates_in_background(report_client: TestClient, monkeypatch) -> None:
-    calls: list[dict] = []
-
-    def fake_generate(facts, *, config):
-        calls.append(facts)
-        return "## Summary\ngenerated", "mocked-model"
-
-    monkeypatch.setattr("prism_challenge.routes.generate_report_content", fake_generate)
-
-    async def seed(conn):
-        await _insert_family(
-            conn,
-            architecture_id="af-A",
-            family_hash="hashA",
-            owner_hotkey="hkA",
-            canonical_submission_id="subA",
-            q_arch_best=0.9,
-            display_name="Alpha",
-        )
-        await _insert_score(
-            conn,
-            submission_id="subA",
-            final_score=0.9,
-            metrics={"prequential_bpb": 0.5, "tokens_consumed": 100.0},
-        )
-        await _insert_curve(
-            conn,
-            submission_id="subA",
-            online_loss=[3.0, 1.0],
-            covered_bytes_cumulative=[1.0, 2.0],
-            step0_loss=3.0,
-            baseline_nats=5.0,
-            compute={"gpu_count": 1, "model_params": 10},
-        )
-
-    _seed(report_client, seed)
-
-    first = report_client.get("/v1/architectures/af-A/report").json()["report"]
-    assert first["status"] == "pending"
-    assert first["content"] is None
-    # The background task ran (TestClient drives it to completion) and invoked the mocked client.
-    assert len(calls) == 1
-    assert calls[0]["name"] == "Alpha"
-    assert calls[0]["prequential_bpb"] == 0.5
-
-    second = report_client.get("/v1/architectures/af-A/report").json()["report"]
-    assert second["status"] == "ready"
-    assert second["content"] == "## Summary\ngenerated"
-    assert second["model"] == "mocked-model"
+@pytestmark_report
+def test_route_report_cached_ready() -> None:
+    return None
 
 
-def test_route_report_generation_error_then_unavailable(
-    report_client: TestClient, monkeypatch
-) -> None:
-    def boom(facts, *, config):
-        raise RuntimeError("gateway exploded")
-
-    monkeypatch.setattr("prism_challenge.routes.generate_report_content", boom)
-
-    async def seed(conn):
-        await _insert_family(
-            conn,
-            architecture_id="af-A",
-            family_hash="hashA",
-            owner_hotkey="hkA",
-            canonical_submission_id="subA",
-            q_arch_best=0.9,
-        )
-
-    _seed(report_client, seed)
-
-    first = report_client.get("/v1/architectures/af-A/report").json()["report"]
-    assert first["status"] == "pending"
-    # The failed generation marks the architecture unavailable for the same best submission.
-    second = report_client.get("/v1/architectures/af-A/report").json()["report"]
-    assert second["status"] == "unavailable"
-    assert second["content"] is None
+@pytestmark_report
+def test_route_report_stale_cache_is_not_served() -> None:
+    return None
 
 
-# --------------------------------------------------------------------------------------------------
-# Report generator module (prompt building + master gateway client reuse), no network.
-# --------------------------------------------------------------------------------------------------
-def _bare_settings(**overrides) -> PrismSettings:
-    base = {
-        "llm_gateway_token_file": None,
-        "llm_gateway_url": None,
-        "llm_gateway_token": None,
-    }
-    base.update(overrides)
-    return PrismSettings(**base)
+@pytestmark_report
+def test_route_report_generates_in_background() -> None:
+    return None
 
 
+@pytestmark_report
+def test_route_report_generation_error_then_unavailable() -> None:
+    return None
+
+
+@pytestmark_report
 def test_report_generation_available_reflects_credentials() -> None:
-    from prism_challenge.evaluator.architecture_report import (
-        llm_report_config,
-        report_generation_available,
-    )
-
-    with_gateway = llm_report_config(
-        _bare_settings(llm_gateway_url=REPORT_GATEWAY_URL)
-    )
-    assert report_generation_available(with_gateway) is True
-
-    # A gateway URL but no resolvable token -> unavailable (no direct-provider fallback).
-    no_token = llm_report_config(
-        _bare_settings(llm_gateway_url=REPORT_GATEWAY_URL)
-    )
-    assert report_generation_available(no_token) is False
-
-    # No gateway URL at all -> unavailable.
-    no_gateway = llm_report_config(_bare_settings(llm_gateway_url=None))
-    assert report_generation_available(no_gateway) is False
+    return None
 
 
+@pytestmark_report
 def test_build_report_prompt_grounds_only_in_facts() -> None:
-    from prism_challenge.evaluator.architecture_report import build_report_prompt
-
-    prompt = build_report_prompt(
-        {
-            "name": "Rotary MoE",
-            "owner_hotkey": "hk1",
-            "best_final_score": 0.91,
-            "variant_count": 3,
-            "prequential_bpb": 0.42,
-            "tokens_consumed": 5000,
-            "first_loss": 3.1,
-            "last_loss": 1.2,
-            "loss_samples": 100,
-            "compute": {"model_params": 1000, "estimated_flops": 7.0, "gpu_count": 1},
-        }
-    )
-    assert "Rotary MoE" in prompt
-    assert "0.42" in prompt
-    assert "3.1" in prompt and "1.2" in prompt
-    # Missing facts render as 'not available' rather than fabricated values.
-    empty = build_report_prompt({"compute": {}})
-    assert "not available" in empty
+    return None
 
 
-def test_generate_report_content_uses_resolved_client(monkeypatch) -> None:
-    from prism_challenge.evaluator import architecture_report as report_mod
-
-    captured: dict = {}
-
-    class _FakeMessage:
-        content = "## Summary\nfrom fake client"
-
-    class _FakeChat:
-        def __init__(self, **kwargs):
-            captured["init"] = kwargs
-
-        def invoke(self, messages):
-            captured["messages"] = messages
-            return _FakeMessage()
-
-    monkeypatch.setattr(report_mod, "_load_chat_openai", lambda: _FakeChat)
-    config = report_mod.llm_report_config(
-        _bare_settings(llm_gateway_url=REPORT_GATEWAY_URL)
-    )
-    content, model = report_mod.generate_report_content({"name": "A", "compute": {}}, config=config)
-    assert content == "## Summary\nfrom fake client"
-    # The gateway injects the model server-side, so the reported model is the placeholder.
-    assert model == report_mod.GATEWAY_MODEL_PLACEHOLDER
-    # The reused client is constructed against the master gateway endpoint + scoped token.
-    assert captured["init"]["model"] == report_mod.GATEWAY_MODEL_PLACEHOLDER
-    assert captured["init"]["api_key"] == REPORT_GATEWAY_TOKEN
-    assert captured["init"]["base_url"] == config.gateway_url
+@pytestmark_report
+def test_generate_report_content_uses_resolved_client() -> None:
+    return None
 
 
-def test_generate_report_content_rejects_empty_completion(monkeypatch) -> None:
-    from prism_challenge.evaluator import architecture_report as report_mod
-
-    class _EmptyMessage:
-        content = "   "
-
-    class _FakeChat:
-        def __init__(self, **kwargs):
-            pass
-
-        def invoke(self, messages):
-            return _EmptyMessage()
-
-    monkeypatch.setattr(report_mod, "_load_chat_openai", lambda: _FakeChat)
-    config = report_mod.llm_report_config(
-        _bare_settings(llm_gateway_url=REPORT_GATEWAY_URL)
-    )
-    with pytest.raises(RuntimeError):
-        report_mod.generate_report_content({"compute": {}}, config=config)
+@pytestmark_report
+def test_generate_report_content_rejects_empty_completion() -> None:
+    return None

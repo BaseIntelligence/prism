@@ -108,8 +108,20 @@ def test_combined_shutdown_cancels_worker_before_db_close(
     assert order == ["worker_cancelled", "db_closed"]
 
 
-def test_combined_dispatch_uses_broker_no_local_gpu(tmp_path: Path) -> None:
+def test_combined_dispatch_uses_broker_no_local_gpu(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """The combined worker orchestrates GPU work via the broker, so no local GPU is required."""
+    # Isolate from ambient CHALLENGE_/PRISM_DOCKER_* env used by other local suites.
+    for name in (
+        "PRISM_DOCKER_BACKEND",
+        "CHALLENGE_DOCKER_BACKEND",
+        "PRISM_DOCKER_BROKER_TOKEN",
+        "PRISM_DOCKER_BROKER_TOKEN_FILE",
+        "CHALLENGE_DOCKER_BROKER_TOKEN",
+        "CHALLENGE_DOCKER_BROKER_TOKEN_FILE",
+    ):
+        monkeypatch.delenv(name, raising=False)
     settings = _settings(tmp_path, combined_mode=True)
     # Code default: the eval dispatch backend is the broker (not the local `cli`/`--gpus` path).
     assert settings.docker_backend == "broker"

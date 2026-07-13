@@ -3,10 +3,11 @@
 This suite pins the public docs (README + ``docs/**``) to the ACTUAL v2 system: the two-script
 submission contract (``architecture.py``/``build_model`` + ``training.py``/``train``), the locked
 FineWeb-Edu data plane (read-only, no network), the forced random-init validator re-execution, the
-challenge-computed prequential bits-per-byte score with a held-out delta tie-breaker, a gateway-only
-LLM hard gate, the single-node multi-GPU contract, and dry-run weights. It also asserts the docs no
-longer reference the decommissioned v1-NAS machinery (component-review holds, ownership events, the
-retired ``prism_run_manifest.v1.json``, or the removed ``local_cpu_smoke`` execution mode).
+challenge-computed prequential bits-per-byte score with a held-out delta tie-breaker,
+**deterministic admission** (LLM hard gate and gateway removed), the single-node multi-GPU contract,
+and dry-run weights. It also asserts the docs no longer reference the decommissioned v1-NAS
+machinery (component-review holds, ownership events, the retired ``prism_run_manifest.v1.json``,
+or the removed ``local_cpu_smoke`` execution mode).
 
 Assertions are anchored on real code constants so the docs cannot drift from the implementation.
 """
@@ -118,18 +119,21 @@ def test_prequential_bpb_scoring_is_documented() -> None:
 
 
 def test_llm_hard_gate_is_documented() -> None:
+    """Docs say the LLM hard gate/gateway are removed; admission is deterministic."""
     security = read_doc("docs/security.md")
     operators = read_doc("docs/operators.md")
     combined = f"{security}\n{operators}"
+    combined_lower = combined.lower()
 
-    assert "hard gate" in combined.lower()
-    # Provider-agnostic, gateway-only: no raw provider key, no pinned model in docs.
-    assert "/llm/v1" in combined
-    assert "X-Gateway-Token" in combined
-    assert "provider-agnostic" in combined.lower() or "no raw provider key" in combined.lower()
+    assert "deterministic admission" in combined_lower
+    assert "llm hard gate" in combined_lower or "llm gateway" in combined_lower
+    assert "removed" in combined_lower
+    # Residual gateway knobs are fail-closed; no live provider/gateway path remains.
+    assert "/llm/v1" not in combined
+    assert "X-Gateway-Token" not in combined
     # A reject is terminal and stops the pipeline before any GPU work.
-    assert "reject" in combined.lower()
-    assert "before any gpu" in combined.lower() or "before gpu" in combined.lower()
+    assert "reject" in combined_lower
+    assert "before any gpu" in combined_lower or "before gpu" in combined_lower
 
 
 def test_multi_gpu_contract_is_documented() -> None:
@@ -146,13 +150,15 @@ def test_multi_gpu_contract_is_documented() -> None:
     assert "ddp" in combined.lower()
 
 
-def test_dry_run_weights_are_documented() -> None:
+def test_weight_push_and_validator_submission_are_documented() -> None:
     combined = all_docs_text()
+    combined_lower = combined.lower()
 
-    assert "dry-run" in combined.lower()
     assert "get_weights" in combined
-    # Weights are never written on-chain.
-    assert "on-chain" in combined.lower()
+    assert "raw" in combined_lower and "weight" in combined_lower
+    # Challenge/master never write on-chain; validators submit under own wallets.
+    assert "on-chain" in combined_lower
+    assert "validator" in combined_lower
 
 
 def test_v2_manifest_filename_is_documented() -> None:
@@ -211,7 +217,8 @@ def test_readme_describes_the_v2_product() -> None:
         "prequential",
         "bits-per-byte",
         "LLM gateway",
-        "dry-run",
+        "deterministic",
+        "validator",
     ):
         assert expected.lower() in readme_lower, f"README missing v2 concept: {expected}"
 

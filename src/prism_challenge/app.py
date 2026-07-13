@@ -14,7 +14,7 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Request, status
 from .admission import enforce_admission
 from .audit import audit_sampler_from_config, resolve_audit_unit
 from .auth import authenticate_internal, authenticate_validator
-from .config import PrismSettings, configure_logging, settings
+from .config import PrismSettings, configure_logging, get_settings
 from .coordination import (
     audit_work_unit_to_payload,
     list_pending_prism_work_units,
@@ -41,10 +41,12 @@ from .weights import get_weights
 
 
 def create_app(
-    app_settings: PrismSettings = settings,
+    app_settings: PrismSettings | None = None,
     *,
     checkpoint_publisher: CheckpointPublisher | None = None,
 ) -> FastAPI:
+    if app_settings is None:
+        app_settings = get_settings()
     # Deploy entrypoint (uvicorn ``prism_challenge.app:app``, incl. combined mode which drains the
     # eval queue in-process) runs with no root logging config, so configure it here at import time
     # to surface application + worker-loop INFO under uvicorn (idempotent; see configure_logging).
@@ -439,4 +441,21 @@ def _bridge_submission_create(
     )
 
 
-app = create_app()
+_app: FastAPI | None = None
+
+
+def get_app() -> FastAPI:
+    """Return the process app, creating production settings only on first use."""
+    global _app
+    if _app is None:
+        _app = create_app()
+    return _app
+
+
+def __getattr__(name: str) -> Any:
+    # Support ``uvicorn prism_challenge.app:app`` without instantiating production
+    # settings (broker token file path / shared token) when the package is merely
+    # imported for pytest collection or tooling.
+    if name == "app":
+        return get_app()
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
