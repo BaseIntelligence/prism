@@ -18,6 +18,21 @@ the model and the loop, not the data or the metric.
 6. Better learners earn more weight after master aggregation of PRISM raw weights (validators submit
    on-chain; the challenge does not).
 
+## Lab seed families
+
+Tracked lab seeds under `examples/` package with the same outer two-script zip contract via
+`scripts/pack_seed_family.py` / `prism_challenge.seed_packaging`:
+
+| Family id | Path | Notes |
+| --- | --- | --- |
+| `transformer-tiny-1m` | `examples/tiny-1m` | Weight-tied ~1M decoder transformer; param count is forced-seed realized params; multi-GPU single-node ≤8 |
+
+Family knobs that matter for lab interpretation (not product baseline tables):
+
+- **Param counting** — architecture-agnostic, counts tensors from `build_model(ctx)`; transformer weight tying reduces the number vs untied heads.
+- **Step throughput** — `LOCAL_BATCH`, optimizer LR, and token budget dominate step flu; score is compute-normalized.
+- **Stability** — multi-GPU static contract requires distributed primitives + rank-0 writes; works at `world_size=1`.
+
 ## The Two-Script Contract
 
 A bundle is a `.zip` (or directory) with two distinct scripts. An optional `prism.yaml` declares the

@@ -1,7 +1,7 @@
-# Tiny ~1M-Parameter Two-Script Example
+# Tiny ~1M-Parameter Two-Script Example (Transformer family)
 
 A minimal, valid PRISM v2 submission: a weight-tied ~1.05M-parameter decoder transformer split into
-the two-script contract.
+the two-script contract. Registered packaging family id: **`transformer-tiny-1m`**.
 
 ## Layout
 
@@ -18,6 +18,24 @@ examples/tiny-1m/
   reads the read-only locked train split from `ctx.data_dir`, tokenizes with the pre-staged gpt2
   reference tokenizer (offline), runs a single-node multi-GPU-safe loop, and writes only under
   `ctx.artifacts_dir`.
+
+## Family knobs (lab operators)
+
+| Knob | Transformer tiny-1m value |
+| --- | --- |
+| Architecture family | Decoder transformer (RMSNorm + causal MHA + SwiGLU), weight-tied emb/lm_head |
+| Parameter geometry | `dim=128`, `heads=4`, `layers=2`, `mlp_ratio=4`; count is **realized** `nn.Module` params under forced-seed `build_model` (weight tying avoids double-counting head/emb) |
+| Cap | Must stay ≤ **150_000_000** (family-agnostic static gate) |
+| Tokenizer | `prism.yaml` → `gpt2` (offline pre-staged; no network) |
+| Step throughput | `LOCAL_BATCH=4`, AdamW `lr=0.005`, grad clip `1.0`; ranking is compute-normalized (tokens), not wall-clock |
+| Multi-GPU | Single-node ≤8 GPUs: `init_process_group`, `set_device(local_rank)`, DDP wrap, `DistributedSampler` marker, rank-0 `torch.save`, `destroy_process_group`; also works at `world_size=1` (scored nproc=1) |
+| Stability | Prefer small LR/batch if loss spikes; do not smuggle pretrained weights (step-0 anomaly zeros the score) |
+
+Pack a submit-shaped zip with the shared harness:
+
+```bash
+uv run python scripts/pack_seed_family.py --family transformer-tiny-1m --output-dir dist/seed-packages
+```
 
 ## How It Is Scored
 

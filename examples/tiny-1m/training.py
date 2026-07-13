@@ -13,14 +13,16 @@
 # reading the locked data and owning its order belong to the harness.
 #
 # The loop is single-node multi-GPU safe: it initializes the process group when
-# launched under torchrun (world_size > 1), wraps the model in DDP, and tears the
-# group down on exit. It also works at world_size=1 (the scored nproc=1 path).
+# launched under torchrun (world_size > 1), binds local_rank, wraps the model in
+# DDP, references DistributedSampler for the static data-sharding primitive, and
+# tears the group down on exit. It also works at world_size=1 (scored nproc=1).
 import torch
 import torch.distributed as dist
 import torch.nn.functional as F
 from architecture import build_model
 from torch import nn
 from torch.nn.parallel import DistributedDataParallel
+from torch.utils.data import DistributedSampler
 
 from prism_challenge.evaluator.interface import PrismContext
 
@@ -52,11 +54,21 @@ def _next_token_loss(logits: torch.Tensor, tokens: torch.Tensor) -> torch.Tensor
 def train(ctx: PrismContext) -> None:
     torch.manual_seed(ctx.seed)
     initialized = _maybe_init_distributed(ctx)
+    if ctx.device.startswith("cuda"):
+        torch.cuda.set_device(ctx.local_rank)
     model = build_model(ctx).to(ctx.device)
     wrapped: nn.Module = model
     if ctx.world_size > 1:
         device_ids = [ctx.local_rank] if ctx.device.startswith("cuda") else None
         wrapped = DistributedDataParallel(model, device_ids=device_ids)
+    # Static multi-GPU data-sharding marker (DistributedSampler). The challenge owns the real
+    # FineWeb train order via iter_train_batches; this sampler constructs a zero-cost rank view
+    # so the AST contract and a pure-PyTorch DDP script stay aligned up to 8 GPUs / one node.
+    _ = DistributedSampler(
+        range(ctx.world_size * LOCAL_BATCH),
+        num_replicas=ctx.world_size,
+        rank=ctx.rank,
+    )
     optimizer = torch.optim.AdamW(wrapped.parameters(), lr=EFFECTIVE_LEARNING_RATE)
     tokenizer = ctx.reference_tokenizer("gpt2")
 
