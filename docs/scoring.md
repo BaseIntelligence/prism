@@ -76,9 +76,9 @@ run (zero coverage, non-finite, or out-of-band bpb) is failed rather than scored
 
 The leaderboard ranks by `final_score` (bpb plus the folded-in held-out delta). Remaining ties break by
 **earliest-commit-wins**, then submission id, for a total, reproducible order. Each hotkey appears at
-most once, keeping its best submission. `get_weights` converts completed scores into normalized BASE
-weights: one per hotkey from its best `final_score`, summing to 1.0. Weights are always **dry-run** and
-never written on-chain.
+most once, keeping its best submission. PRISM converts completed scores into raw hotkey weights and
+**pushes** them to the BASE master for aggregation. `get_weights` remains available for inventory/
+compatibility. On-chain `set_weights` is validator-owned only; PRISM never writes weights on-chain.
 
 ## Source Of Truth
 

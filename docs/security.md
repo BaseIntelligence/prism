@@ -1,8 +1,9 @@
 # Security Model
 
 PRISM evaluates untrusted miner code. It assumes submissions may be malicious and layers identity
-verification, a static AST sandbox, an LLM hard gate, a duplicate check, and a forced-init re-execution
-that makes the common cheats inert rather than merely detected.
+verification, a static AST sandbox, **deterministic admission** (project shape, source similarity,
+anti-cheat), a terminal duplicate policy, and a forced-init re-execution that makes the common cheats
+inert rather than merely detected. The former LLM hard gate and master LLM gateway are **removed**.
 
 ## Identity and Authentication
 
@@ -25,7 +26,20 @@ Before any GPU work, PRISM runs the static gates over both scripts, in order:
 3. **Multi-GPU static contract**: the training script must use the distributed primitives and a rank-0
    write guard; a `gpu_count > 8` or multi-node request is rejected.
 
-A rejection at any static gate is terminal and skips the LLM review entirely.
+A rejection at any static gate is terminal before similarity admission and before any GPU work.
+
+## Deterministic Admission
+
+After static gates pass, PRISM applies challenge-owned deterministic checks only:
+
+- **Project shape** — two-script contract resolution and fingerprints (no single-module re-export).
+- **Source similarity** — exact-source-hash duplicates are rejected; borderline (quarantine-band)
+  similarity is also a **terminal reject**. There is no held-for-review or LLM quarantine path.
+- **Anti-cheat / scoring gates** — forced-init invariants and score anomaly multipliers (see below).
+
+Legacy env keys or settings related to LLM review, gateway URL/token, architecture auto-report, or
+component-agent hold policies fail closed at configuration load. Unknown residual knobs are rejected
+rather than silently ignored when they map to removed surfaces.
 
 ## Forced-Init Re-Execution (Anti-Cheat Core)
 
@@ -43,19 +57,26 @@ the three cheat classes:
 - **No memorization** — the `val`/`test` splits are secret and **never exposed** to the miner script; an
   excessive train-vs-held-out gap penalizes the score.
 
-## LLM Hard Gate
+## External Result Envelope (Worker Plane)
 
-After the static gates pass, a strong LLM reviews both scripts as a **hard gate**, routing **only**
-through the BASE master LLM gateway at `{root}/llm/v1` with a scoped token (the `X-Gateway-Token` header)
-from the Docker secret at `/run/secrets/base_gateway_token`. PRISM holds no raw provider key and pins no
-model: the gateway selects the provider and model server-side (a `master.yaml` choice) and injects them
-per request. The gate checks architecture-to-training coherence, cheating and obfuscation (smuggled
-weights, hidden network, dead/no-op loops, metric gaming), and dangerous operations the static sandbox
-might miss.
+When the worker plane is enabled, Prism ingests reconciled external evaluation results **only** as the
+Base SDK `ExternalResultEnvelope` (api_version, assignment/challenge bindings, execution proof). Dual
+or legacy reduced bodies fail closed with a 422 before scoring or persistence. Proof verification and
+plausibility gates run before finalization; duplicate deliveries are idempotent and conflicts refuse
+mutation of sealed scores.
 
-The verdict is structured JSON. A `reject` is terminal: the pipeline stops **before any GPU work** and
-the submission ends `rejected`. A transient error or ambiguous result fails closed to a held quarantine.
-The gate is on by default; only a configuration-disabled gate is skipped.
+## TEE Verification
+
+Prism is the only TEE-attestation verifier in this stack. Behavior is fail-closed:
+
+- Signature, issuer, audience, expiration, nonce, replay, workload, image digest, measurements, and GPU
+  identity bindings must verify before elevated tier is granted.
+- The only elevated classification local tests and fixtures can produce is a labeled
+  **`LOCAL-FIXTURE PASS`**.
+- Real-provider **Lium/Targon PASS remains blocked** until public digest-pinned worker images, evidence
+  contracts, and trust roots exist. Safe inventory/API probes prove reachability at best and never
+  promote a synthetic REAL-PROVIDER PASS.
+- Opaque non-empty `tdx_quote_b64` / `gpu_eat_jwt` never imply tier 2 by presence alone.
 
 ## Locked Data, No Network
 
@@ -67,26 +88,28 @@ tokenizers, or weights at runtime.
 ## Duplicate Review
 
 An exact-source-hash duplicate is rejected, and a borderline-similarity quarantine is folded into a
-terminal rejection at ingress (there is no operator hold-resolution surface; the v1-NAS component-review
-and ownership machinery was decommissioned).
+terminal rejection at ingress (there is no operator hold-resolution surface; the v1-NAS component-review,
+LLM review, and ownership machinery were decommissioned).
 
 ## Execution Isolation
 
-PRISM never executes submitted code inside the API or worker process. The scored run happens in a
-broker-backed container that is non-root, has a read-only rootfs except `artifacts_dir`, uses
+PRISM never executes submitted code inside the API process without isolation. The scored run happens in
+a broker-backed container that is non-root, has a read-only rootfs except `artifacts_dir`, uses
 `network=none` and `no-new-privileges`, and is bounded by CPU, memory, PID, and wall-clock caps.
 Host-side static instantiation and held-out scoring run in bounded child processes with
-`weights_only=True` for any deserialization.
+`weights_only=True` for any deserialization. Application code does **not** create ephemeral evaluator
+containers; evaluation is the long-lived challenge runtime (or external TEE workers when enabled).
 
 ## ZIP Hardening
 
 ZIP extraction rejects symlinks, path traversal, unsafe paths, unsupported file types, and excessive
 file counts or bytes before code review begins.
 
-## Dry-Run Weights
+## Weights And Chain Boundary
 
-Weights are normalized per hotkey from the bits-per-byte `final_score` and exposed only via
-`get_weights`. They are always **dry-run** and are never written on-chain.
+PRISM exposes `get_weights` for inventory/compatibility and pushes authenticated **raw** hotkey weights
+to the BASE master. The master aggregates the final vector; **validators** call `set_weights` with
+their own wallets. The challenge and master never write weights on-chain.
 
 ## Reference Studies
 
@@ -102,5 +125,6 @@ Weights are normalized per hotkey from the bits-per-byte `final_score` and expos
 - Use real secret files in production, not inline tokens.
 - Keep public submissions disabled when PRISM is deployed only behind BASE.
 - Keep the eval container on `network=none` and the rootfs read-only except `artifacts_dir`.
-- Keep the LLM hard gate enabled for production.
-- Monitor rejected, held, failed, and completed submissions separately.
+- Do **not** configure LLM gateway URL/token fields; those surfaces are gone and residual knobs fail closed.
+- Treat TEE local fixture results as `LOCAL-FIXTURE PASS` only; do not claim live Lium/Targon readiness.
+- Monitor rejected, failed, and completed submissions separately (legacy held is not a live path).

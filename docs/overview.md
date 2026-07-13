@@ -4,6 +4,9 @@ PRISM is an "ability to learn" machine-learning challenge for BASE Network. Bitt
 model and a training procedure as two executable Python scripts, and PRISM competes them on how well
 their model learns from scratch on locked data.
 
+PRISM consumes the immutable Base SDK **v3.1.2**. Admission and scoring are **deterministic**: there is
+no LLM hard gate and no master LLM gateway.
+
 ## Purpose
 
 PRISM does not ask miners to train a frontier model. It asks a sharper question: given a fixed dataset
@@ -26,16 +29,19 @@ flowchart LR
     M2[Miner B] --> P
     M3[Miner C] --> P
     P --> R[Prequential bits-per-byte + Held-out Delta]
-    R --> W[Dry-Run Weights]
+    R --> W[Raw Weights to BASE Master]
 ```
 
 1. Miners submit two scripts: a model `architecture.py` and a custom `training.py` loop.
 2. BASE verifies miner identity and forwards the submission.
-3. PRISM runs a static AST sandbox and an LLM hard gate over both scripts.
-4. The validator re-executes the loop under a forced random init on the locked FineWeb-Edu train
-   split, capturing the online loss stream itself.
+3. PRISM runs a static AST sandbox and **deterministic admission** (project shape, source similarity,
+   anti-cheat). A similarity quarantine is a terminal reject; there is no held-for-review path.
+4. The challenge re-executes the loop under a forced random init on the locked FineWeb-Edu train
+   split, capturing the online loss stream itself (or, when the worker plane is on, ingests a
+   reconciled `ExternalResultEnvelope` only).
 5. PRISM computes a prequential bits-per-byte score with a held-out delta tie-breaker.
-6. Scores rank on the leaderboard and convert into normalized, dry-run BASE weights.
+6. Scores rank on the leaderboard; PRISM pushes raw hotkey weights to the BASE master for aggregation.
+   Validators fetch the master vector and submit on-chain under their own wallets.
 
 ## Who Owns What
 
@@ -51,12 +57,21 @@ challenge-authored `prism_run_manifest.v2.json`.
 - single-pass, predict-then-train loss has no held-out leakage by construction;
 - integrating the whole loss curve defeats single-checkpoint gaming;
 - compute normalization (tokens/FLOPs, never wall-clock) means a faster GPU cannot buy a better score;
-- a secret held-out split feeds only the tie-breaker and the anti-memorization gap.
+- a secret held-out split feeds only the tie-breaker and the anti-memorization gap;
+- deterministic sandbox + similarity + anti-cheat gates run without an LLM.
 
 The primary signal is the prequential bits-per-byte: the area under the from-scratch loss curve,
 normalized by raw UTF-8 bytes. Faster learners compress better and rank higher; the held-out
 delta-over-random-init breaks near-ties, and an excessive train-vs-held-out gap is penalized as
 memorization.
+
+## Runtime Shape
+
+Deploy as a **long-lived Compose challenge service**. Preferred production layout is the BASE master
+Compose project with PRISM in **combined mode** (API + in-process queue drain) and digest-pinned
+images. Real Lium/Targon TEE production PASS is blocked; local fixtures alone can produce a labeled
+`LOCAL-FIXTURE PASS`. See [Architecture](architecture.md), [Security](security.md), and
+[Operators](operators.md).
 
 See [Scaling Evaluation](scaling.md) for the multi-GPU contract and budget, and [Scoring](scoring.md)
 for the math.

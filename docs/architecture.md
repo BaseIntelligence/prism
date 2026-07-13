@@ -1,9 +1,13 @@
 # Architecture
 
 PRISM is a BASE challenge service: a FastAPI application with SQLite state, internal BASE
-authentication, and GPU evaluation through the BASE Docker broker. It measures a model's ability to
-learn: miners submit two scripts, the challenge owns the data and the evaluation, and the validator
-re-executes the miner's training loop under a forced random init and computes the score itself.
+authentication, and GPU evaluation through the BASE Docker broker (or optional external worker-plane
+TEE evaluation). It measures a model's ability to learn: miners submit two scripts, the challenge
+owns the data and the evaluation, and scored runs are re-executed under a forced random init so the
+challenge computes the score itself.
+
+PRISM pins the immutable Base SDK wheel **v3.1.2** (see the root README and `pyproject.toml`). There
+is **no LLM gateway** dependency, client, route, or admission path.
 
 ## Pipeline
 
@@ -14,26 +18,30 @@ flowchart LR
     Bridge --> Queue[Worker Queue]
     Queue --> Static[Static Gates - AST + Param Cap + Distributed Contract]
     Static -->|reject| Rejected([rejected])
-    Static --> LLM[LLM Hard Gate]
-    LLM -->|reject| Rejected
-    LLM --> Reexec[Forced-Init Re-Execution Runner]
+    Static --> Admit[Deterministic Admission]
+    Admit --> Similarity[Source Similarity + Anti-Cheat]
+    Similarity -->|reject| Rejected
+    Similarity --> Reexec[Forced-Init Re-Execution]
     Reexec --> Score[Prequential bpb + Held-out Delta]
-    Score --> Weights[Dry-Run get_weights]
+    Score --> Weights[Raw-Weight Push to BASE Master]
 ```
 
 ## Main Components
 
 | Component | Responsibility |
 | --- | --- |
-| FastAPI app | Public and internal HTTP routes |
+| FastAPI app | Public and internal HTTP routes; optional **combined mode** drains the eval queue in-process |
 | Repository | SQLite persistence for submissions, scores, sources, eval jobs, and GPU leases |
-| Worker | Claims submissions, runs static + LLM gates, dispatches re-execution, finalizes scores |
+| Worker | Claims submissions, runs static + deterministic admission, dispatches re-execution, finalizes scores |
 | Component resolver | Resolves the two-script contract (`architecture.py`/`build_model` + `training.py`/`train`) and fingerprints it |
 | Static sandbox | AST hard-blocks, the forced-seed parameter-cap instantiation, and the multi-GPU static contract |
-| LLM hard gate | Master-gateway LLM review of both scripts; a `reject` is terminal before any GPU work |
+| Deterministic admission | Challenge-owned checks only: project shape, sandbox, similarity, anti-cheat; no LLM hard gate |
+| Source similarity | Exact-hash and borderline-similarity checks; quarantine band is a **terminal reject** (never held) |
 | Container runner | Challenge-owned forced-init re-execution that captures the online loss stream |
+| External-result ingest | Accepts **only** `ExternalResultEnvelope` on the worker-plane result route (fail closed on legacy bodies) |
+| TEE verifier | Prism-only fail-closed attestation checks; **LOCAL-FIXTURE PASS** only for elevated tier today |
 | Scoring | Prequential bits-per-byte plus the held-out delta tie-breaker and anti-memorization gap |
-| Weights module | Converts normalized completed scores into dry-run BASE weights |
+| Raw-weight push | Pushes authenticated raw hotkey weights to the BASE master for aggregation |
 
 ## BASE Integration
 
@@ -41,24 +49,48 @@ BASE owns miner-facing upload security (signatures, timestamps, nonces, hotkey i
 forwarding a submission to `POST /internal/v1/bridge/submissions`. The bridge trusts only internal BASE
 authentication and the verified hotkey header; miner-supplied identity headers are not trusted.
 
+PRISM depends on the published Base `challenge_sdk` contracts (auth, schemas, app factory, health,
+version, `ExternalResultEnvelope`). The pin is:
+
+```text
+https://github.com/BaseIntelligence/base/releases/download/v3.1.2/base-3.1.2-py3-none-any.whl
+#sha256=3a61c2d3a343ed6de55e80215486e3de0c9639276443d08f2ed316bc807f2ff0
+```
+
+## Compose Deployment Model
+
+Supported install is **Docker Compose only** (single host). In the master Compose project, PRISM runs
+as **one long-lived combined challenge service** (`combined_mode`): the API process also drains the
+eval queue in-process (no second app/DB, no Swarm, no application-launched ephemeral evaluator jobs).
+Challenge-owned state stays on the challenge volume. See the BASE operator Compose docs
+(`deploy/compose/*`) for install and the digest-aware watcher.
+
 ## Execution Model
 
-PRISM never executes miner code in the master process. The worker runs static inspection and the LLM
-hard gate, then ships the project to an isolated evaluator container:
+PRISM never executes miner code in the API process without isolation. The worker runs static
+inspection and deterministic admission, then ships the project to an isolated container (or accepts a
+reconciled external result when the worker plane is enabled):
 
 ```text
 PRISM worker -> DockerExecutor -> BASE Docker broker -> GPU evaluator container
 ```
 
-The pre-GPU static gates run in order, and a rejection at any of them is terminal before the LLM review
-and before any GPU work:
+When the **worker plane** is enabled, GPU re-execution may land on miner-funded external workers; the
+BASE master reconciles replicas and forwards a single accepted result as an `ExternalResultEnvelope`.
+Legacy reduced bodies without `api_version`, assignment/challenge bindings, and proof fail closed
+before scoring or persistence.
+
+The pre-GPU static gates run in order; a rejection at any of them is terminal before similarity
+admission and before any GPU work:
 
 1. AST sandbox hard-blocks over both scripts.
 2. Forced-seed `build_model` instantiation and the 150M parameter cap.
 3. The multi-GPU static contract and single-node bound.
+4. Deterministic source similarity (exact duplicate and quarantine band → **rejected**, never held).
 
-Legacy local-CPU and remote-Lium execution paths are not supported. See [Submissions](submissions.md)
-for the two-script contract and [Scaling](scaling.md) for the multi-GPU rules.
+Legacy local-CPU (except explicit test mode) and remote-Lium execution paths for the default scored
+mode are not the supported operator path. See [Submissions](submissions.md) for the two-script
+contract and [Scaling](scaling.md) for the multi-GPU rules.
 
 ## Forced-Init Re-Execution (Anti-Cheat Core)
 
@@ -78,15 +110,26 @@ The challenge harness drives every scored run; miner code only supplies the mode
 The eval container is non-root, has a read-only rootfs except `artifacts_dir`, uses `network=none`, and
 is bounded by a wall-clock budget that is only a safety cap, never part of the score.
 
+## TEE Boundary
+
+Prism alone verifies TEE evidence (Base validates ordinary proof envelopes only). Full fail-closed
+local cryptographic fixtures can yield a labeled **`LOCAL-FIXTURE PASS`**. Real Lium/Targon production
+PASS remains **blocked** until authoritative provider contracts, public digests, trust roots, and
+measurements exist. Opaque non-empty `tdx_quote_b64` / `gpu_eat_jwt` fields never grant elevated tier
+by themselves. See [Security](security.md).
+
 ## State Model
 
-State lives in SQLite. Key tables: `miners`, `submissions`, `eval_jobs`, `gpu_leases`, `scores`,
-`submission_sources`, `llm_reviews`, `plagiarism_reviews`, `epochs`.
+State lives in SQLite. Key tables include `miners`, `submissions`, `eval_jobs`, `gpu_leases`,
+`scores`, `submission_sources`, `epochs`, plus raw-weight push ledger state and optional TEE nonce
+ledgers when the verifier is used.
 
 - `eval_jobs` tracks each attempt (including the `level='l1'` static-tracking placeholder, which is not
   GPU work).
 - `gpu_leases` records the exclusive single-GPU lease for a scored run.
 - `scores` holds the challenge-computed prequential bits-per-byte `final_score` and its metrics.
+- Legacy LLM review / hold tables are not written by the admission path; forward migrations reject
+  leftover held/quarantined rows without approving them.
 
 ## Scoring Flow
 
@@ -100,21 +143,24 @@ flowchart LR
     Heldout[Held-out Delta on Secret val] --> Final
     Gap[Train-vs-Held-out Gap] --> Final
     Final --> Board[Leaderboard ORDER BY final_score DESC]
-    Board --> Weights[Normalized Dry-Run Weights]
+    Board --> Raw[Raw-Weight Push to Master]
 ```
 
 The primary axis is the prequential bits-per-byte (lower bpb → better `final_score`); the held-out delta
 refines near-ties only, the train-vs-held-out gap penalizes memorization, and a step-0 anomaly
 multiplier zeroes a smuggled-weights run. The leaderboard orders by `final_score` with an
-earliest-commit-wins tie-break, and `get_weights` returns one normalized, dry-run weight per hotkey
-(best per hotkey), never written on-chain.
+earliest-commit-wins tie-break. PRISM pushes authenticated raw hotkey weights to the BASE master;
+validators fetch the master vector and call `set_weights` with their own wallets. PRISM never writes
+weights on-chain.
 
 ## Failure Handling
 
-A submission ends `pending`, `running`, `completed`, `failed`, `rejected`, or `held`:
+A submission ends `pending`, `running`, `completed`, `failed`, or `rejected`:
 
-- **rejected** — failed static review, the two-script contract, the LLM hard gate, or duplicate review;
-- **failed** — passed the gates but failed the re-execution, scoring, or infrastructure;
-- **held** — quarantined by the LLM review pending operator attention.
+- **rejected** — failed static review, the two-script contract, deterministic similarity/anti-cheat, or
+  other admission gates;
+- **failed** — passed the gates but failed the re-execution, scoring, or infrastructure.
 
-The v1-NAS component-attribution holds and ownership-event machinery have been decommissioned.
+There is **no** production `held` status and no operator hold-resolution / LLM review surface after
+gateway removal. Similarity quarantine is terminal reject. Legacy stuck hold rows are migrated to
+reject, never silently approved.

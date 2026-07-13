@@ -11,10 +11,12 @@ the model and the loop, not the data or the metric.
 
 1. Build a two-script bundle that follows the PRISM contract.
 2. Sign and submit it with your miner hotkey.
-3. PRISM runs the static sandbox and the LLM hard gate.
-4. The validator re-executes your `training.py` under a forced random init on the locked train split.
+3. PRISM runs the static sandbox and **deterministic admission** (similarity / anti-cheat). There is no
+   LLM hard gate.
+4. The challenge re-executes your `training.py` under a forced random init on the locked train split.
 5. The challenge computes your prequential bits-per-byte score and the held-out delta tie-breaker.
-6. Better learners earn more normalized, dry-run weight.
+6. Better learners earn more weight after master aggregation of PRISM raw weights (validators submit
+   on-chain; the challenge does not).
 
 ## The Two-Script Contract
 
@@ -112,8 +114,9 @@ Content-Type: application/json
 
 The hotkey must match the signature (timestamps and nonces block replay), and stay within the size
 limit. Unsafe imports, network access, arbitrary filesystem access, deserialization escapes, and the
-single-module idiom are rejected at static review before any GPU work; a `reject` from the LLM hard gate
-is terminal.
+single-module idiom are rejected at static review before any GPU work. Close source copies of prior
+work can be rejected by deterministic similarity (including borderline bands) with no operator review
+queue.
 
 ## What Improves Your Score
 
