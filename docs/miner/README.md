@@ -26,12 +26,13 @@ Tracked lab seeds under `examples/` package with the same outer two-script zip c
 | Family id | Path | Notes |
 | --- | --- | --- |
 | `transformer-tiny-1m` | `examples/tiny-1m` | Weight-tied ~1M decoder transformer; param count is forced-seed realized params; multi-GPU single-node ≤8 |
+| `mamba-tiny-1m` | `examples/mamba-tiny` | Pure-PyTorch selective SSM (Mamba-style); **no** `mamba_ssm` C++/CUDA dep for the static lab path; same 150M cap and multi-GPU contract |
 
 Family knobs that matter for lab interpretation (not product baseline tables):
 
-- **Param counting** — architecture-agnostic, counts tensors from `build_model(ctx)`; transformer weight tying reduces the number vs untied heads.
-- **Step throughput** — `LOCAL_BATCH`, optimizer LR, and token budget dominate step flu; score is compute-normalized.
-- **Stability** — multi-GPU static contract requires distributed primitives + rank-0 writes; works at `world_size=1`.
+- **Param counting** — architecture-agnostic, counts tensors from `build_model(ctx)`; both seeds weight-tie emb/lm_head. Mamba counts include `A_log`/`D`/conv/dt projections rather than MHA/MLP tensors.
+- **Step throughput** — `LOCAL_BATCH`, optimizer LR, and token budget dominate step flu; score is compute-normalized. Pure-torch Mamba sequential scan is slower/token than fused CUDA kernels (use modest LR; default seed uses `0.003` vs transformer `0.005`).
+- **Stability** — multi-GPU static contract requires distributed primitives + rank-0 writes; works at `world_size=1` for both families. Mamba pure-torch caveat: do not introduce blocked `mamba_ssm` / `cpp_extension` imports if you still need AST sandbox static pass.
 
 ## The Two-Script Contract
 

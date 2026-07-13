@@ -7,8 +7,8 @@ Produces explorer/lab submission zips with a stable outer contract:
 - no miner secrets, wallets, or private keys
 - a stable fingerprint surface: sorted path list + per-file SHA-256 + zip content digest
 
-Milestone B registers the Transformer ``tiny-1m`` family; a Mamba/SSM family entry is added
-symmetrically by the dedicated Mamba seed feature.
+Registers both Transformer ``tiny-1m`` and pure-PyTorch Mamba/SSM ``mamba-tiny`` families
+under one outer packaging contract (entry names, fingerprint, dual zip output).
 """
 
 from __future__ import annotations
@@ -70,6 +70,37 @@ SEED_FAMILIES: dict[str, SeedFamily] = {
                 "DistributedSampler marker/rank-0 save; works at world_size=1."
             ),
             "tokenizer": "prism.yaml tokenizer=gpt2 (pre-staged offline reference).",
+        },
+    ),
+    "mamba-tiny-1m": SeedFamily(
+        family_id="mamba-tiny-1m",
+        display_name="Mamba/SSM tiny pure-torch",
+        architecture_family="mamba",
+        source_dir=EXAMPLES_ROOT / "mamba-tiny",
+        description=(
+            "Weight-tied ~1M pure-PyTorch selective SSM (Mamba-style) language model "
+            "(dim=128, 2 layers, d_state=16) under the two-script Prism contract and "
+            "150M param cap. No blocked mamba_ssm C++/CUDA extension is required."
+        ),
+        knobs={
+            "param_counting": (
+                "Same architecture-agnostic forced-seed tensor count as Transformer; "
+                "SSM params include A_log/D/conv/dt projections and weight-tied emb/head."
+            ),
+            "step_throughput": (
+                "LOCAL_BATCH=4, AdamW lr=0.003 (slightly lower for sequential scan "
+                "stability), GRAD_CLIP_NORM=1.0; pure-torch scan is slower than fused "
+                "CUDA kernels; scores remain compute-normalized (tokens)."
+            ),
+            "stability": (
+                "Single-node multi-GPU (≤8) via the same distributed primitives as "
+                "transformer-tiny-1m; pure PyTorch only (no mamba_ssm / cpp_extension)."
+            ),
+            "tokenizer": "prism.yaml tokenizer=gpt2 (pre-staged offline reference).",
+            "pure_torch_caveat": (
+                "Selective scan is implemented in Python/Torch for AST-lab portability; "
+                "do not import mamba_ssm for the static lab path."
+            ),
         },
     ),
 }

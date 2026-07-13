@@ -118,11 +118,16 @@ project.zip
 ```
 
 The container resolves `architecture.py::build_model` and `training.py::train`, forces the seed,
-launches torchrun, and captures the online loss itself. For a complete, runnable transformer bundle,
-see the [tiny ~1M-parameter example](../examples/tiny-1m/README.md) (packaging family
-`transformer-tiny-1m` via `scripts/pack_seed_family.py`). Lab family knobs (param counting shape,
-batch/LR step flu, multi-GPU primitives) are documented on that seed README and in the
-[miner guide](miner/README.md#lab-seed-families).
+launches torchrun, and captures the online loss itself. Complete, runnable lab seeds:
+
+- Transformer: [tiny ~1M-parameter example](../examples/tiny-1m/README.md) (family
+  `transformer-tiny-1m`)
+- Mamba / pure-torch SSM: [mamba-tiny example](../examples/mamba-tiny/README.md) (family
+  `mamba-tiny-1m`; no blocked native `mamba_ssm` for the static lab path)
+
+Package either or both with `scripts/pack_seed_family.py` (shared outer two-script zip shape). Lab
+family knobs (param counting shape, batch/LR step flu, pure-torch SSM caveats, multi-GPU primitives)
+are documented on each seed README and in the [miner guide](miner/README.md#lab-seed-families).
 
 ## ZIP Safety Rules
 
