@@ -47,6 +47,11 @@ from .gpu_scheduler import (
 from .models import SubmissionStatus
 from .proof import compute_manifest_sha256, read_manifest_sha256
 from .repository import PrismRepository, now_iso
+from .tee.score_gate import (
+    SUBREASON_LEGACY_PATH,
+    TEE_REQUIRED_REASON,
+    require_for_score_enabled,
+)
 
 DEFAULT_REVIEW_RULES = (
     ReviewRule("prism:no-secret-exfiltration", "Do not read, infer, print, or transmit secrets."),
@@ -174,7 +179,11 @@ class PrismWorker:
         return await self._process_claimed(submission, resume_checkpoint_ref=resume_checkpoint_ref)
 
     async def finalize_worker_result(
-        self, submission_id: str, manifest: dict[str, Any]
+        self,
+        submission_id: str,
+        manifest: dict[str, Any],
+        *,
+        tee_score_authorized: bool = False,
     ) -> str | None:
         """Finalize a submission from a forwarded worker manifest WITHOUT re-executing.
 
@@ -194,6 +203,9 @@ class PrismWorker:
         fault), so it does NOT terminally fail the submission: it reverts the claim to ``pending``
         and raises :class:`WorkerFinalizationError` so ingestion reports the result as un-finalized
         and retryable rather than a clean finalize with ``status=failed``.
+
+        ``tee_score_authorized`` must be true under TEE-required mode; ingestion sets it only after
+        :func:`~prism_challenge.tee.score_gate.decision_authorizes_score` accepts the TEE decision.
         """
         submission = await self.repository.claim_submission(submission_id)
         if submission is None:
@@ -239,6 +251,7 @@ class PrismWorker:
             fingerprints=component_review.fingerprints,
             name=arch_name,
             skip_heldout=True,
+            tee_score_authorized=tee_score_authorized,
         )
         return submission_id
 
@@ -910,6 +923,7 @@ class PrismWorker:
         fingerprints: PrismComponentFingerprints | None = None,
         name: str | None = None,
         skip_heldout: bool = False,
+        tee_score_authorized: bool = False,
     ) -> None:
         """Finalize a container run using the CHALLENGE-OWNED prequential bits-per-byte score.
 
@@ -927,7 +941,27 @@ class PrismWorker:
         ``skip_heldout`` forces the bpb-only scoring path (no held-out delta tie-break); the worker
         plane sets it so a forwarded worker manifest is graded on prequential bpb alone without ever
         needing the master-only secret val split (architecture.md 4).
+
+        Under TEE-required mode (``tee.require_for_score``), this path refuses to write a
+        production score or architecture-family row unless ``tee_score_authorized`` is true. Legacy
+        broker/base_gpu re-exec without an accepted TEE decision therefore cannot finalize a score
+        (VAL-TEEREQ-007). Worker-plane ingestion is expected to set ``tee_score_authorized`` after a
+        verifier-accepted decision; the default remains false so a legacy call site fails closed.
         """
+        if require_for_score_enabled(settings=self.settings) and not tee_score_authorized:
+            logger.warning(
+                "refusing score finalization for %s under TEE-required mode "
+                "(reason=%s subreason=%s)",
+                submission_id,
+                TEE_REQUIRED_REASON,
+                SUBREASON_LEGACY_PATH,
+            )
+            await self._fail_submission(
+                submission_id,
+                f"{TEE_REQUIRED_REASON}: {SUBREASON_LEGACY_PATH}: "
+                "legacy broker/base_gpu finalization without accepted TEE decision",
+            )
+            return
         try:
             score = score_prequential_bpb(manifest, skip_heldout=skip_heldout)
         except ScoreValidationError as exc:

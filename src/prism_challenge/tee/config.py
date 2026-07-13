@@ -31,6 +31,8 @@ class TeeVerifierConfig:
 
     enabled: bool = True
     mode: str = "local_fixture"  # local_fixture | production
+    # When true, score finalization requires an accepted TEE decision.
+    require_for_score: bool = False
     expected_provider: str = "local_fixture"
     expected_issuer: str = "prism-local-fixture"
     expected_audience: str = DEFAULT_AUDIENCE
@@ -142,6 +144,7 @@ def tee_config_from_settings(settings: PrismSettings) -> TeeVerifierConfig:
     return TeeVerifierConfig(
         enabled=bool(data.get("enabled", enabled)) and enabled,
         mode=str(data.get("mode", "local_fixture")),
+        require_for_score=bool(data.get("require_for_score", False)),
         expected_provider=str(data.get("expected_provider", "local_fixture")),
         expected_issuer=str(data.get("expected_issuer", "prism-local-fixture")),
         expected_audience=str(data.get("expected_audience", DEFAULT_AUDIENCE)),

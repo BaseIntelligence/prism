@@ -88,12 +88,21 @@ class TeeConfig(BaseModel):
 
     Nested under ``PRISM_TEE__*``. Empty trust material fails closed for elevated
     tiers. Real Lium/Targon readiness flags remain false until authoritative contracts.
+
+    ``require_for_score`` is the product flag for TEE-required scoring: when true,
+    score finalization / architecture-family rows / emission-ready weights require a
+    verifier-accepted TEE decision (see ``prism_challenge.tee.score_gate``). Tier 0/1
+    ExecutionProof, watchtower digests, and legacy broker re-exec cannot authorize a
+    production score. Default is false so deterministic lab harnesses remain usable
+    until operators enable TEE-required mode.
     """
 
     model_config = SettingsConfigDict(extra="forbid")
 
     enabled: bool = True
     mode: Literal["local_fixture", "production"] = "local_fixture"
+    # Product flag for TEE-required production scoring (VAL-TEEREQ-*).
+    require_for_score: bool = False
     expected_provider: str = "local_fixture"
     expected_issuer: str = "prism-local-fixture"
     expected_audience: str = "prism.tee.verify"

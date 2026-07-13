@@ -45,6 +45,12 @@ from .proof import (
     verify_execution_proof,
 )
 from .queue import PrismWorker, WorkerFinalizationError
+from .tee.score_gate import (
+    TEE_REQUIRED_REASON,
+    decision_authorizes_score,
+    reject_message,
+    require_for_score_enabled,
+)
 from .tee.types import TeeDecision
 from .tee.verifier import TeeVerifier
 
@@ -90,7 +96,10 @@ class ResultIngestionError(Exception):
       nothing to finalize from without re-executing (VAL-FINAL-001);
     * ``finalization_failed`` -- worker-plane finalization failed for an internal/transient reason
       (source-static derivation error): the submission is reverted to pending and NOTHING is
-      recorded, so the forwarded result is retried rather than sealed as a clean finalize.
+      recorded, so the forwarded result is retried rather than sealed as a clean finalize;
+    * ``tee_required`` -- TEE-required scoring is enabled and the unit lacks a verifier-accepted
+      TEE decision that authorizes production score finalization (VAL-TEEREQ-001+). No score,
+      leaderboard row, or emission-ready weight contribution is produced.
     """
 
     def __init__(self, reason: str, message: str = "") -> None:
@@ -235,8 +244,21 @@ async def ingest_work_unit_result(
     verify_proof_integrity(proof, unit_id=work_unit_id, manifest=manifest, verify=verify)
 
     tee_decision: TeeDecision | None = None
-    if tee_verifier is not None and proof.attestation is not None:
-        # Always run before score/finalization so elevated tier cannot precede verification.
+    tee_mode = "local_fixture"
+    require_tee_score = require_for_score_enabled(settings=worker.settings)
+    if tee_verifier is not None:
+        tee_cfg = getattr(tee_verifier, "config", None)
+        if tee_cfg is not None:
+            tee_mode = str(getattr(tee_cfg, "mode", "local_fixture") or "local_fixture")
+            require_tee_score = require_for_score_enabled(
+                require_for_score=bool(getattr(tee_cfg, "require_for_score", False))
+                or require_tee_score,
+                settings=worker.settings,
+            )
+        # Always run before score/finalization when the verifier is wired so missing
+        # evidence, forged evidence, and incomplete config yield an explicit decision
+        # (VAL-TEEREQ-001/002/006). Previously attestation=None skipped the verifier,
+        # which left tee_decision None and silently scored under TEE-required.
         tee_decision = await tee_verifier.verify_proof(
             proof,
             work_unit_id=work_unit_id,
@@ -266,9 +288,22 @@ async def ingest_work_unit_result(
             except Exception:  # noqa: BLE001 - decision persistence must not break fail-closed tier
                 logger.exception("failed to persist tee decision for unit %s", work_unit_id)
 
-    tier = effective_tier(
-        proof, pinned_image_digest=pinned_image_digest, tee_decision=tee_decision
+    # TEE-required scoring: reject before score/finalization when the decision (or
+    # its absence) cannot authorize production score material (VAL-TEEREQ-001+).
+    score_auth = decision_authorizes_score(
+        tee_decision,
+        require_for_score=require_tee_score,
+        mode=tee_mode,
     )
+    if not score_auth.authorized:
+        logger.warning(
+            "rejecting work unit %s under TEE-required scoring: %s",
+            work_unit_id,
+            reject_message(score_auth),
+        )
+        raise ResultIngestionError(TEE_REQUIRED_REASON, reject_message(score_auth))
+
+    tier = effective_tier(proof, pinned_image_digest=pinned_image_digest, tee_decision=tee_decision)
     claimed_tier = int(proof.tier)
     downgraded = claimed_tier != tier
     submission_id = work_unit_id
@@ -336,7 +371,14 @@ async def ingest_work_unit_result(
                 "worker-plane finalization requires the forwarded run manifest",
             )
         try:
-            result_id = await worker.finalize_worker_result(submission_id, dict(manifest))
+            # Ingestion already applied decision_authorizes_score; under TEE-required mode that
+            # is the only caller that may flip tee_score_authorized. When the flag is off the
+            # parameter is ignored by the score gate inside finalize.
+            result_id = await worker.finalize_worker_result(
+                submission_id,
+                dict(manifest),
+                tee_score_authorized=True,
+            )
         except WorkerFinalizationError as exc:
             # An internal/transient derivation failure is NOT a clean finalize: nothing is recorded
             # (so a redelivery is genuinely retried, not idempotent-skipped) and the submission was

@@ -22,6 +22,13 @@ from .readiness import (
     evaluate_watchtower_digest,
     real_provider_pass_is_possible,
 )
+from .score_gate import (
+    TEE_REQUIRED_REASON,
+    ScoreAuthorization,
+    decision_authorizes_score,
+    reject_message,
+    require_for_score_enabled,
+)
 from .types import (
     TeeClassification,
     TeeDecision,
@@ -32,6 +39,7 @@ from .verifier import TeeVerifier, verify_proof_tee
 
 __all__ = [
     "HARD_GATE_ITEMS",
+    "TEE_REQUIRED_REASON",
     "WATCHTOWER_UNBOUND",
     "DurableNonceStore",
     "InMemoryNonceStore",
@@ -39,6 +47,7 @@ __all__ = [
     "NonceStore",
     "ProviderReadinessReport",
     "SafeProbeReport",
+    "ScoreAuthorization",
     "TargonAdapter",
     "TeeClassification",
     "TeeDecision",
@@ -48,9 +57,12 @@ __all__ = [
     "TeeVerifierConfig",
     "WatchtowerEvaluation",
     "classify_safe_probe",
+    "decision_authorizes_score",
     "evaluate_provider_readiness",
     "evaluate_watchtower_digest",
     "real_provider_pass_is_possible",
+    "reject_message",
+    "require_for_score_enabled",
     "select_adapter",
     "tee_config_from_settings",
     "verify_proof_tee",

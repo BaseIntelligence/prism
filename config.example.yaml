@@ -102,3 +102,21 @@ worker_plane:
   audit_salt: null
   # Pinned evaluator/worker image digest (sha256:<64hex>) a tier-1 proof claim is checked against.
   pinned_image_digest: null
+
+# Fail-closed TEE verifier (nested under PRISM_TEE__*). When require_for_score is true, Prism will
+# not finalize a production score, architecture-family row, or emission-ready weight without a
+# verifier-accepted TEE decision. LOCAL-FIXTURE PASS authorizes only while mode=local_fixture;
+# REAL-PROVIDER PASS stays BLOCKED until authoritative provider contracts exist. Tier 0/1 proofs
+# and watchtower digests never authorize TEE-required scoring.
+tee:
+  enabled: true
+  mode: local_fixture
+  require_for_score: false
+  expected_provider: local_fixture
+  expected_issuer: prism-local-fixture
+  expected_audience: prism.tee.verify
+  expected_purpose: execution_attestation
+  lium_ready: false
+  targon_ready: false
+  allow_network: false
+  provider_contract: {}
