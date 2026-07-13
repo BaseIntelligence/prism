@@ -2,8 +2,13 @@
 
 Real ``REAL-PROVIDER PASS`` remains impossible until every hard-gate input is
 independently consumable from provider documentation. Credentials, inventory
-reachability, non-empty quotes/JWTs, watchtower digests, and operator name flags
-never satisfy the gate.
+reachability, non-empty quotes/JWTs, watchtower digests, paid pod metadata, and
+operator name flags never satisfy the gate.
+
+``HARD_GATE_ITEMS`` (11 authoritative dependencies) is still in force for any
+future real-provider unlock. Adapters expose ``would_grant_real_provider_pass=false``
+for Lium and Targon on every path in this mission surface
+(VAL-TEEREQ-004/005, VAL-TEE-043/047/051/052).
 """
 
 from __future__ import annotations

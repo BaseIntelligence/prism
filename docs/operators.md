@@ -157,8 +157,30 @@ without the full binding/proof schema fail closed.
 TEE:
 
 - Local cryptographic fixtures may yield **`LOCAL-FIXTURE PASS`** under the fail-closed verifier.
-- Real Lium/Targon production PASS is **blocked** until contracts and digests exist.
+  That label is the **only** elevated local-crypto success class. It must never be rewritten,
+  summarized, or badged as **`REAL-PROVIDER PASS`**, production mine, or live-emission authority
+  (APIs, CLI, audit records, and lab reports).
+- Real Lium/Targon production PASS is **blocked** until contracts and digests exist. Paid Lium
+  provision smoke is **`DEPLOY SMOKE PASS|FAIL` only** and independent of crypto classification.
+- Adapter readiness reports always expose `would_grant_real_provider_pass=false` for Lium/Targon
+  in this code path, even when credentials are present, inventory is reachable, `lium_ready` /
+  `targon_ready` is flipped, or a complete-looking `provider_contract` blob is supplied.
+- Targon remains **`future/blocked`** (`PROVIDER_FUTURE_BLOCKED`) for REAL-PROVIDER PASS.
 - Safe provider probes (inventory/health) never become REAL-PROVIDER PASS.
+- **Readiness hard gates still in force** (`HARD_GATE_ITEMS`, all required for any future real PASS):
+  1. `authoritative_evidence_endpoint`
+  2. `authoritative_evidence_format`
+  3. `authoritative_issuer_audience`
+  4. `authoritative_trust_roots`
+  5. `freshness_and_clock_policy`
+  6. `nonce_semantics`
+  7. `digest_pinned_public_worker_image`
+  8. `measurement_policy`
+  9. `gpu_claim_policy`
+  10. `cross_binding_semantics`
+  11. `real_workload_evidence_artifact`
+- Residual removed LLM env/keys (`PRISM_LLM_*`, gateway tokens, component-agent knobs) fail closed
+  at settings load and never fall through to scored operation.
 
 ## Running Locally
 

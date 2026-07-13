@@ -89,11 +89,23 @@ class TeeDecision:
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def to_audit_record(self) -> dict[str, Any]:
-        """Non-secret discrimination fields safe to persist."""
+        """Non-secret discrimination fields safe to persist.
 
+        Includes an honest ``validation_source`` and ``summary`` line so status
+        APIs/CLI/lab strings cannot omit the LOCAL-FIXTURE label (VAL-TEEREQ-003/010).
+        """
+
+        # Lazy import keeps types free of classification helper cycles at import time.
+        from .classification import (
+            decision_public_surface,
+            decision_validation_source,
+            human_summary_line,
+        )
+
+        surface = decision_public_surface(self)
         return {
             "accepted": self.accepted,
-            "classification": self.classification.value,
+            "classification": surface["classification"],
             "reason": self.reason.value,
             "provider": self.provider.value,
             "effective_tier": self.effective_tier,
@@ -105,6 +117,10 @@ class TeeDecision:
             "work_unit_id": self.work_unit_id,
             "validated_claims": list(self.validated_claims),
             "detail": self.detail,
+            "validation_source": decision_validation_source(self),
+            "summary": human_summary_line(self),
+            "real_provider_pass": surface["real_provider_pass"],
+            "local_fixture_pass": surface["local_fixture_pass"],
         }
 
 

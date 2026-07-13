@@ -72,10 +72,15 @@ Prism is the only TEE-attestation verifier in this stack. Behavior is fail-close
 - Signature, issuer, audience, expiration, nonce, replay, workload, image digest, measurements, and GPU
   identity bindings must verify before elevated tier is granted.
 - The only elevated classification local tests and fixtures can produce is a labeled
-  **`LOCAL-FIXTURE PASS`**.
+  **`LOCAL-FIXTURE PASS`**. Status APIs, CLI summaries, audit records, and lab dashboards must keep an
+  explicit `local_fixture` / LOCAL-FIXTURE source label and **must not** smuggle that outcome into
+  **`REAL-PROVIDER PASS`**, a production mine badge, or live-emission authority.
 - Real-provider **Lium/Targon PASS remains blocked** until public digest-pinned worker images, evidence
-  contracts, and trust roots exist. Safe inventory/API probes prove reachability at best and never
-  promote a synthetic REAL-PROVIDER PASS.
+  contracts, and trust roots exist. Safe inventory/API probes and paid deploy smoke prove reachability
+  or infra only (`DEPLOY SMOKE`) and never promote a synthetic REAL-PROVIDER PASS
+  (`would_grant_real_provider_pass` stays false). Targon is future/blocked.
+- Hard-gate checklist (`HARD_GATE_ITEMS`, 11 authoritative dependencies) remains in force for any
+  future real-provider unlock; operator flags and credentials never satisfy it alone.
 - Opaque non-empty `tdx_quote_b64` / `gpu_eat_jwt` never imply tier 2 by presence alone.
 
 ## Locked Data, No Network
