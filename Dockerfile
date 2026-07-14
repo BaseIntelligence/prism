@@ -110,11 +110,14 @@ COPY src ./src
 RUN pip install --no-cache-dir ".[bittensor]"
 
 RUN useradd --create-home --shell /usr/sbin/nologin prism \
-    && mkdir -p /data \
+    && mkdir -p /data/tmp \
     && chown -R prism:prism /app /data
 
 USER prism
-ENV HOME=/home/prism
+ENV HOME=/home/prism \
+    TMPDIR=/data/tmp \
+    TEMP=/data/tmp \
+    TMP=/data/tmp
 
 EXPOSE 8080
 
