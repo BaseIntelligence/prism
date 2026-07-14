@@ -19,7 +19,7 @@ import math
 import shutil
 import subprocess
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Literal
 
@@ -35,11 +35,13 @@ from .official_comparison import (
     OFFICIAL_DEFAULT_SEEDS,
     PROTOCOL_ID,
     PROTOCOL_SCHEMA,
+    SCORECARD_ID,
     CompareResult,
     OfficialScoreRecord,
     ProtocolPin,
     aggregate_official_records,
-    compare_official,
+    attach_scorecard_to_report,
+    compare_official_scorecard,
     official_record_from_manifest,
     protocol_budget_constants,
 )
@@ -520,6 +522,7 @@ def build_compare_report(
         "primary_form": pin.primary_form,
         "device_class": device_class,
         "score_class": score_class,
+        "scorecard_id": SCORECARD_ID,
         "pin": pin.as_dict(),
         "side_a": _side_bundle_block(packed["a"], side_a),
         "side_b": _side_bundle_block(packed["b"], side_b),
@@ -551,6 +554,9 @@ def build_compare_report(
             "eps_heldout": result.eps_heldout,
             "eps_bpb": result.eps_bpb,
             "detail": result.detail,
+            "tie_polar": result.tie_polar,
+            "crown_allowed": result.crown_allowed,
+            "default_v1_preserved_when_no_polar_conflict": not result.tie_polar,
             # Label-facing outcome: clear A vs B for operators/tests.
             "outcome_label": {
                 "a": side_a.label,
@@ -561,8 +567,9 @@ def build_compare_report(
                     if result.winner == "a"
                     else side_b.label
                     if result.winner == "b"
-                    else "tie"
+                    else ("TIE_POLAR" if result.tie_polar else "tie")
                 ),
+                "crown_allowed": result.crown_allowed,
             },
             "wall_clock_ignored_for_rank": True,
         },
@@ -586,7 +593,14 @@ def build_compare_report(
     }
     if artifact_source is not None:
         report["artifact_source"] = artifact_source
-    return report
+    # Additive multimetric.v1.1 annex (does not rewrite emission leaderboard).
+    return attach_scorecard_to_report(
+        report,
+        side_a,
+        side_b,
+        compare=result,
+        matched_pin=True,
+    )
 
 
 def run_dual_family_official_compare(
@@ -632,7 +646,8 @@ def run_dual_family_official_compare(
 
     side_a = aggregate_side(side_a_profile, pin=active_pin, device=device_class)
     side_b = aggregate_side(side_b_profile, pin=active_pin, device=device_class)
-    result = compare_official(side_a, side_b)
+    # Scorecard-aware compare: preserves v1 when no polar conflict; TIE_POLAR otherwise.
+    result = compare_official_scorecard(side_a, side_b)
     report = build_compare_report(
         pin=active_pin,
         side_a=side_a,
@@ -730,47 +745,14 @@ def run_lab_gpu_host_official_compare(
         primary_form=active_pin.primary_form,
     )
     # Preserve diagnostic wall_clock mean from per-seed recomputes on aggregates.
-    # aggregate_official_records drops wall_clock; re-attach for observability only.
+    # aggregate_official_records drops wall_clock; re-attach for observability only
+    # while keeping multimetric.v1.1 scorecard fields via dataclasses.replace.
     a_clocks = [r.wall_clock_seconds for r in a_per_seed if r.wall_clock_seconds is not None]
     b_clocks = [r.wall_clock_seconds for r in b_per_seed if r.wall_clock_seconds is not None]
     if a_clocks:
-        side_a = OfficialScoreRecord(
-            label=side_a.label,
-            bpb=side_a.bpb,
-            primary_form=side_a.primary_form,
-            heldout_delta=side_a.heldout_delta,
-            val_bpb_trained=side_a.val_bpb_trained,
-            memorization_flag=side_a.memorization_flag,
-            train_heldout_gap=side_a.train_heldout_gap,
-            step0_anomaly=side_a.step0_anomaly,
-            valid=side_a.valid,
-            seed_count=side_a.seed_count,
-            bpb_std=side_a.bpb_std,
-            overfit_rate=side_a.overfit_rate,
-            wall_clock_seconds=sum(a_clocks) / len(a_clocks),
-            miner_reported_bpb=side_a.miner_reported_bpb,
-            miner_reported_final_score=side_a.miner_reported_final_score,
-            flags=side_a.flags,
-        )
+        side_a = replace(side_a, wall_clock_seconds=sum(a_clocks) / len(a_clocks))
     if b_clocks:
-        side_b = OfficialScoreRecord(
-            label=side_b.label,
-            bpb=side_b.bpb,
-            primary_form=side_b.primary_form,
-            heldout_delta=side_b.heldout_delta,
-            val_bpb_trained=side_b.val_bpb_trained,
-            memorization_flag=side_b.memorization_flag,
-            train_heldout_gap=side_b.train_heldout_gap,
-            step0_anomaly=side_b.step0_anomaly,
-            valid=side_b.valid,
-            seed_count=side_b.seed_count,
-            bpb_std=side_b.bpb_std,
-            overfit_rate=side_b.overfit_rate,
-            wall_clock_seconds=sum(b_clocks) / len(b_clocks),
-            miner_reported_bpb=side_b.miner_reported_bpb,
-            miner_reported_final_score=side_b.miner_reported_final_score,
-            flags=side_b.flags,
-        )
+        side_b = replace(side_b, wall_clock_seconds=sum(b_clocks) / len(b_clocks))
 
     if package:
         packed = package_unknown_style_pair(
@@ -785,7 +767,7 @@ def run_lab_gpu_host_official_compare(
             side_b_family_id=side_b_family_id,
         )
 
-    result = compare_official(side_a, side_b)
+    result = compare_official_scorecard(side_a, side_b)
     gpu = lab_gpu_verification_status()
     report = build_compare_report(
         pin=active_pin,
