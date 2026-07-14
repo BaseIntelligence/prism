@@ -51,7 +51,17 @@ CompareMode = Literal["ArchCompare", "TrainCompare", "SystemCompare"]
 SIDE_A_FAMILY_ID = "transformer-tiny-1m"
 SIDE_B_FAMILY_ID = "mamba-tiny-1m"
 
-DeviceClass = Literal["cpu", "cuda", "fixture"]
+DeviceClass = Literal["cpu", "cuda", "fixture", "lab-gpu"]
+ScoreClass = Literal["fixture", "LAB-GPU", "CPU"]
+
+# Lab-GPU Official Comparison (host recomputes Lium CUDA long-train artifacts).
+# Local host may still lack NVIDIA; score class remains LAB-GPU (not DEFERRED-for-no-nvidia).
+SCORE_CLASS_LAB_GPU: ScoreClass = "LAB-GPU"
+SCORE_CLASS_FIXTURE: ScoreClass = "fixture"
+TEE_CLASS_BLOCKED = "BLOCKED"
+TEE_CLASS_NOT_CLAIMED = "NOT_CLAIMED"
+LAB_GPU_MANIFEST_NAME = "prism_run_manifest.v2.json"
+LAB_GPU_DEFAULT_SEED = 1337
 
 
 @dataclass(frozen=True)
@@ -135,11 +145,8 @@ def protocol_pin_hash(pin: ProtocolPin) -> str:
     return hashlib.sha256(payload).hexdigest()
 
 
-def gpu_verification_status() -> dict[str, Any]:
-    """Probe host GPU readiness; never invent a GPU PASS.
-
-    Returns classification DEFERRED when NVIDIA is absent (this mission host profile).
-    """
+def _probe_host_nvidia() -> dict[str, Any]:
+    """Host-local NVIDIA probe shared by fixture DEFERRED and lab-gpu host notes."""
     nvidia_smi = shutil.which("nvidia-smi")
     nvidia_devices = sorted(Path("/dev").glob("nvidia*"))
     has_nvidia_runtime = False
@@ -159,29 +166,148 @@ def gpu_verification_status() -> dict[str, Any]:
                 has_nvidia_runtime = True
         except (OSError, subprocess.TimeoutExpired):
             has_nvidia_runtime = False
+    return {
+        "nvidia_smi": nvidia_smi is not None,
+        "nvidia_device_count": len(nvidia_devices),
+        "docker_nvidia_runtime": has_nvidia_runtime,
+        "host_has_nvidia": bool(nvidia_smi) and bool(nvidia_devices),
+    }
 
-    available = bool(nvidia_smi) and bool(nvidia_devices) and has_nvidia_runtime
+
+def gpu_verification_status() -> dict[str, Any]:
+    """Probe host GPU readiness; never invent a GPU PASS.
+
+    Returns classification DEFERRED when NVIDIA is absent (this mission host profile).
+    Fixture/CPU harnesses use this path. Lab-GPU host ranking of remote CUDA artifacts
+    uses :func:`lab_gpu_verification_status` instead (status LAB-GPU, not DEFERRED).
+    """
+    host = _probe_host_nvidia()
+    available = bool(host["host_has_nvidia"]) and bool(host["docker_nvidia_runtime"])
     if available:
         status = "AVAILABLE"
         reason = "nvidia-smi, /dev/nvidia*, and docker nvidia runtime all present"
     else:
         status = "DEFERRED"
         reasons: list[str] = []
-        if not nvidia_smi:
+        if not host["nvidia_smi"]:
             reasons.append("nvidia-smi not found")
-        if not nvidia_devices:
+        if int(host["nvidia_device_count"]) == 0:
             reasons.append("/dev/nvidia* absent")
-        if not has_nvidia_runtime:
+        if not host["docker_nvidia_runtime"]:
             reasons.append("docker nvidia runtime not advertised")
         reason = "; ".join(reasons) if reasons else "GPU path not ready"
     return {
         "status": status,
         "reason": reason,
-        "nvidia_smi": nvidia_smi is not None,
-        "nvidia_device_count": len(nvidia_devices),
-        "docker_nvidia_runtime": has_nvidia_runtime,
-        "claim_gpu_pass": False,  # harness never elevates this to PASS
+        "nvidia_smi": host["nvidia_smi"],
+        "nvidia_device_count": host["nvidia_device_count"],
+        "docker_nvidia_runtime": host["docker_nvidia_runtime"],
+        "claim_gpu_pass": False,  # fixture harness never elevates this to PASS
     }
+
+
+def lab_gpu_verification_status(
+    *,
+    train_device: str = "cuda",
+    train_host_note: str = "lium-paid-cuda",
+) -> dict[str, Any]:
+    """GPU verification block for LAB-GPU Official Comparison reports.
+
+    Real CUDA trains already occurred on a remote paid GPU (e.g. Lium). Mission host may
+    still lack NVIDIA; the score class is **LAB-GPU**, not fixture DEFERRED-for-no-nvidia.
+    ``claim_gpu_pass`` is true only for **lab scores** (VAL-GPULAB-006). REAL-PROVIDER TEE
+    remains BLOCKED / NOT_CLAIMED elsewhere on the report.
+    """
+    host = _probe_host_nvidia()
+    return {
+        "status": SCORE_CLASS_LAB_GPU,
+        "reason": (
+            f"real CUDA train artifacts ({train_device}) from {train_host_note}; "
+            "host ranks with compare_official; local NVIDIA not required for lab class"
+        ),
+        "nvidia_smi": host["nvidia_smi"],
+        "nvidia_device_count": host["nvidia_device_count"],
+        "docker_nvidia_runtime": host["docker_nvidia_runtime"],
+        "host_has_nvidia": host["host_has_nvidia"],
+        "train_device": train_device,
+        "train_host_note": train_host_note,
+        # Lab scores only — never equals REAL-PROVIDER TEE PASS.
+        "claim_gpu_pass": True,
+        "real_provider_tee": TEE_CLASS_BLOCKED,
+        "not_deferred_for_missing_local_nvidia": True,
+        "score_class": SCORE_CLASS_LAB_GPU,
+    }
+
+
+def resolve_lab_gpu_manifest_path(
+    artifacts_root: Path | str,
+    family_id: str,
+    *,
+    seed: int = LAB_GPU_DEFAULT_SEED,
+) -> Path:
+    """Resolve ``{root}/{family}/seed-{seed}/prism_run_manifest.v2.json``."""
+    root = Path(artifacts_root)
+    return root / family_id / f"seed-{seed}" / LAB_GPU_MANIFEST_NAME
+
+
+def load_lab_gpu_manifest(
+    artifacts_root: Path | str,
+    family_id: str,
+    *,
+    seed: int = LAB_GPU_DEFAULT_SEED,
+) -> dict[str, Any]:
+    """Load one real LAB-GPU challenge-owned v2 manifest or raise FileNotFoundError."""
+    path = resolve_lab_gpu_manifest_path(artifacts_root, family_id, seed=seed)
+    if not path.is_file():
+        raise FileNotFoundError(
+            f"LAB-GPU train artifact missing for family={family_id} seed={seed}: {path}"
+        )
+    data = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(data, dict):
+        raise ValueError(f"LAB-GPU manifest is not a JSON object: {path}")
+    return data
+
+
+def records_from_lab_gpu_artifacts(
+    artifacts_root: Path | str,
+    *,
+    side_a_family_id: str = SIDE_A_FAMILY_ID,
+    side_b_family_id: str = SIDE_B_FAMILY_ID,
+    seeds: Sequence[int] = (LAB_GPU_DEFAULT_SEED,),
+    pin: ProtocolPin | None = None,
+    miner_reported: Mapping[str, Any] | None = None,
+) -> tuple[list[OfficialScoreRecord], list[OfficialScoreRecord], list[str]]:
+    """Load/recompute official records for both families from real LAB-GPU manifests.
+
+    Secondary bpb and anti-overfit always recompute through
+    :func:`official_record_from_manifest` (Prism host path). Miner self-report may be
+    attached only as diagnostics. Returns ``(side_a_records, side_b_records, missing)``
+    where ``missing`` is empty on full success.
+    """
+    active_pin = pin if pin is not None else ProtocolPin(seeds=tuple(seeds))
+    missing: list[str] = []
+    a_records: list[OfficialScoreRecord] = []
+    b_records: list[OfficialScoreRecord] = []
+    for family_id, bucket in (
+        (side_a_family_id, a_records),
+        (side_b_family_id, b_records),
+    ):
+        for seed in seeds:
+            if seed not in active_pin.seeds:
+                continue
+            try:
+                manifest = load_lab_gpu_manifest(artifacts_root, family_id, seed=seed)
+            except FileNotFoundError as exc:
+                missing.append(str(exc))
+                continue
+            rec = official_record_from_manifest(
+                manifest,
+                label=f"{family_id}:seed={seed}",
+                primary_form=active_pin.primary_form,
+                miner_reported=miner_reported,
+            )
+            bucket.append(rec)
+    return a_records, b_records, missing
 
 
 def synth_challenge_manifest(
@@ -363,11 +489,29 @@ def build_compare_report(
     device_class: DeviceClass = "fixture",
     gpu: Mapping[str, Any] | None = None,
     validity_reasons: Sequence[str] = (),
+    score_class: ScoreClass = SCORE_CLASS_FIXTURE,
+    tee_class: str = TEE_CLASS_NOT_CLAIMED,
+    artifact_source: str | None = None,
 ) -> dict[str, Any]:
-    """Emit a ``prism_compare_report.v1`` document (docs §10 sketch)."""
-    gpu_info = dict(gpu) if gpu is not None else gpu_verification_status()
+    """Emit a ``prism_compare_report.v1`` document (docs §10 sketch).
+
+    ``score_class=LAB-GPU`` labels host ranking of real remote CUDA train artifacts.
+    Fixture/CPU dual-family remains the default and keeps host GPU DEFERRED honesty.
+    """
+    if gpu is not None:
+        gpu_info = dict(gpu)
+    elif score_class == SCORE_CLASS_LAB_GPU:
+        gpu_info = lab_gpu_verification_status()
+    else:
+        gpu_info = gpu_verification_status()
     validity_ok = side_a.valid and side_b.valid and not validity_reasons
-    return {
+    # Wall-clock recorded on sides for observability only — never a ranking input.
+    wall_clock_recorded = {
+        "a": side_a.wall_clock_seconds,
+        "b": side_b.wall_clock_seconds,
+        "used_for_rank": False,
+    }
+    report: dict[str, Any] = {
         "schema": REPORT_SCHEMA,
         "protocol_id": pin.protocol_id,
         "protocol_schema": PROTOCOL_SCHEMA,
@@ -375,6 +519,7 @@ def build_compare_report(
         "mode": mode,
         "primary_form": pin.primary_form,
         "device_class": device_class,
+        "score_class": score_class,
         "pin": pin.as_dict(),
         "side_a": _side_bundle_block(packed["a"], side_a),
         "side_b": _side_bundle_block(packed["b"], side_b),
@@ -387,6 +532,7 @@ def build_compare_report(
                 "overfit_rate": side_a.overfit_rate,
                 "valid": side_a.valid,
                 "seed_count": side_a.seed_count,
+                "wall_clock_seconds": side_a.wall_clock_seconds,
             },
             "b": {
                 "mean_heldout_delta": side_b.heldout_delta,
@@ -395,6 +541,7 @@ def build_compare_report(
                 "overfit_rate": side_b.overfit_rate,
                 "valid": side_b.valid,
                 "seed_count": side_b.seed_count,
+                "wall_clock_seconds": side_b.wall_clock_seconds,
             },
         },
         "ranking": {
@@ -417,6 +564,7 @@ def build_compare_report(
                     else "tie"
                 ),
             },
+            "wall_clock_ignored_for_rank": True,
         },
         "validity": {
             "ok": validity_ok,
@@ -425,13 +573,20 @@ def build_compare_report(
             "miner_self_report_never_authoritative": True,
             "matched_budget": True,
             "required_entry_scripts": list(REQUIRED_ENTRY_SCRIPTS),
+            "score_class": score_class,
         },
         "gpu_verification": gpu_info,
+        "wall_clock_recorded": wall_clock_recorded,
+        "tee_class": tee_class,
+        "real_provider_tee": TEE_CLASS_BLOCKED,
         "tee_note": (
             "orthogonal; REAL-PROVIDER PASS not claimed; LOCAL-FIXTURE only if elevated "
-            "crypto is exercised separately"
+            "crypto is exercised separately; LAB-GPU rank never unlocks REAL-PROVIDER TEE"
         ),
     }
+    if artifact_source is not None:
+        report["artifact_source"] = artifact_source
+    return report
 
 
 def run_dual_family_official_compare(
@@ -487,6 +642,8 @@ def run_dual_family_official_compare(
         mode=mode,
         device_class=device_class,
         gpu=gpu,
+        score_class=SCORE_CLASS_FIXTURE,
+        tee_class=TEE_CLASS_NOT_CLAIMED,
     )
     if write_report:
         report_path = out / "prism_compare_report.v1.json"
@@ -498,13 +655,209 @@ def run_dual_family_official_compare(
     return report
 
 
+class LabGpuArtifactsMissingError(FileNotFoundError):
+    """Raised when dual-family LAB-GPU train manifests are missing for host rank."""
+
+
+def run_lab_gpu_host_official_compare(
+    artifacts_root: Path | str,
+    output_dir: Path | str,
+    *,
+    side_a_family_id: str = SIDE_A_FAMILY_ID,
+    side_b_family_id: str = SIDE_B_FAMILY_ID,
+    seeds: Sequence[int] = (LAB_GPU_DEFAULT_SEED,),
+    pin: ProtocolPin | None = None,
+    mode: CompareMode = "ArchCompare",
+    write_report: bool = True,
+    package: bool = True,
+) -> dict[str, Any]:
+    """Host-side Official Comparison from real LAB-GPU Lium train artifacts.
+
+    Recomputes official scores with :func:`official_record_from_manifest`, then
+    :func:`compare_official` under held-out primary / bpb secondary. Emits
+    ``prism_compare_report.v1`` with ``score_class=LAB-GPU`` (not fixture synthetic;
+    not DEFERRED-for-no-nvidia). Wall-clock is recorded but ignored for rank.
+    REAL-PROVIDER TEE remains BLOCKED / NOT_CLAIMED.
+
+    Raises :class:`LabGpuArtifactsMissingError` when either family lacks manifests
+    (callers should treat that as a clear BLOCKED handoff — no invented scores).
+    """
+    out = Path(output_dir)
+    out.mkdir(parents=True, exist_ok=True)
+    root = Path(artifacts_root)
+    seed_tuple = tuple(int(s) for s in seeds)
+    active_pin = (
+        pin
+        if pin is not None
+        else ProtocolPin(
+            protocol_id=PROTOCOL_ID,
+            token_budget=int(protocol_budget_constants()["token_budget"]),
+            seeds=seed_tuple,
+            param_cap=int(protocol_budget_constants()["param_cap"]),
+            seq_len=int(protocol_budget_constants()["seq_len"]),
+            batch_size=int(protocol_budget_constants()["batch_size"]),
+            tokenizer=str(protocol_budget_constants()["tokenizer"]),
+            vocab_size=int(protocol_budget_constants()["vocab_size"]),
+            scored_nproc=int(protocol_budget_constants()["scored_nproc"]),
+            val_byte_budget=int(protocol_budget_constants()["val_byte_budget"]),
+            force_iter_train_batches=True,
+            require_trained_state=True,
+            primary_form="heldout_delta",
+        )
+    )
+
+    a_per_seed, b_per_seed, missing = records_from_lab_gpu_artifacts(
+        root,
+        side_a_family_id=side_a_family_id,
+        side_b_family_id=side_b_family_id,
+        seeds=seed_tuple,
+        pin=active_pin,
+    )
+    if missing or not a_per_seed or not b_per_seed:
+        raise LabGpuArtifactsMissingError(
+            "LAB-GPU host compare BLOCKED: missing dual-family train artifacts: "
+            + ("; ".join(missing) if missing else "empty official records")
+        )
+
+    side_a = aggregate_official_records(
+        a_per_seed,
+        label=side_a_family_id,
+        primary_form=active_pin.primary_form,
+    )
+    side_b = aggregate_official_records(
+        b_per_seed,
+        label=side_b_family_id,
+        primary_form=active_pin.primary_form,
+    )
+    # Preserve diagnostic wall_clock mean from per-seed recomputes on aggregates.
+    # aggregate_official_records drops wall_clock; re-attach for observability only.
+    a_clocks = [r.wall_clock_seconds for r in a_per_seed if r.wall_clock_seconds is not None]
+    b_clocks = [r.wall_clock_seconds for r in b_per_seed if r.wall_clock_seconds is not None]
+    if a_clocks:
+        side_a = OfficialScoreRecord(
+            label=side_a.label,
+            bpb=side_a.bpb,
+            primary_form=side_a.primary_form,
+            heldout_delta=side_a.heldout_delta,
+            val_bpb_trained=side_a.val_bpb_trained,
+            memorization_flag=side_a.memorization_flag,
+            train_heldout_gap=side_a.train_heldout_gap,
+            step0_anomaly=side_a.step0_anomaly,
+            valid=side_a.valid,
+            seed_count=side_a.seed_count,
+            bpb_std=side_a.bpb_std,
+            overfit_rate=side_a.overfit_rate,
+            wall_clock_seconds=sum(a_clocks) / len(a_clocks),
+            miner_reported_bpb=side_a.miner_reported_bpb,
+            miner_reported_final_score=side_a.miner_reported_final_score,
+            flags=side_a.flags,
+        )
+    if b_clocks:
+        side_b = OfficialScoreRecord(
+            label=side_b.label,
+            bpb=side_b.bpb,
+            primary_form=side_b.primary_form,
+            heldout_delta=side_b.heldout_delta,
+            val_bpb_trained=side_b.val_bpb_trained,
+            memorization_flag=side_b.memorization_flag,
+            train_heldout_gap=side_b.train_heldout_gap,
+            step0_anomaly=side_b.step0_anomaly,
+            valid=side_b.valid,
+            seed_count=side_b.seed_count,
+            bpb_std=side_b.bpb_std,
+            overfit_rate=side_b.overfit_rate,
+            wall_clock_seconds=sum(b_clocks) / len(b_clocks),
+            miner_reported_bpb=side_b.miner_reported_bpb,
+            miner_reported_final_score=side_b.miner_reported_final_score,
+            flags=side_b.flags,
+        )
+
+    if package:
+        packed = package_unknown_style_pair(
+            out / "packages",
+            side_a_family_id=side_a_family_id,
+            side_b_family_id=side_b_family_id,
+        )
+    else:
+        packed = package_unknown_style_pair(
+            out / "packages",
+            side_a_family_id=side_a_family_id,
+            side_b_family_id=side_b_family_id,
+        )
+
+    result = compare_official(side_a, side_b)
+    gpu = lab_gpu_verification_status()
+    report = build_compare_report(
+        pin=active_pin,
+        side_a=side_a,
+        side_b=side_b,
+        packed=packed,
+        result=result,
+        mode=mode,
+        device_class="lab-gpu",
+        gpu=gpu,
+        score_class=SCORE_CLASS_LAB_GPU,
+        tee_class=TEE_CLASS_BLOCKED,
+        artifact_source=str(root),
+    )
+    # Per-seed recomputed surfaces for evidence without trusting miner summaries alone.
+    report["per_seed"] = {
+        "a": [
+            {
+                "label": r.label,
+                "bpb": r.bpb,
+                "heldout_delta": r.heldout_delta,
+                "val_bpb_trained": r.val_bpb_trained,
+                "wall_clock_seconds": r.wall_clock_seconds,
+                "valid": r.valid,
+                "step0_anomaly": r.step0_anomaly,
+                "memorization_flag": r.memorization_flag,
+            }
+            for r in a_per_seed
+        ],
+        "b": [
+            {
+                "label": r.label,
+                "bpb": r.bpb,
+                "heldout_delta": r.heldout_delta,
+                "val_bpb_trained": r.val_bpb_trained,
+                "wall_clock_seconds": r.wall_clock_seconds,
+                "valid": r.valid,
+                "step0_anomaly": r.step0_anomaly,
+                "memorization_flag": r.memorization_flag,
+            }
+            for r in b_per_seed
+        ],
+    }
+    report["labels"] = {
+        "score_class": SCORE_CLASS_LAB_GPU,
+        "real_provider_tee": TEE_CLASS_BLOCKED,
+        "tee_class": TEE_CLASS_BLOCKED,
+        "wall_clock_never_ranks": True,
+        "miner_self_report_never_authoritative": True,
+        "not_fixture_only_synthetic": True,
+        "not_deferred_for_no_nvidia": True,
+    }
+
+    if write_report:
+        report_path = out / "prism_compare_report.v1.json"
+        report_path.write_text(
+            json.dumps(report, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        report = {**report, "report_path": str(report_path)}
+    return report
+
+
 def main(argv: list[str] | None = None) -> int:
-    """Operator CLI: offline dual-family official compare (CPU/fixture)."""
+    """Operator CLI: offline dual-family official compare (CPU/fixture or LAB-GPU)."""
     parser = argparse.ArgumentParser(
         description=(
-            "Run Prism Official Comparison Protocol v1 dual-family CPU/fixture harness "
-            f"({SIDE_A_FAMILY_ID} vs {SIDE_B_FAMILY_ID}). No GPU required; "
-            "REAL-PROVIDER TEE PASS is never claimed."
+            "Run Prism Official Comparison Protocol v1 dual-family harness "
+            f"({SIDE_A_FAMILY_ID} vs {SIDE_B_FAMILY_ID}). Default path is CPU/fixture "
+            "synthetic metrics. Use --lab-gpu-artifacts for host rank of real Lium "
+            "CUDA train manifests (score_class=LAB-GPU). REAL-PROVIDER TEE PASS is "
+            "never claimed."
         )
     )
     parser.add_argument(
@@ -521,9 +874,28 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument(
         "--device-class",
-        choices=("cpu", "cuda", "fixture"),
+        choices=("cpu", "cuda", "fixture", "lab-gpu"),
         default="fixture",
-        help="Report device class. cuda is metadata only; no GPU train is launched.",
+        help=(
+            "Report device class for the fixture path. Ignored when "
+            "--lab-gpu-artifacts is set (then device_class=lab-gpu)."
+        ),
+    )
+    parser.add_argument(
+        "--lab-gpu-artifacts",
+        type=Path,
+        default=None,
+        help=(
+            "Root containing {family}/seed-{N}/prism_run_manifest.v2.json from real "
+            "LAB-GPU trains. Host recomputes + compare_official; score_class=LAB-GPU."
+        ),
+    )
+    parser.add_argument(
+        "--seed",
+        type=int,
+        action="append",
+        default=None,
+        help="Seed(s) to load under --lab-gpu-artifacts (default: 1337). Repeatable.",
     )
     parser.add_argument(
         "--json",
@@ -532,18 +904,34 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
-    report = run_dual_family_official_compare(
-        args.output_dir,
-        mode=args.mode,  # type: ignore[arg-type]
-        device_class=args.device_class,  # type: ignore[arg-type]
-    )
+    if args.lab_gpu_artifacts is not None:
+        seeds = tuple(args.seed) if args.seed else (LAB_GPU_DEFAULT_SEED,)
+        try:
+            report = run_lab_gpu_host_official_compare(
+                args.lab_gpu_artifacts,
+                args.output_dir,
+                seeds=seeds,
+                mode=args.mode,  # type: ignore[arg-type]
+            )
+        except LabGpuArtifactsMissingError as exc:
+            print(f"BLOCKED: {exc}")
+            return 2
+    else:
+        report = run_dual_family_official_compare(
+            args.output_dir,
+            mode=args.mode,  # type: ignore[arg-type]
+            device_class=args.device_class,  # type: ignore[arg-type]
+        )
     ranking = report["ranking"]
     gpu = report["gpu_verification"]
     if args.json:
         print(json.dumps(report, indent=2, sort_keys=True))
     else:
         print(f"protocol: {report['protocol_id']} hash={report['protocol_hash'][:16]}…")
-        print(f"mode: {report['mode']} device_class={report['device_class']}")
+        print(
+            f"mode: {report['mode']} device_class={report['device_class']} "
+            f"score_class={report.get('score_class')}"
+        )
         print(
             f"side A: {report['side_a']['label']} "
             f"heldout_delta={report['side_a']['mean_heldout_delta']} "
@@ -563,7 +951,12 @@ def main(argv: list[str] | None = None) -> int:
             f"gpu_verification: {gpu['status']} ({gpu['reason']}); "
             f"claim_gpu_pass={gpu['claim_gpu_pass']}"
         )
+        print(
+            f"tee_class={report.get('tee_class')} "
+            f"real_provider_tee={report.get('real_provider_tee')}"
+        )
         print(f"tee_note: {report['tee_note']}")
+        print(f"wall_clock_ignored_for_rank={ranking.get('wall_clock_ignored_for_rank')}")
         if report.get("report_path"):
             print(f"report: {report['report_path']}")
     return 0

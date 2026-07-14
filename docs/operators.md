@@ -250,6 +250,40 @@ Report fields of interest:
 
 Do not treat the offline fixture winner as an automatic emission weight crown unless production leaderboard scoring independently agrees (leaderboard stays bpb-primary; Official Comparison invert is the lab surface only).
 
+## Lab GPU short/long Official Comparison (host rank of remote CUDA)
+
+When real dual-family CUDA trains already completed on a remote GPU host (for example paid Lium under a matched Protocol v1 pin), **rank on any CPU mission host** from the challenge-owned `prism_run_manifest.v2.json` artifacts. This path does **not** require local NVIDIA and is **not** fixture-only synthetic ranking.
+
+| Class | When |
+| --- | --- |
+| **fixture / CPU** | Synth metrics + seed packaging only; host `gpu_verification.status=DEFERRED` with no local NVIDIA |
+| **LAB-GPU** (short or long) | Real CUDA trains produced manifests; host recompute via `official_record_from_manifest` + `compare_official`; report `score_class=LAB-GPU` |
+| **REAL-PROVIDER TEE** | Always **BLOCKED / NOT_CLAIMED** on this path. Lab score success never unlocks REAL-PROVIDER PASS |
+
+Layout expected under `--lab-gpu-artifacts`:
+
+```text
+{artifacts_root}/
+  transformer-tiny-1m/seed-1337/prism_run_manifest.v2.json
+  mamba-tiny-1m/seed-1337/prism_run_manifest.v2.json
+```
+
+```bash
+export UV_CACHE_DIR=/var/tmp/uv-cache
+
+# Host rank of real LAB-GPU long-train artifacts (example mission evidence layout)
+uv run python -m prism_challenge.evaluator.official_compare_harness \
+  --lab-gpu-artifacts /path/to/lium-train/artifacts/out \
+  --output-dir dist/official-compare-lab-gpu \
+  --seed 1337
+
+# Inspect
+jq '{score_class, ranking, real_provider_tee, gpu_verification}' \
+  dist/official-compare-lab-gpu/prism_compare_report.v1.json
+```
+
+Protocol axioms still hold: held-out **primary**, prequential bpb **secondary**, wall-clock may be recorded but **never ranks**, miner self-report is non-authoritative. Exit code `2` with `BLOCKED:` means dual-family manifests were missing — do not invent scores. No HA-live Swarm mutate and no `set_weights` are required for ranking.
+
 ## Troubleshooting
 
 | Symptom | Likely cause |
@@ -262,4 +296,7 @@ Do not treat the offline fixture winner as an automatic emission weight crown un
 | `result_envelope_invalid` | Body is not a full `ExternalResultEnvelope` |
 | TEE elevated tier never grants | Expected until real-provider contracts land; only local fixtures can PASS |
 | `missing_locked_data` | The read-only FineWeb-Edu train mount is absent or empty on the GPU node |
-| Offline compare says GPU DEFERRED | Expected without `nvidia-smi`; use fixture/CPU path and do not claim GPU verify PASS |
+| Offline compare says GPU DEFERRED | Expected without `nvidia-smi` on the **fixture/CPU** path; use fixture metrics or list CUDA as metadata only |
+| LAB-GPU report still fixture | Forgot `--lab-gpu-artifacts`; fixture path is the default |
+| `BLOCKED: LAB-GPU host compare` | Missing `{family}/seed-*/prism_run_manifest.v2.json` for one or both families |
+| LAB-GPU vs REAL-PROVIDER | Lab GPU score class is scientific only; REAL-PROVIDER TEE remains BLOCKED |

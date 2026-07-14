@@ -17,18 +17,25 @@ import pytest
 from prism_challenge.evaluator.official_compare_harness import (
     DEFAULT_MAMBA_PROFILE,
     DEFAULT_TRANSFORMER_PROFILE,
+    LAB_GPU_DEFAULT_SEED,
     REPORT_SCHEMA,
+    SCORE_CLASS_LAB_GPU,
     SIDE_A_FAMILY_ID,
     SIDE_B_FAMILY_ID,
+    TEE_CLASS_BLOCKED,
     FamilySynthProfile,
+    LabGpuArtifactsMissingError,
     SynthSeedMetrics,
     build_compare_report,
     default_protocol_pin,
     gpu_verification_status,
+    lab_gpu_verification_status,
     package_unknown_style_pair,
     protocol_pin_hash,
     records_for_profile,
+    records_from_lab_gpu_artifacts,
     run_dual_family_official_compare,
+    run_lab_gpu_host_official_compare,
     synth_challenge_manifest,
 )
 from prism_challenge.evaluator.official_compare_harness import (
@@ -38,6 +45,7 @@ from prism_challenge.evaluator.official_comparison import (
     OFFICIAL_DEFAULT_SEEDS,
     PROTOCOL_ID,
     OfficialScoreRecord,
+    ProtocolPin,
     compare_official,
     protocol_budget_constants,
 )
@@ -311,3 +319,186 @@ def test_harness_cli_offline_exit_zero(tmp_path: Path, capsys: pytest.CaptureFix
     assert "winner=" in captured
     assert (tmp_path / "prism_compare_report.v1.json").is_file()
     assert "gpu_verification" in captured
+
+
+def _write_lab_gpu_family_manifest(
+    root: Path,
+    *,
+    family_id: str,
+    seed: int,
+    bpb: float,
+    heldout_delta: float,
+    wall_clock_seconds: float,
+) -> Path:
+    """Write a challenge-owned LAB-GPU-shaped v2 manifest under the expected layout."""
+    pin = ProtocolPin(seeds=(seed,))
+    metrics = SynthSeedMetrics(
+        seed=seed,
+        bpb=bpb,
+        heldout_delta=heldout_delta,
+        wall_clock_seconds=wall_clock_seconds,
+        train_heldout_gap=0.12,
+    )
+    manifest = synth_challenge_manifest(
+        metrics,
+        pin=pin,
+        family_id=family_id,
+        device="cuda",
+    )
+    manifest["score_class"] = SCORE_CLASS_LAB_GPU
+    manifest["tee_class"] = TEE_CLASS_BLOCKED
+    dest = root / family_id / f"seed-{seed}" / "prism_run_manifest.v2.json"
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return dest
+
+
+def test_lab_gpu_verification_status_not_deferred_for_lab_class() -> None:
+    """VAL-GPULAB-006: lab scores class is LAB-GPU; local no-nvidia does not DEFER lab class."""
+    gpu = lab_gpu_verification_status(train_host_note="unit-lium")
+    assert gpu["status"] == SCORE_CLASS_LAB_GPU
+    assert gpu["claim_gpu_pass"] is True  # lab scores only
+    assert gpu["real_provider_tee"] == TEE_CLASS_BLOCKED
+    assert gpu["not_deferred_for_missing_local_nvidia"] is True
+    assert gpu["score_class"] == SCORE_CLASS_LAB_GPU
+    # Fixture path stays DEFERRED / no claim on this host shape.
+    fixture_gpu = gpu_verification_status()
+    assert fixture_gpu["claim_gpu_pass"] is False
+
+
+def test_records_from_lab_gpu_artifacts_recompute_and_missing(tmp_path: Path) -> None:
+    """Host recompute yields non-null primary/secondary metrics; missing side BLOCKS list."""
+    seed = LAB_GPU_DEFAULT_SEED
+    _write_lab_gpu_family_manifest(
+        tmp_path,
+        family_id=SIDE_A_FAMILY_ID,
+        seed=seed,
+        bpb=1.2,
+        heldout_delta=0.4,
+        wall_clock_seconds=10.0,
+    )
+    a_rec, b_rec, missing = records_from_lab_gpu_artifacts(
+        tmp_path,
+        seeds=(seed,),
+        pin=ProtocolPin(seeds=(seed,)),
+    )
+    assert len(a_rec) == 1
+    assert a_rec[0].valid is True
+    assert a_rec[0].heldout_delta is not None
+    assert a_rec[0].bpb > 0.0
+    assert a_rec[0].wall_clock_seconds == 10.0
+    assert b_rec == []
+    assert missing and SIDE_B_FAMILY_ID in missing[0]
+
+
+def test_run_lab_gpu_host_official_compare_clear_winner(tmp_path: Path) -> None:
+    """VAL-GPULAB-004/006: LAB-GPU report, primary held-out winner, wall_clock ignored."""
+    seed = LAB_GPU_DEFAULT_SEED
+    root = tmp_path / "artifacts"
+    # Mamba better primary held-out but slower wall-clock; transformer better secondary bpb.
+    _write_lab_gpu_family_manifest(
+        root,
+        family_id=SIDE_A_FAMILY_ID,
+        seed=seed,
+        bpb=0.90,
+        heldout_delta=0.25,
+        wall_clock_seconds=5.0,
+    )
+    _write_lab_gpu_family_manifest(
+        root,
+        family_id=SIDE_B_FAMILY_ID,
+        seed=seed,
+        bpb=1.10,
+        heldout_delta=1.50,
+        wall_clock_seconds=500.0,
+    )
+    out = tmp_path / "report"
+    report = run_lab_gpu_host_official_compare(root, out, seeds=(seed,))
+    assert report["schema"] == REPORT_SCHEMA
+    assert report["score_class"] == SCORE_CLASS_LAB_GPU
+    assert report["device_class"] == "lab-gpu"
+    assert report["gpu_verification"]["status"] == SCORE_CLASS_LAB_GPU
+    assert report["gpu_verification"]["claim_gpu_pass"] is True
+    assert report["real_provider_tee"] == TEE_CLASS_BLOCKED
+    assert report["tee_class"] == TEE_CLASS_BLOCKED
+    assert "REAL-PROVIDER" in report["tee_note"]
+    assert report["validity"]["wall_clock_never_ranks"] is True
+    assert report["ranking"]["wall_clock_ignored_for_rank"] is True
+    assert report["ranking"]["reason"] == "primary_heldout"
+    assert report["ranking"]["winner"] == "b"
+    assert SIDE_B_FAMILY_ID in report["ranking"]["outcome_label"]["winner_label"]
+    # Non-null official metrics on both sides.
+    assert report["side_a"]["mean_heldout_delta"] is not None
+    assert report["side_b"]["mean_heldout_delta"] is not None
+    assert report["side_a"]["mean_bpb"] is not None
+    assert report["side_b"]["mean_bpb"] is not None
+    # Wall-clock imbalance must NOT flip the held-out winner (mamba is 100x slower).
+    assert float(report["side_b"]["wall_clock_seconds"] or 0) > float(
+        report["side_a"]["wall_clock_seconds"] or 0
+    )
+    report_path = Path(report["report_path"])
+    assert report_path.is_file()
+    disk = json.loads(report_path.read_text(encoding="utf-8"))
+    assert disk["score_class"] == SCORE_CLASS_LAB_GPU
+    assert disk["ranking"]["winner"] == "b"
+    assert disk["labels"]["not_deferred_for_no_nvidia"] is True
+    assert disk["labels"]["not_fixture_only_synthetic"] is True
+
+
+def test_run_lab_gpu_host_official_compare_blocked_when_missing(tmp_path: Path) -> None:
+    """Missing LAB-GPU artifacts must fail closed (BLOCKED), not invent scores."""
+    with pytest.raises(LabGpuArtifactsMissingError, match="BLOCKED"):
+        run_lab_gpu_host_official_compare(tmp_path / "empty", tmp_path / "out")
+
+
+def test_harness_cli_lab_gpu_path(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    seed = LAB_GPU_DEFAULT_SEED
+    root = tmp_path / "artifacts"
+    _write_lab_gpu_family_manifest(
+        root,
+        family_id=SIDE_A_FAMILY_ID,
+        seed=seed,
+        bpb=1.0,
+        heldout_delta=2.0,
+        wall_clock_seconds=12.0,
+    )
+    _write_lab_gpu_family_manifest(
+        root,
+        family_id=SIDE_B_FAMILY_ID,
+        seed=seed,
+        bpb=1.2,
+        heldout_delta=0.5,
+        wall_clock_seconds=80.0,
+    )
+    out = tmp_path / "out"
+    code = harness_main(
+        [
+            "--output-dir",
+            str(out),
+            "--lab-gpu-artifacts",
+            str(root),
+            "--seed",
+            str(seed),
+        ]
+    )
+    assert code == 0
+    captured = capsys.readouterr().out
+    assert "score_class=LAB-GPU" in captured
+    assert "winner=" in captured
+    assert "real_provider_tee=BLOCKED" in captured
+    assert (out / "prism_compare_report.v1.json").is_file()
+
+
+def test_harness_cli_lab_gpu_missing_exits_blocked(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    code = harness_main(
+        [
+            "--output-dir",
+            str(tmp_path / "out"),
+            "--lab-gpu-artifacts",
+            str(tmp_path / "missing"),
+        ]
+    )
+    assert code == 2
+    assert "BLOCKED" in capsys.readouterr().out

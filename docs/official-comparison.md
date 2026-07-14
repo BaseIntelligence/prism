@@ -315,6 +315,17 @@ On a host with working NVIDIA + Docker GPU runtime:
 2. Capture challenge-authored manifests per seed, pin hash, and `compare_official` outcome.
 3. Still label TEE honestly: LOCAL-FIXTURE vs blocked REAL-PROVIDER paths independently of the scientific ranking.
 
+### 8.3 LAB-GPU path without local NVIDIA (remote CUDA + host rank)
+
+Local `nvidia-smi` DEFERRED applies to **host-local GPU smoke** only. When real dual-family CUDA trains already ran on a remote GPU (e.g. paid Lium long train under a matched Protocol pin) and challenge-owned `prism_run_manifest.v2.json` artifacts were brought back:
+
+1. Rank on a **CPU mission host** with `python -m prism_challenge.evaluator.official_compare_harness --lab-gpu-artifacts <root>`.
+2. Label the report `score_class=LAB-GPU` / `device_class=lab-gpu` (not fixture-only synthetic; not “DEFERRED-for-no-nvidia”).
+3. Primary = held-out; secondary = Prism-recomputed prequential bpb; wall-clock recorded but ignored for rank.
+4. `REAL-PROVIDER TEE` remains **BLOCKED / NOT_CLAIMED**. Lab score success never unlocks REAL-PROVIDER PASS and invents no trust roots.
+
+Short vs long refers to the remote train pin (token budget / spend ceiling), not the host rank step. Missing dual-family manifests must surface as **BLOCKED**, not invented scores. See [Operators — Lab GPU short/long Official Comparison](operators.md#lab-gpu-shortlong-official-comparison-host-rank-of-remote-cuda).
+
 ---
 
 ## 9. TEE honesty is orthogonal
@@ -395,7 +406,20 @@ uv run python -m prism_challenge.evaluator.official_compare_harness \
 uv run pytest tests/test_official_compare_harness.py -q
 ```
 
-GPU verification status in the report is **DEFERRED** when the host lacks NVIDIA; the harness never toggles `claim_gpu_pass` to true.
+GPU verification status in the **fixture** report is **DEFERRED** when the host lacks NVIDIA; that harness never toggles `claim_gpu_pass` to true.
+
+### 11.2 LAB-GPU host rank of remote train artifacts
+
+```bash
+export UV_CACHE_DIR=/var/tmp/uv-cache
+uv run python -m prism_challenge.evaluator.official_compare_harness \
+  --lab-gpu-artifacts /path/to/artifacts/out \
+  --output-dir dist/official-compare-lab-gpu \
+  --seed 1337
+uv run pytest tests/test_official_compare_harness.py -q -k lab_gpu
+```
+
+Report marks `score_class=LAB-GPU`, `gpu_verification.status=LAB-GPU`, `real_provider_tee=BLOCKED`. Exit `2` is a clear BLOCKED when artifacts are missing.
 
 ---
 
@@ -405,7 +429,7 @@ GPU verification status in the report is **DEFERRED** when the host lacks NVIDIA
 | --- | --- |
 | [Scoring](scoring.md) | Production leaderboard math (bpb primary); explicit Official Comparison invert callout |
 | [Submissions](submissions.md) | Two-script contract and `PrismContext` honest hooks |
-| [Operators](operators.md) | Offline dual-family Official Comparison harness commands (CPU/fixture) |
+| [Operators](operators.md) | Offline dual-family Official Comparison harness (CPU/fixture) + LAB-GPU host rank of remote CUDA |
 | [Miner guide](miner/README.md) | Lab seed families and submission shape |
 | [Security](security.md) | Sandbox, deterministic admission, TEE fail-closed honesty |
 | [Scaling](scaling.md) | Single-node multi-GPU contract (pin may force nproc=1) |
