@@ -230,15 +230,15 @@ def lag_nll_from_bins(
             return float("inf")
         numeric.sort(key=lambda kv: kv[0])
         # Use the middle of the upper half.
-        upper = numeric[len(numeric) // 2 :]
-        vals = [v for _, v in upper if math.isfinite(v)]
+        upper_pairs = numeric[len(numeric) // 2 :]
+        vals = [v for _, v in upper_pairs if math.isfinite(v)]
         return float(sum(vals) / len(vals)) if vals else float("inf")
     seq = [float(x) for x in lag_nll_by_bin]
     if not seq:
         return float("inf")
     cut = max(1, len(seq) // 3)
-    upper = seq[-cut:]
-    finite = [v for v in upper if math.isfinite(v)]
+    upper_seq = seq[-cut:]
+    finite = [v for v in upper_seq if math.isfinite(v)]
     return float(sum(finite) / len(finite)) if finite else float("inf")
 
 
@@ -656,7 +656,7 @@ def build_efficiency_annex(
 ) -> EfficiencyAnnex:
     """Assemble efficiency annex; null fields stay null (no invention)."""
     vram = peak_vram_gib
-    device_label = device
+    device_label: str = device
     if vram is None:
         vram, device_label = peak_vram_gib_available(
             device=device, peak_allocator_bytes=peak_allocator_bytes

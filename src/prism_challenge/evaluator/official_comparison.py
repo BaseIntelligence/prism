@@ -499,14 +499,19 @@ def aggregate_official_records(
     bpb_std = math.sqrt(variance)
     overfit_rate = sum(1.0 for r in clean if r.memorization_flag) / len(clean)
 
+    mean_delta: float | None
+    mean_val: float | None
+    heldout_std: float | None
     if primary_form == PRIMARY_FORM_HELDOUT_DELTA:
         deltas = [float(r.heldout_delta) for r in clean if r.heldout_delta is not None]
         mean_delta = (sum(deltas) / len(deltas)) if deltas else None
         if len(deltas) > 1:
             d_mean = mean_delta if mean_delta is not None else 0.0
             heldout_std = math.sqrt(sum((d - d_mean) ** 2 for d in deltas) / len(deltas))
+        elif len(deltas) == 1:
+            heldout_std = 0.0
         else:
-            heldout_std = 0.0 if len(deltas) == 1 else None
+            heldout_std = None
         mean_val = None
     else:
         vals = [float(r.val_bpb_trained) for r in clean if r.val_bpb_trained is not None]
@@ -1046,7 +1051,7 @@ def detect_polar_conflict(
         and math.isfinite(a_score)
         and math.isfinite(b_score)
     )
-    if not filled:
+    if not filled or a_score is None or b_score is None:
         return PolarConflictResult(
             tie_polar=False,
             crown_allowed=True,
@@ -1058,8 +1063,10 @@ def detect_polar_conflict(
             long_ctx_enabled_and_filled=False,
         )
 
-    floor_fail_a = float(a_score) < long_ctx_floor
-    floor_fail_b = float(b_score) < long_ctx_floor
+    a_score_f = float(a_score)
+    b_score_f = float(b_score)
+    floor_fail_a = a_score_f < long_ctx_floor
+    floor_fail_b = b_score_f < long_ctx_floor
     # Prefer explicit per-record floor flag when set.
     if a.long_ctx_floor_pass is False:
         floor_fail_a = True
