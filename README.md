@@ -99,7 +99,7 @@ image-digest and attestation tiers). Gated behind `worker_plane` (default off). 
 | <a href="docs/architecture.md">Architecture</a> | Service design and forced-init re-execution |
 | <a href="docs/submissions.md">Submission format</a> | The two-script contract and `PrismContext` |
 | <a href="docs/scoring.md">Scoring & rewards</a> | Leaderboard prequential bits-per-byte and tie-breakers |
-| <a href="docs/official-comparison.md">Official Comparison v1</a> | Held-out primary / bpb secondary pair protocol (lab) |
+| <a href="docs/official-comparison.md">Official Comparison v1</a> | Held-out primary / bpb secondary pair protocol (lab) + multimetric.v1.1 scorecard annex |
 | <a href="docs/scaling.md">Scaling</a> | Single-node multi-GPU contract |
 | <a href="docs/security.md">Security model</a> | Sandbox, deterministic admission, anti-cheat |
 | <a href="docs/api.md">API</a> | Internal and public routes |

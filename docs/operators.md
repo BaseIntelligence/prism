@@ -250,8 +250,27 @@ Report fields of interest:
 
 Do not treat the offline fixture winner as an automatic emission weight crown unless production leaderboard scoring independently agrees (leaderboard stays bpb-primary; Official Comparison invert is the lab surface only).
 
-## Lab GPU short/long Official Comparison (host rank of remote CUDA)
+### Multi-metric scorecard v1.1 (operators)
 
+Additive annex on Protocol v1: **`scorecard_id=multimetric.v1.1`**. Full catalogue and polar rules: [Official Comparison §14](official-comparison.md#14-multi-metric-scorecard-annex-v11-scorecard_idmultimetricv11).
+
+| Operator note | Detail |
+| --- | --- |
+| Default winner | When axes do **not** polar-conflict, keep v1 `compare_official` held-out primary then bpb secondary |
+| Polar conflict | If short-gen winner ≠ long-ctx winner beyond ε (or floor veto on one side only), authoritative claim is **`TIE_POLAR`**, `crown_allowed=false` — publish the scorecard vector; no solitary arch crown |
+| Multi-seed | Public non-provisional scorecard requires clean **K≥3**; K=1 is provisional only |
+| Prior LAB-GPU | Prior short-ctx K=1 mamba heldout lead is **provisional only**; insufficient for architecture superiority |
+| Suites | Validity V, short-gen, long-ctx (needle / MQAR / induction-copy / lag-NLL), sample-efficiency, memo, efficiency (VRAM / tok/s / params), stability — mark not-run honestly if a suite is missing |
+| TEE / ops | REAL-PROVIDER TEE stays **BLOCKED**; always-terminate paid pods; no live Swarm mutate; no `set_weights` from compare |
+
+Inspect scorecard fields when present:
+
+```bash
+jq '{protocol_id, scorecard_id, scorecard, ranking, real_provider_tee, honesty_note}' \
+  dist/official-compare/prism_compare_report.v1.json
+```
+
+## Lab GPU short/long Official Comparison (host rank of remote CUDA)
 When real dual-family CUDA trains already completed on a remote GPU host (for example paid Lium under a matched Protocol v1 pin), **rank on any CPU mission host** from the challenge-owned `prism_run_manifest.v2.json` artifacts. This path does **not** require local NVIDIA and is **not** fixture-only synthetic ranking.
 
 | Class | When |
@@ -284,6 +303,7 @@ jq '{score_class, ranking, real_provider_tee, gpu_verification}' \
 
 Protocol axioms still hold: held-out **primary**, prequential bpb **secondary**, wall-clock may be recorded but **never ranks**, miner self-report is non-authoritative. Exit code `2` with `BLOCKED:` means dual-family manifests were missing — do not invent scores. No HA-live Swarm mutate and no `set_weights` are required for ranking.
 
+**Provisional honesty for prior K=1 short-ctx LAB-GPU wins:** a single-seed mamba heldout_delta lead under short context is a valid **provisional** lab observation under Protocol v1, **not** multi-seed public architecture superiority. Apply the multimetric.v1.1 scorecard (long-ctx, sample-eff, K≥3, efficiency, polar rules) before any crown language. REAL-PROVIDER TEE remains BLOCKED on this path.
 ## Troubleshooting
 
 | Symptom | Likely cause |
@@ -300,3 +320,5 @@ Protocol axioms still hold: held-out **primary**, prequential bpb **secondary**,
 | LAB-GPU report still fixture | Forgot `--lab-gpu-artifacts`; fixture path is the default |
 | `BLOCKED: LAB-GPU host compare` | Missing `{family}/seed-*/prism_run_manifest.v2.json` for one or both families |
 | LAB-GPU vs REAL-PROVIDER | Lab GPU score class is scientific only; REAL-PROVIDER TEE remains BLOCKED |
+| Prior mamba short-ctx win treated as “Mamba better architecture” | K=1 short-ctx LAB-GPU is provisional; require multimetric.v1.1 scorecard + K≥3; TIE_POLAR if short vs long axes disagree |
+| Scorecard long-ctx / sample-eff fields missing | Suite not run yet — mark not-run/BLOCKED; do not invent metrics |

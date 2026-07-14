@@ -147,6 +147,62 @@ def test_official_comparison_protocol_v1_is_documented() -> None:
     assert "multi-seed" in lower or "multi seed" in lower or "seeds" in lower
 
 
+def test_official_comparison_scorecard_v1_1_is_documented() -> None:
+    """Official Comparison multimetric scorecard v1.1 (VAL-SCORE-001, VAL-SCORE-012)."""
+    protocol = read_doc("docs/official-comparison.md")
+    operators = read_doc("docs/operators.md")
+    scoring = read_doc("docs/scoring.md")
+    lower = protocol.lower()
+    op_lower = operators.lower()
+    scoring_lower = scoring.lower()
+
+    # Annex identity: additive multimetric.v1.1 on prism_official_compare.v1 (not sole v2 crown).
+    assert "multimetric.v1.1" in protocol
+    assert "scorecard_id" in lower
+    assert "prism_official_compare.v1" in lower
+    assert "multi-metric scorecard" in lower or "multimetric scorecard" in lower or "scorecard annex" in lower
+    assert "not a full v2" in lower or "sole weighted crown" in lower
+    # Tiers V/P/S/R + A→Z metric catalogue anchors.
+    assert "validity" in lower
+    assert "short-gen" in lower or "heldout_delta" in lower
+    assert "needle" in lower
+    assert "mqar" in lower or "associative recall" in lower
+    assert "induction" in lower or "copy" in lower
+    assert "lag" in lower and ("nll" in lower or "lag_nll" in lower or "lag-nll" in lower)
+    assert "sample-efficiency" in lower or "sample efficiency" in lower or "sample_eff" in lower
+    assert "memorization" in lower or "memo_gap" in lower
+    assert "vram" in lower
+    assert "tokens" in lower and ("per" in lower or "tok/s" in lower or "tokens_per_s" in lower)
+    assert "stability" in lower or "nan" in lower
+    assert "multi-seed" in lower
+    assert "k≥3" in lower or "k>=3" in lower or "k≥3" in protocol
+    # Default v1 rank preserved + mandatory TIE_POLAR / crown_allowed=false.
+    assert "primary_heldout" in lower or "held-out primary" in lower or "v1 preserved" in lower
+    assert "tie_polar" in lower
+    assert "crown_allowed" in lower and "false" in lower
+    assert "polar" in lower
+
+    # Honesty: prior LAB-GPU K=1 short-ctx mamba heldout lead is provisional only.
+    assert "provisional" in lower
+    assert "k=1" in lower or "k = 1" in lower
+    assert "mamba" in lower
+    assert "architecture superiority" in lower or "architecture-superiority" in lower
+    assert "insufficient" in lower or "provisional only" in lower
+
+    # Non-claim: no REAL-PROVIDER TEE unlock from scorecard / LAB-GPU.
+    assert "real-provider" in lower
+    assert "blocked" in lower
+    assert "never" in lower or "not" in lower
+
+    # Operator + scoring callouts cover the annex (VAL-SCORE-001 evidence surface).
+    assert "multimetric.v1.1" in operators or "scorecard" in op_lower
+    assert "tie_polar" in op_lower
+    assert "provisional" in op_lower
+    assert "multimetric.v1.1" in scoring or "scorecard" in scoring_lower
+    assert "tie_polar" in scoring_lower
+    assert "provisional" in scoring_lower
+
+
 def test_llm_hard_gate_is_documented() -> None:
     """Docs say the LLM hard gate/gateway are removed; admission is deterministic."""
     security = read_doc("docs/security.md")

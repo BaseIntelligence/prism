@@ -11,8 +11,8 @@ itself, authors the run manifest, and ignores any value the miner reports.
 A single combined module no longer satisfies the contract.
 See [Architecture](architecture.md) and [Scoring](scoring.md) for the re-execution and scoring detail.
 For the architecture-agnostic **Official Comparison Protocol v1** (held-out primary ranking, honest
-hooks table, GPU deferred without NVIDIA), see [Official Comparison](official-comparison.md).
-
+hooks table, GPU deferred without NVIDIA) and multimetric scorecard annex **v1.1**
+(`scorecard_id=multimetric.v1.1`), see [Official Comparison](official-comparison.md).
 ## The Two-Script Contract
 
 A bundle must contain two **distinct** scripts.

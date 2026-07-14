@@ -440,9 +440,233 @@ Research background (mission-only audit, not shipping product claim): assembly n
 
 ## 13. Versioning
 
-- **v1** = this document: held-out primary, bpb secondary, anti-overfit + step-0, matched budgets, wall-clock never primary, multi-seed residual, honest hooks, miner self-report non-authoritative, TEE orthogonal, GPU deferred without NVIDIA.
-- Breaking changes to pin fields, ranking order, or honesty rules require a new protocol_id (`v2+`) and a docs bump.
+- **v1** = base protocol in this document: held-out primary, bpb secondary, anti-overfit + step-0, matched budgets, wall-clock never primary, multi-seed residual, honest hooks, miner self-report non-authoritative, TEE orthogonal, GPU deferred without NVIDIA / LAB-GPU remote rank allowed.
+- **v1.1 scorecard annex** = additive multi-metric scorecard (`scorecard_id=multimetric.v1.1`) defined in §14. It **does not** replace v1 `compare_official` default rank when axes do not polar-conflict. A full sole weighted-crown rewrite remains reserved for a future `v2+` protocol_id and is **not** claimed by v1.1.
+- Breaking changes to pin fields, ranking order, or honesty rules of the base protocol require a new protocol_id (`v2+`) and a docs bump. Additive scorecard fields may evolve under the `scorecard_id` namespace without rewriting base `protocol_id`.
 
 ---
 
-*End of Prism Official Comparison Protocol v1.*
+## 14. Multi-metric scorecard annex v1.1 (`scorecard_id=multimetric.v1.1`)
+
+**Annex identity:** Official Comparison multi-metric scorecard **v1.1**  
+**scorecard_id:** `multimetric.v1.1`  
+**Base protocol:** still `prism_official_compare.v1`  
+**Status:** Additive annex on Protocol v1 (not a full v2 sole weighted crown rewrite)  
+**Design baseline:** mission research `official-comparison-multimetric-v2-design.md` adapted here as the shipping v1.1 annex vocabulary (tiers V/P/S/R, metric catalogue, polar rule, floors, non-claims). Product code lands scorecard fields and suites in the accompanying `comp-scorecard` track.
+
+### 14.1 Why v1 alone is not architecture superiority
+
+Protocol v1 + a single short-context dual-family CUDA train can publish a valid `primary_heldout` winner under a matched pin. That is **not** enough to claim architecture superiority of Mamba over Transformer (or the reverse):
+
+| Gap | Why it breaks a superiority claim |
+| --- | --- |
+| K=1 seed | Init / stream luck; public non-provisional claims require multi-seed K≥3 |
+| Short `seq_len` only | Known SSM associative-recall / lag weaknesses untested; Transformer long-T cost unmeasured |
+| No long-ctx suite | Needle, MQAR, induction/copy, lag-NLL not in the rank key |
+| No sample-efficiency curve | End-of-budget snapshot confounds slow-start vs asymptote |
+| No efficiency annex | Peak VRAM / tokens-per-s / params unreported as Pareto surface |
+| Recipe confounds | Different train LRs or recipes can look like “arch” wins |
+| Secondary may disagree primary | A single scalar crown hides axis conflict |
+
+Scorecard v1.1 exists so partial scoreboards stop over-claiming while still preserving the v1 default rank when axes agree.
+
+### 14.2 Relationship to Protocol v1 default rank
+
+| Situation | Authoritative headline winner |
+| --- | --- |
+| Scientific axes do **not** polar-conflict (short-gen clear winner; long-ctx does not reverse beyond ε, or long-ctx suite disabled / not yet filled) | **v1 preserved:** `compare_official` held-out primary then prequential bpb secondary (`reason=primary_heldout` or documented bpb secondary) |
+| Short-gen winner and long-ctx winner disagree beyond ε, or one side fails a long-ctx floor while the other passes | **`TIE_POLAR`** (see §14.5); `crown_allowed=false`; scorecard vector must be published |
+| K_clean < 3 | Public posture is **provisional** only (no architecture-superiority language) |
+
+Default ranking order for the `ranking.winner` field therefore remains Protocol v1 when polar conflict is absent. The scorecard annex always extends the report with a multi-metric vector; it does not silently replace emission or invent a sole weighted crown.
+
+### 14.3 Tiers V / P / S / R
+
+| Tier | Name | Role |
+| --- | --- | --- |
+| **V** | Validity gates | Fail-closed before scientific ranking. Both sides must pass included-seed gates. |
+| **P** | Primary scientific axes | Co-equal scorecard axes that must appear in published vectors when the suite is enabled. |
+| **S** | Secondary / efficiency | Continuity with v1 secondary bpb plus Pareto efficiency (VRAM, tok/s, params). Efficiency never sole-ranks over scientific axes under a polar rule. |
+| **R** | Robustness residual | Multi-seed variance, memo/step0 residual, stability flags. |
+| **D** | Diagnostic only (optional) | Estimated FLOPs, UI scalar mash — never authoritative for arch supremacy. |
+
+### 14.4 Full A→Z metric catalogue
+
+Direction: **↑** higher better, **↓** lower better. Floors and ε bands are host/pin-documented; random baselines are recorded per task when accuracies are published.
+
+#### Validity (V)
+
+| ID | Metric | Definition | Dir |
+| --- | --- | --- | --- |
+| M-V01 | `stop_token_budget` | Both sides stop on `token_budget` (or equal data_exhausted + equal covered_bytes) | bool |
+| M-V02 | `finite_bpb` | Prism-recomputed bpb finite, in-band, positive coverage | bool |
+| M-V03 | `step0_clean` | Step-0 anomaly absent (`step0_loss ≥ 0.5 · ln(V)`) | bool |
+| M-V04 | `param_cap` | Realized params ≤ 150M (rechecked after first scored forward) | bool |
+| M-V05 | `matched_pin` | Protocol pin hash equality both sides | bool |
+| M-V06 | `multi_seed_K` | Public non-provisional requires clean K≥3; K=1 is provisional only | bool/label |
+| M-V07 | `challenge_authored` | Miner self-report ignored; challenge owns metrics | bool |
+| M-V08 | `force_instrument` | Training sinks via `iter_train_batches` / honest hooks | bool |
+
+#### Primary scientific (P) — short-gen, long-ctx, sample-eff, memo
+
+| ID | Metric | Definition | Dir |
+| --- | --- | --- | --- |
+| M-P01 | short-gen `heldout_delta` | Mean `bpb(random twin) − bpb(trained)` on secret val (preferred primary A) | ↑ |
+| M-P02 | short-gen `val_bpb_trained` | Absolute held-out free energy when twin unavailable | ↓ |
+| M-P03 | long-ctx suite mean | Macro-mean of normalized task scores at eval T ≥ train T: **needle**, **MQAR** / associative recall, **induction** / copy | ↑ |
+| M-P04 | `lag_nll` | Held-text next-token NLL/bpb stratified by lag bins (long-lag bucket reported) | ↓ |
+| M-P05 | sample-efficiency | Quality-vs-tokens curve: multi-mark online stream bpb or AUC from challenge capture marks (e.g. 50k/100k/250k/500k) | ↑ quality / ↓ bpb@marks |
+| M-P06 | memorization `memo_gap` | Converged train vs val bpb gap; threshold 1.0 remains; continuous + flag | ↓ gap |
+
+**Long-context suite notes (seed-scale defaults):**
+
+| Task | Probe intent | Floor note |
+| --- | --- | --- |
+| **Needle** | Selective retrieval under distractors at depth ∈ {0.1, 0.5, 0.9}·T | Publish accuracy and relative_to_chance vs random baseline; lab floor is pin-documented (e.g. relative_to_chance ≥ 0.05 when suite enabled) |
+| **MQAR / associative recall** | Key–value binding under many pairs / lag | Same relative-to-chance honesty; chance baseline recorded |
+| **Induction / copy** | In-context bigram completion / exact copy after delimiter | Exact-match or restricted-candidate accuracy; near-zero open-vocab chance for free copy |
+| **lag-NLL** | Compression quality vs dependency distance | Long-lag bin must not be silently omitted when suite enabled |
+
+When long-ctx suite is **disabled**, reports MUST mark long-ctx fields as not-run / null rather than inventing metrics. Implementation of suite runners is a product code track; this annex freezes the catalogue and floors vocabulary.
+
+#### Secondary / efficiency (S)
+
+| ID | Metric | Definition | Dir |
+| --- | --- | --- | --- |
+| M-S01 | prequential `bpb` | Prism online CE code-length / covered_bytes (v1 secondary continuity) | ↓ |
+| M-S02 | `params` | Realized parameter count | ↓ among iso-quality |
+| M-S03 | peak `VRAM` | Peak allocator GiB during train and/or long eval when GPU available | ↓ |
+| M-S04 | `tokens_per_s` | Tokens processed / wall during train (diagnostic Pareto; pure-torch SSM thrash allowed) | ↑ |
+| M-S05 | quality-per-param / quality-per-GiB | Optional display ratios within matched size band | ↑ |
+
+Efficiency fields never alone overturn a scientific axis under the polar rule. Wall-clock alone still never ranks.
+
+#### Robustness / stability (R)
+
+| ID | Metric | Definition | Dir |
+| --- | --- | --- | --- |
+| M-R01 | `seed_std_bpb` | Std of secondary bpb across clean seeds (when K>1) | ↓ |
+| M-R02 | `seed_std_heldout` | Std of heldout_delta across clean seeds | ↓ |
+| M-R03 | stability | NaN/Inf events, grad-spike rate, instability flag from train capture | ↓ / clean preferred |
+| M-R04 | memo / step0 residual | Memorization flag rate and step0 disqualify residual on scorecard | clean preferred |
+
+### 14.5 Polar conflict rule (`TIE_POLAR`)
+
+Normative when the long-ctx suite is enabled and measurably filled:
+
+```text
+ε_h = 5e-3   # short-gen (heldout_delta or pin primary units)
+ε_l = 0.02   # long_ctx mean accuracy (or pin-documented long-ctx units)
+
+if short-gen(A) better than short-gen(B) by > ε_h
+   AND long_ctx(B) better than long_ctx(A) by > ε_l:
+       authoritative claim = TIE_POLAR
+       crown_allowed = false
+       publish full scorecard vector for A and B
+       forbid solitary architecture supremacy language
+
+# Floor form (equivalent protective effect):
+if A fails long_ctx floor and B passes → B may take long-ctx competence; if short-gen still favors A beyond ε_h, still TIE_POLAR (no sole crown)
+if both fail long_ctx floor → no arch-supremacy language; diagnostics only beyond V/S residual
+```
+
+When long-ctx is disabled or both long-ctx scores are null/not-run, polar comparison does not fire and **v1 primary_heldout default rank is preserved**.
+
+`crown_allowed=false` means: report `ranking.winner` may surface `tie` / `TIE_POLAR` (or a provisional field) and consumers **must not** announce a unique architecture crown. Downstream UI may still show the vector for operators.
+
+### 14.6 Multi-seed public vs provisional
+
+| Seed posture | Label | Allowed language |
+| --- | --- | --- |
+| Clean K≥3 under matched pin | public scorecard (when other V gates pass) | Rank + scorecard under v1.1 rules |
+| K=1 or K_clean < 3 | **provisional** | Lab signal only; no architecture superiority claim |
+| Invalid V on both | invalid / unranked pair | Blocked or non-claim |
+
+### 14.7 Honesty: prior LAB-GPU K=1 short-ctx mamba heldout lead is provisional only
+
+A prior LAB-GPU dual-family short-context run under Protocol pin v1 (example: `seq_len=128`, `token_budget=500000`, **seed list K=1**, pure-torch Transformer vs Mamba seeds) observed a **mamba-tiny-1m higher `heldout_delta`** than `transformer-tiny-1m`, with Transformer stronger on secondary prequential bpb. Host rank therefore used `reason=primary_heldout` with `score_class=LAB-GPU`.
+
+Under scorecard v1.1 that prior win is:
+
+- **valid as a provisional short-ctx, K=1, token-budget-matched lab observation**
+- **insufficient for architecture superiority** of Mamba over Transformers
+- **not** a multi-seed public claim
+- **not** a long-context, sample-efficiency, or efficiency claim
+- **not** a REAL-PROVIDER TEE claim
+- **not** an automatic emission weight crown
+
+Full architecture claim language requires the multi-metric scorecard (this annex) with multi-seed K≥3 public posture and cumple scientific axes without forbidden polar crown.
+
+### 14.8 Non-claims (normative)
+
+Scorecard v1.1 **does not**:
+
+1. Claim **REAL-PROVIDER TEE PASS** (remote CUDA / Lium rent / LAB-GPU scores never unlock REAL-PROVIDER).
+2. Rewrite production leaderboard emission (still bpb-primary on [Scoring](scoring.md)).
+3. Define a secret sole weighted scalar that replaces the published vector as the only scientific output.
+4. Invent long-ctx / efficiency metrics when suites did not run (fail closed: mark BLOCKED / not-run).
+5. Treat wall-clock or miner self-report as rank authority.
+6. Promote today’s or any K=1 short-ctx win as literature-grade architecture superiority.
+
+Optional dual scalar indexes for UI (if ever published) MUST be labeled non-authoritative and still subject to V floors + `TIE_POLAR`.
+
+### 14.9 Report annex sketch
+
+Reports MAY extend `prism_compare_report.v1` (or emit a parallel annex block) with:
+
+```json
+{
+  "schema": "prism_compare_report.v1",
+  "protocol_id": "prism_official_compare.v1",
+  "scorecard_id": "multimetric.v1.1",
+  "scorecard": {
+    "tiers": ["V", "P", "S", "R"],
+    "multi_seed": {"K": 1, "public": false, "provisional": true},
+    "validity": {"stop_token_budget": true, "finite_bpb": true, "step0_clean": true, "param_cap": true, "matched_pin": true},
+    "short_gen": {"heldout_delta_a": null, "heldout_delta_b": null},
+    "long_ctx": {
+      "enabled": false,
+      "needle": null,
+      "mqar": null,
+      "induction_copy": null,
+      "lag_nll": null,
+      "suite_mean": null,
+      "floors_relative_to_chance": true
+    },
+    "sample_efficiency": null,
+    "memorization": {"memo_gap_a": null, "memo_gap_b": null},
+    "efficiency": {"peak_vram_gib": null, "tokens_per_s": null, "params": null},
+    "stability": {"nan_inf_events": null, "grad_spike_rate": null},
+    "polar": {
+      "tie_polar": false,
+      "crown_allowed": true,
+      "reason": null
+    }
+  },
+  "ranking": {
+    "winner": "a|b|tie",
+    "rule": "heldout_primary_then_bpb_secondary",
+    "default_v1_preserved_when_no_polar_conflict": true
+  },
+  "tee_note": "orthogonal; REAL-PROVIDER PASS not claimed",
+  "honesty_note": "prior LAB-GPU K=1 short-ctx mamba heldout lead is provisional only; scorecard required for full claim language"
+}
+```
+
+When polar conflict fires, set `polar.tie_polar=true`, `polar.crown_allowed=false`, and make the authoritative claim `TIE_POLAR` regardless of pure short-gen inclination.
+
+### 14.10 Operator readiness (scorecard suites)
+
+1. Run Protocol v1 validity + short-gen first (CPU fixture or LAB-GPU manifests).
+2. Fill multi-seed K≥3 for public posture when claiming beyond provisional.
+3. Run long-ctx suite (needle / MQAR / induction-copy / lag-NLL) and record floors vs chance.
+4. Derive sample-efficiency marks from challenge online capture (not miner curves).
+5. Record efficiency (VRAM / tok/s / params) when GPU path available.
+6. Emit scorecard vector + apply `TIE_POLAR` if short-gen vs long-ctx disagree.
+7. Keep REAL-PROVIDER TEE = **BLOCKED**; always-terminate paid pods; no Swarm mutate; no `set_weights` from compare.
+
+See [Operators](operators.md) for offline harness and LAB-GPU host-rank commands; suite runners land with the implementation track.
+
+---
+
+*End of Prism Official Comparison Protocol v1 (+ multimetric scorecard annex v1.1).*

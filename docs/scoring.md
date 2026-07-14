@@ -6,12 +6,18 @@ bits-per-byte (bpb)** score the challenge computes itself from a forced-init re-
 delta breaks near-ties and an anti-memorization gap penalizes overfitting. **Lower bits-per-byte is
 better** on that path.
 
-> **Official Comparison Protocol v1 ranking invert.** The offline
+> **Official Comparison Protocol v1 ranking invert (+ scorecard v1.1).** The offline
 > [Official Comparison](official-comparison.md) surface (**not** this leaderboard) ranks with
-> **held-out / generalization as PRIMARY** and prequential bpb as **SECONDARY**. Do not apply
-> “bpb primary” language from this page to Official Comparison headlines. Emission weights still
-> follow the leaderboard path below unless a separate product mode says otherwise.
-
+> **held-out / generalization as PRIMARY** and prequential bpb as **SECONDARY**. The additive
+> multi-metric scorecard annex (`scorecard_id=multimetric.v1.1`) publishes validity,
+> short-gen, long-ctx, sample-efficiency, memorization, multi-seed, efficiency, and stability
+> fields and applies **`TIE_POLAR`** / `crown_allowed=false` when short-gen vs long-ctx disagree.
+> When axes do not polar-conflict, the default Official Comparison winner stays the v1 heldout
+> primary rule. Do not apply “bpb primary” language from this page to Official Comparison
+> headlines, and do not treat the scorecard multi-metric vector as emission ranking. Emission
+> weights still follow the leaderboard path below unless a separate product mode says otherwise.
+> Prior LAB-GPU K=1 short-ctx wins are **provisional only**; REAL-PROVIDER TEE remains orthogonal
+> and **BLOCKED**.
 ```mermaid
 flowchart LR
     Loss[Single-pass online loss stream] --> Bpb[Prequential bits-per-byte]
@@ -68,8 +74,10 @@ small epsilon, so a strictly lower bpb is never ranked worse on the leaderboard 
 secret val split scored, the run is graded on bpb alone.
 
 On the **Official Comparison** surface the ranking axes invert: held-out becomes the ranking
-primary and prequential bpb becomes secondary ([Official Comparison Protocol v1](official-comparison.md)).
-
+primary and prequential bpb becomes secondary
+([Official Comparison Protocol v1](official-comparison.md)). The multi-metric scorecard annex
+v1.1 (`multimetric.v1.1`) adds the A→Z scientific vector and mandatory **TIE_POLAR** when short
+held-out and long-context axes disagree beyond ε; it does **not** change this leaderboard path.
 ## Anti-Memorization Gap
 
 The challenge measures the train-vs-held-out gap (converged train bpb vs held-out val bpb on the same
@@ -98,9 +106,9 @@ Every number above is recomputed by the challenge from the challenge-authored
 raw-loss term and the v1-NAS architecture/training ownership pools are retired from the score.
 
 Miner self-reports remain non-authoritative on both the leaderboard path and Official Comparison
-mode. REAL-PROVIDER TEE labels are orthogonal to ranking: see [Official Comparison](official-comparison.md)
-§ TEE honesty and [Security](security.md).
-
+mode (including scorecard v1.1). REAL-PROVIDER TEE labels are orthogonal to ranking: see
+[Official Comparison](official-comparison.md) § TEE honesty / scorecard non-claims and
+[Security](security.md).
 ## Reference Studies
 
 - **Prequential / online coding** — Dawid, 1984: score the integrated predict-then-train loss, not a
