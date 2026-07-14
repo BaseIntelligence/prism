@@ -23,7 +23,9 @@ from prism_challenge.evaluator.official_compare_harness import (
 from prism_challenge.evaluator.official_comparison import (
     OFFICIAL_EPS_HELDOUT,
     OFFICIAL_EPS_LONG_CTX,
+    OFFICIAL_LONG_CTX_CHANCE,
     OFFICIAL_LONG_CTX_FLOOR,
+    OFFICIAL_LONG_CTX_RELATIVE_FLOOR,
     OFFICIAL_MIN_PUBLIC_SEEDS,
     PROTOCOL_ID,
     SCORECARD_ID,
@@ -396,6 +398,77 @@ def test_val_score_008_k3_aggregates_public_and_std() -> None:
     assert annex["multi_seed"]["provisional"] is False
     assert annex["stability"]["bpb_std"]["a"] == pytest.approx(agg.bpb_std)
     assert annex["stability"]["heldout_std"]["a"] == pytest.approx(agg.heldout_std)
+
+
+def test_multi_seed_long_ctx_floor_pass_retains_relative_to_chance() -> None:
+    """Multi-seed recompute must not drop relative floors (absolute-only regression).
+
+    Suite mean can sit above OFFICIAL_LONG_CTX_FLOOR while needle/mqar remain near
+    chance (relative < OFFICIAL_LONG_CTX_RELATIVE_FLOOR). Aggregated floor_pass must
+    stay False so multimetric.v1.1 publish retains relative-to-chance honesty.
+    """
+    # Per-seed: high induction lifts suite mean across absolute 0.15; needle/mqar at
+    # chance so relative_to_chance ≈ 0 (well below relative floor 0.05).
+    chance_needle = OFFICIAL_LONG_CTX_CHANCE["needle"]
+    chance_mqar = OFFICIAL_LONG_CTX_CHANCE["mqar"]
+    seeds = []
+    for i, ind in enumerate((0.40, 0.42, 0.38)):
+        needle = chance_needle  # relative 0
+        mqar = chance_mqar  # relative 0
+        suite_mean = (needle + mqar + ind) / 3.0
+        assert suite_mean >= OFFICIAL_LONG_CTX_FLOOR
+        # Explicit seed floor False (relative fail) even though absolute mean clears.
+        seeds.append(
+            replace(
+                _rec(
+                    label=f"s{i}",
+                    seed_count=1,
+                    long_ctx_enabled=True,
+                    long_ctx_score=suite_mean,
+                    long_ctx_needle=needle,
+                    long_ctx_mqar=mqar,
+                    long_ctx_induction_copy=ind,
+                ),
+                long_ctx_floor_pass=False,
+            )
+        )
+    agg = aggregate_official_records(seeds, label="agg")
+    assert agg.long_ctx_enabled is True
+    assert agg.long_ctx_score is not None
+    assert float(agg.long_ctx_score) >= OFFICIAL_LONG_CTX_FLOOR
+    assert agg.long_ctx_needle == pytest.approx(chance_needle)
+    assert agg.long_ctx_mqar == pytest.approx(chance_mqar)
+    # Absolute-only would incorrectly pass; relative retention requires fail.
+    assert agg.long_ctx_floor_pass is False
+    annex = build_scorecard_annex(agg, replace(agg, label="other"))
+    assert annex["long_ctx"]["floor_pass"]["a"] is False
+    assert annex["long_ctx"]["floors_relative_to_chance"] is True
+    assert annex["long_ctx"]["floors"]["relative_floor"] == OFFICIAL_LONG_CTX_RELATIVE_FLOOR
+
+
+def test_multi_seed_long_ctx_floor_pass_true_when_relative_and_absolute_clear() -> None:
+    """Aggregated floors pass only when absolute mean and relative needle/mqar clear."""
+    seeds = []
+    for i in range(3):
+        needle, mqar, ind = 0.80, 0.75, 0.70
+        suite_mean = (needle + mqar + ind) / 3.0
+        seeds.append(
+            replace(
+                _rec(
+                    label=f"ok{i}",
+                    seed_count=1,
+                    long_ctx_enabled=True,
+                    long_ctx_score=suite_mean,
+                    long_ctx_needle=needle,
+                    long_ctx_mqar=mqar,
+                    long_ctx_induction_copy=ind,
+                ),
+                long_ctx_floor_pass=True,
+            )
+        )
+    agg = aggregate_official_records(seeds, label="agg_ok")
+    assert agg.long_ctx_floor_pass is True
+    assert float(agg.long_ctx_score or 0.0) >= OFFICIAL_LONG_CTX_FLOOR
 
 
 # --- VAL-SCORE-009: Stability / memorization still scorecarded -------------------

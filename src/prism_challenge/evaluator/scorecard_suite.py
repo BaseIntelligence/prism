@@ -20,7 +20,9 @@ from dataclasses import dataclass, replace
 from typing import Any, Literal
 
 from .official_comparison import (
+    OFFICIAL_LONG_CTX_CHANCE,
     OFFICIAL_LONG_CTX_FLOOR,
+    OFFICIAL_LONG_CTX_RELATIVE_FLOOR,
     OFFICIAL_WALL_CLOCK_NEVER_RANKS,
     OfficialScoreRecord,
 )
@@ -29,15 +31,10 @@ from .official_comparison import (
 # Seed-scale absolute macro floor remains OFFICIAL_LONG_CTX_FLOOR (0.15). Relative
 # floors use (acc - chance) / (1 - chance) and require ≥ LONG_CTX_RELATIVE_FLOOR
 # on needle and MQAR when the suite is enabled for public claims language.
-LONG_CTX_CHANCE: dict[str, float] = {
-    # 4-way forced choice among closed candidates (UUID / key options).
-    "needle": 0.25,
-    # Closed candidate set of size 16 for key–value associative recall.
-    "mqar": 1.0 / 16.0,
-    # Restricted small-alphabet exact-match baseline (near zero open-vocab free copy).
-    "induction_copy": 0.05,
-}
-LONG_CTX_RELATIVE_FLOOR = 0.05
+# Chance baselines + relative floor constants are owned by official_comparison so
+# multi-seed recompute and per-seed suite check stay identical.
+LONG_CTX_CHANCE: dict[str, float] = dict(OFFICIAL_LONG_CTX_CHANCE)
+LONG_CTX_RELATIVE_FLOOR = OFFICIAL_LONG_CTX_RELATIVE_FLOOR
 LONG_CTX_SUITE_TASKS: tuple[str, ...] = (
     "needle",
     "mqar",

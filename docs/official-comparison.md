@@ -595,7 +595,7 @@ Under scorecard v1.1 that prior win is:
 - **not** a REAL-PROVIDER TEE claim
 - **not** an automatic emission weight crown
 
-Full architecture claim language requires the multi-metric scorecard (this annex) with multi-seed K≥3 public posture and cumple scientific axes without forbidden polar crown.
+Full architecture claim language requires the multi-metric scorecard (this annex) with multi-seed K≥3 public posture and meets scientific axes without forbidden polar crown.
 
 ### 14.8 Non-claims (normative)
 

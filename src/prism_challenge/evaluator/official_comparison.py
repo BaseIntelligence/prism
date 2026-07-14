@@ -48,6 +48,14 @@ OFFICIAL_EPS_BPB = HELDOUT_DELTA_BPB_EPSILON  # 5e-3
 OFFICIAL_EPS_LONG_CTX = 0.02
 # Seed-scale absolute long-ctx floor when suite is enabled (design §3.4).
 OFFICIAL_LONG_CTX_FLOOR = 0.15
+# Relative-to-chance floor retained on multi-seed recompute (docs §14.4 / suite).
+# relative = (acc − chance) / (1 − chance); required ≥ this on needle + mqar.
+OFFICIAL_LONG_CTX_RELATIVE_FLOOR = 0.05
+OFFICIAL_LONG_CTX_CHANCE: dict[str, float] = {
+    "needle": 0.25,
+    "mqar": 1.0 / 16.0,
+    "induction_copy": 0.05,
+}
 
 # Matched-budget protocol defaults (fair fixed pin for ArchCompare / TrainCompare).
 OFFICIAL_PARAM_CAP = 150_000_000
@@ -372,9 +380,12 @@ def official_record_from_score(
     """
     finite = math.isfinite(score.bpb) and score.bpb > 0.0
     valid = finite and not score.anomaly and score.anti_cheat_multiplier > 0.0
-    long_ctx_floor_pass: bool | None = None
-    if long_ctx_enabled and long_ctx_score is not None and math.isfinite(long_ctx_score):
-        long_ctx_floor_pass = float(long_ctx_score) >= OFFICIAL_LONG_CTX_FLOOR
+    long_ctx_floor_pass = _recompute_long_ctx_floor_pass(
+        enabled=long_ctx_enabled,
+        suite_mean=long_ctx_score,
+        needle=long_ctx_needle,
+        mqar=long_ctx_mqar,
+    )
     # Missing primary under the requested form still yields a record; compare falls through.
     return OfficialScoreRecord(
         label=label,
@@ -462,6 +473,68 @@ def official_record_from_manifest(
     )
 
 
+def _relative_to_chance(accuracy: float, chance: float) -> float:
+    """Map accuracy to relative-to-chance in [0, 1] (design §3.4)."""
+    acc = float(accuracy)
+    ch = float(chance)
+    if not math.isfinite(acc) or not math.isfinite(ch) or ch >= 1.0:
+        return 0.0
+    rel = (acc - ch) / (1.0 - ch)
+    if not math.isfinite(rel):
+        return 0.0
+    return max(0.0, min(1.0, rel))
+
+
+def _recompute_long_ctx_floor_pass(
+    *,
+    enabled: bool,
+    suite_mean: float | None,
+    needle: float | None = None,
+    mqar: float | None = None,
+    absolute_floor: float = OFFICIAL_LONG_CTX_FLOOR,
+    relative_floor: float = OFFICIAL_LONG_CTX_RELATIVE_FLOOR,
+    seed_floor_flags: Iterable[bool | None] | None = None,
+) -> bool | None:
+    """Recompute long_ctx floor_pass with absolute + relative-to-chance gates.
+
+    Used by multi-seed aggregation so publishing multimetric.v1.1 does not drop
+    relative-to-chance floors that ``aggregate_long_ctx_suite`` enforced per seed.
+    When task accuracies are all missing, fall back to seed floor flags / absolute only.
+    """
+    if not enabled:
+        return None
+    if suite_mean is None or not math.isfinite(float(suite_mean)):
+        return None
+    abs_ok = float(suite_mean) >= float(absolute_floor)
+    rel_ok = True
+    saw_relative_task = False
+    if needle is not None and math.isfinite(float(needle)):
+        saw_relative_task = True
+        ch = OFFICIAL_LONG_CTX_CHANCE["needle"]
+        if _relative_to_chance(float(needle), ch) < float(relative_floor):
+            rel_ok = False
+    if mqar is not None and math.isfinite(float(mqar)):
+        saw_relative_task = True
+        ch = OFFICIAL_LONG_CTX_CHANCE["mqar"]
+        if _relative_to_chance(float(mqar), ch) < float(relative_floor):
+            rel_ok = False
+    if saw_relative_task:
+        return bool(abs_ok and rel_ok)
+    # Task components not published: respect seed floor flags when unanimous False,
+    # otherwise absolute-only (legacy absolute path) without inventing pass=True
+    # against a False seed when only meeting absolute mean by averaging hide.
+    if seed_floor_flags is not None:
+        flags = list(seed_floor_flags)
+        known = [f for f in flags if f is not None]
+        if known and all(f is False for f in known):
+            return False
+        if known and all(f is True for f in known) and abs_ok:
+            return True
+        if known and any(f is False for f in known) and not abs_ok:
+            return False
+    return bool(abs_ok)
+
+
 def aggregate_official_records(
     records: Iterable[OfficialScoreRecord],
     *,
@@ -473,6 +546,9 @@ def aggregate_official_records(
     Invalid / step-0 seeds are dropped from the mean; if none remain, the aggregate is
     marked invalid so compare fails closed. Multi-seed K is ``seed_count`` of clean
     seeds; heldout standard deviation is reported for scorecard residual (VAL-SCORE-008).
+    When long-ctx suite is enabled, ``long_ctx_floor_pass`` is recomputed from the
+    aggregated suite mean **and** relative-to-chance floors on needle/mqar so multi-seed
+    publish does not drop suite relative floors.
     """
     clean = [r for r in records if r.valid and not r.step0_anomaly]
     material = list(records)
@@ -553,9 +629,19 @@ def aggregate_official_records(
 
     long_ctx_enabled = any(r.long_ctx_enabled for r in clean)
     long_ctx_score = _mean_optional("long_ctx_score")
-    long_ctx_floor_pass: bool | None = None
-    if long_ctx_enabled and long_ctx_score is not None:
-        long_ctx_floor_pass = float(long_ctx_score) >= OFFICIAL_LONG_CTX_FLOOR
+    long_ctx_needle = _mean_optional("long_ctx_needle")
+    long_ctx_mqar = _mean_optional("long_ctx_mqar")
+    long_ctx_induction_copy = _mean_optional("long_ctx_induction_copy")
+    # Multi-seed floor_pass must retain relative-to-chance floors when the suite is
+    # enabled (VAL-SCORE-005 honesty). Absolute-only recompute would drop relative
+    # needle/mqar gates that single-seed aggregate_long_ctx_suite enforced.
+    long_ctx_floor_pass = _recompute_long_ctx_floor_pass(
+        enabled=long_ctx_enabled,
+        suite_mean=long_ctx_score,
+        needle=long_ctx_needle,
+        mqar=long_ctx_mqar,
+        seed_floor_flags=[r.long_ctx_floor_pass for r in clean],
+    )
 
     def _aggregate_sample_eff_marks(
         records: list[OfficialScoreRecord],
@@ -608,9 +694,9 @@ def aggregate_official_records(
         force_instrument=_all_or_none("force_instrument"),
         heldout_std=heldout_std,
         long_ctx_score=long_ctx_score,
-        long_ctx_needle=_mean_optional("long_ctx_needle"),
-        long_ctx_mqar=_mean_optional("long_ctx_mqar"),
-        long_ctx_induction_copy=_mean_optional("long_ctx_induction_copy"),
+        long_ctx_needle=long_ctx_needle,
+        long_ctx_mqar=long_ctx_mqar,
+        long_ctx_induction_copy=long_ctx_induction_copy,
         lag_nll=_mean_optional("lag_nll"),
         long_ctx_enabled=long_ctx_enabled,
         long_ctx_floor_pass=long_ctx_floor_pass,
@@ -1333,17 +1419,15 @@ def build_scorecard_annex(
             "floors_relative_to_chance": True,
             "floors": {
                 "absolute_suite_mean_floor": long_ctx_floor,
-                "relative_floor": 0.05,
-                "chance_baselines": {
-                    "needle": 0.25,
-                    "mqar": 1.0 / 16.0,
-                    "induction_copy": 0.05,
-                },
+                "relative_floor": OFFICIAL_LONG_CTX_RELATIVE_FLOOR,
+                "chance_baselines": dict(OFFICIAL_LONG_CTX_CHANCE),
                 "relative_floor_tasks": ["needle", "mqar"],
                 "note": (
                     "Seed-scale long-ctx floors: absolute suite mean ≥ "
-                    f"{long_ctx_floor}; relative_to_chance ≥ 0.05 on needle and mqar "
-                    "when suite enabled."
+                    f"{long_ctx_floor}; relative_to_chance ≥ "
+                    f"{OFFICIAL_LONG_CTX_RELATIVE_FLOOR} on needle and mqar "
+                    "when suite enabled. Multi-seed aggregates recompute floors "
+                    "from mean task accuracies (do not drop relative gates)."
                 ),
             },
             "lead": polar.long_ctx_lead,
