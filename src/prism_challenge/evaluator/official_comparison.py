@@ -552,6 +552,28 @@ def aggregate_official_records(
     if long_ctx_enabled and long_ctx_score is not None:
         long_ctx_floor_pass = float(long_ctx_score) >= OFFICIAL_LONG_CTX_FLOOR
 
+    def _aggregate_sample_eff_marks(
+        records: list[OfficialScoreRecord],
+    ) -> tuple[float, ...] | None:
+        """Mean mark vector across seeds when every clean seed reports same-length marks."""
+        mark_lists = [
+            list(r.sample_eff_marks)
+            for r in records
+            if r.sample_eff_marks is not None and len(r.sample_eff_marks) > 0
+        ]
+        if not mark_lists:
+            return None
+        width = len(mark_lists[0])
+        if any(len(m) != width for m in mark_lists):
+            return None
+        means: list[float] = []
+        for col in range(width):
+            col_vals = [float(m[col]) for m in mark_lists if math.isfinite(float(m[col]))]
+            if not col_vals:
+                return None
+            means.append(sum(col_vals) / len(col_vals))
+        return tuple(means)
+
     nan_events = [r.nan_inf_events for r in clean if r.nan_inf_events is not None]
     nan_sum = sum(nan_events) if nan_events else None
     instability = any(r.instability_flag for r in clean) or (nan_sum is not None and nan_sum > 0)
@@ -588,7 +610,7 @@ def aggregate_official_records(
         long_ctx_enabled=long_ctx_enabled,
         long_ctx_floor_pass=long_ctx_floor_pass,
         sample_eff_auc=_mean_optional("sample_eff_auc"),
-        sample_eff_marks=None,  # fills left to suite track; do not invent
+        sample_eff_marks=_aggregate_sample_eff_marks(clean),
         params=params_mean,
         peak_vram_gib=_mean_optional("peak_vram_gib"),
         tokens_per_s=_mean_optional("tokens_per_s"),
@@ -1302,6 +1324,21 @@ def build_scorecard_annex(
                 "b": b.long_ctx_floor_pass,
             },
             "floors_relative_to_chance": True,
+            "floors": {
+                "absolute_suite_mean_floor": long_ctx_floor,
+                "relative_floor": 0.05,
+                "chance_baselines": {
+                    "needle": 0.25,
+                    "mqar": 1.0 / 16.0,
+                    "induction_copy": 0.05,
+                },
+                "relative_floor_tasks": ["needle", "mqar"],
+                "note": (
+                    "Seed-scale long-ctx floors: absolute suite mean ≥ "
+                    f"{long_ctx_floor}; relative_to_chance ≥ 0.05 on needle and mqar "
+                    "when suite enabled."
+                ),
+            },
             "lead": polar.long_ctx_lead,
             "eps_long_ctx": eps_long_ctx,
         },
@@ -1329,6 +1366,10 @@ def build_scorecard_annex(
             "peak_vram_gib": {"a": a.peak_vram_gib, "b": b.peak_vram_gib},
             "tokens_per_s": {"a": a.tokens_per_s, "b": b.tokens_per_s},
             "wall_clock_never_ranks": OFFICIAL_WALL_CLOCK_NEVER_RANKS,
+            "sole_rank_forbidden": True,
+            "flops_diagnostic_only": True,
+            "overrides_scientific_axes": False,
+            "overrides_polar_rule": False,
         },
         "stability": {
             "nan_inf_events": {"a": a.nan_inf_events, "b": b.nan_inf_events},
