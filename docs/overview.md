@@ -74,4 +74,6 @@ images. Real Lium/Targon TEE production PASS is blocked; local fixtures alone ca
 [Operators](operators.md).
 
 See [Scaling Evaluation](scaling.md) for the multi-GPU contract and budget, and [Scoring](scoring.md)
-for the math.
+for the leaderboard math. For offline architecture-agnostic pair ranking under held-out primary /
+bpb secondary (GPU lab deferred when the host has no NVIDIA), see
+[Official Comparison Protocol v1](official-comparison.md).

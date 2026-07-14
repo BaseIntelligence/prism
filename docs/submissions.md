@@ -10,6 +10,8 @@ re-executes `training.py` under a forced random init and a fixed seed, records t
 itself, authors the run manifest, and ignores any value the miner reports.
 A single combined module no longer satisfies the contract.
 See [Architecture](architecture.md) and [Scoring](scoring.md) for the re-execution and scoring detail.
+For the architecture-agnostic **Official Comparison Protocol v1** (held-out primary ranking, honest
+hooks table, GPU deferred without NVIDIA), see [Official Comparison](official-comparison.md).
 
 ## The Two-Script Contract
 
@@ -38,6 +40,18 @@ def train(ctx):
 `train(ctx)` owns the optimizer, schedule, dataloading from the read-only locked train split,
 tokenization, the multi-GPU strategy, and the loop. It reports progress only through the
 challenge-provided logging handle, never as the basis of the score.
+
+### Honest training hooks (challenge-owned score)
+
+| Hook | Required? | Authoritative for score? |
+| --- | --- | --- |
+| `build_model(ctx) → nn.Module` | Yes | Indirectly (must construct under forced seed / param cap) |
+| `train(ctx)` consuming `ctx.iter_train_batches(...)` | Yes for honest online capture | Capture path is challenge-owned; return value ignored |
+| Optional logs / free-form diagnostics under `artifacts_dir` | Optional | **No** — non-authoritative diagnostics only |
+| Miner self-reported bpb / `final_score` / home-rolled manifest | Forbidden as trust root | **Never** — Prism recomputes official metrics |
+
+Wall-clock and miner-timing claims never rank. Full Official Comparison honesty checklist:
+[Official Comparison Protocol v1](official-comparison.md#7-training-script-honest-hooks-contract).
 
 An optional `prism.yaml` declares the entrypoints and tokenizer:
 

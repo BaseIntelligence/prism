@@ -7,6 +7,11 @@ PRISM rewards miners whose models learn fast from scratch. You submit two script
 random init on locked FineWeb-Edu data and scores it with a prequential bits-per-byte metric. You bring
 the model and the loop, not the data or the metric.
 
+For offline architecture-agnostic **Official Comparison Protocol v1** (held-out generalization
+primary, prequential bpb secondary, honest hooks, wall-clock never ranks), see
+[Official Comparison](../official-comparison.md). The live leaderboard path remains described in
+[Scoring](../scoring.md).
+
 ## Miner Flow
 
 1. Build a two-script bundle that follows the PRISM contract.

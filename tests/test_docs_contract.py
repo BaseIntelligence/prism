@@ -32,6 +32,7 @@ PUBLIC_DOCS = (
     "docs/architecture.md",
     "docs/submissions.md",
     "docs/scoring.md",
+    "docs/official-comparison.md",
     "docs/scaling.md",
     "docs/security.md",
     "docs/api.md",
@@ -116,6 +117,34 @@ def test_prequential_bpb_scoring_is_documented() -> None:
     assert "compute-normalized" in scoring.lower()
     assert "wall-clock" in scoring.lower()
     assert "lower" in scoring.lower() and "better" in scoring.lower()
+    # Leaderboard remains bpb-primary, with an explicit invert for Official Comparison.
+    assert "official comparison" in scoring.lower()
+    assert "leaderboard" in scoring.lower()
+
+
+def test_official_comparison_protocol_v1_is_documented() -> None:
+    """Official Comparison Protocol v1: held-out primary, bpb secondary, honest hooks, GPU deferred."""
+    protocol = read_doc("docs/official-comparison.md")
+    lower = protocol.lower()
+
+    assert "prism official comparison protocol v1" in lower
+    assert "prism_official_compare.v1" in lower or "protocol v1" in lower
+    # Ranking invert: held-out/generalization PRIMARY, prequential bpb SECONDARY.
+    assert "primary" in lower and "held-out" in lower
+    assert "secondary" in lower and "bpb" in lower
+    assert "wall-clock never" in lower or "wall-clock" in lower
+    assert "150" in protocol and ("param" in lower or "parameter" in lower)
+    assert "matched" in lower and ("token" in lower or "budget" in lower)
+    assert "build_model" in protocol
+    assert "train" in lower
+    assert "iter_train_batches" in protocol
+    assert "never authoritative" in lower or "non-authoritative" in lower
+    assert "miner" in lower and ("self-report" in lower or "self report" in lower or "reported" in lower)
+    assert "real-provider" in lower
+    assert "orthogonal" in lower
+    assert "deferred" in lower and ("nvidia" in lower or "gpu" in lower)
+    # Multi-seed residual rule present.
+    assert "multi-seed" in lower or "multi seed" in lower or "seeds" in lower
 
 
 def test_llm_hard_gate_is_documented() -> None:
