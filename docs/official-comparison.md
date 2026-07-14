@@ -382,6 +382,21 @@ Unit fixtures may fill synthetic metrics without multi-hour train. Live emission
 8. Document GPU deferred if no NVIDIA; document TEE class without overclaim.
 9. Do not push compare winners into emission narrative as if they were automatic weight crowns unless production scoring independently agrees.
 
+### 11.1 Offline dual-family CPU/fixture harness (no NVIDIA)
+
+Product harness: `python -m prism_challenge.evaluator.official_compare_harness`.
+
+It packages the registered unknown-style dual families (`transformer-tiny-1m` + `mamba-tiny-1m`), builds multi-seed official records from challenge-owned synthetic metrics (or operator-supplied fixture metrics), and emits `prism_compare_report.v1.json` with a clear `ranking.winner` A vs B under this protocol. See [Operator Guide — Offline Official Comparison](operators.md#offline-official-comparison-cpu--fixture) for copy-paste commands.
+
+```bash
+export UV_CACHE_DIR=/var/tmp/uv-cache
+uv run python -m prism_challenge.evaluator.official_compare_harness \
+  --output-dir dist/official-compare --device-class fixture
+uv run pytest tests/test_official_compare_harness.py -q
+```
+
+GPU verification status in the report is **DEFERRED** when the host lacks NVIDIA; the harness never toggles `claim_gpu_pass` to true.
+
 ---
 
 ## 12. Relation to other docs
@@ -390,6 +405,7 @@ Unit fixtures may fill synthetic metrics without multi-hour train. Live emission
 | --- | --- |
 | [Scoring](scoring.md) | Production leaderboard math (bpb primary); explicit Official Comparison invert callout |
 | [Submissions](submissions.md) | Two-script contract and `PrismContext` honest hooks |
+| [Operators](operators.md) | Offline dual-family Official Comparison harness commands (CPU/fixture) |
 | [Miner guide](miner/README.md) | Lab seed families and submission shape |
 | [Security](security.md) | Sandbox, deterministic admission, TEE fail-closed honesty |
 | [Scaling](scaling.md) | Single-node multi-GPU contract (pin may force nproc=1) |

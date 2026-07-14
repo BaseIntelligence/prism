@@ -210,6 +210,46 @@ curl -H "Authorization: Bearer dev-secret" -H "X-Base-Challenge-Slug: prism" \
   http://localhost:8000/internal/v1/get_weights
 ```
 
+## Offline Official Comparison (CPU / fixture)
+
+Operators can rank two unknown-style seed packages under **Prism Official Comparison Protocol v1** without NVIDIA. The dual-family harness packages Transformer `tiny-1m` and pure-torch Mamba, builds comparable official score records from challenge-owned metrics, and prints a clear A-vs-B `compare_official` outcome. Long multi-step GPU pair trains remain **DEFERRED** when the host has no NVIDIA; tee notes never claim **REAL-PROVIDER PASS**.
+
+Full ranking axioms: [Official Comparison](official-comparison.md).
+
+```bash
+# From a Prism checkout (dev deps installed)
+export UV_CACHE_DIR=/var/tmp/uv-cache
+
+# 1) Package both families as two-script submit zips (shared outer contract)
+uv run python -m prism_challenge.seed_packaging --output-dir dist/seed-packages
+
+# 2) Run the dual-family official compare harness (CPU/fixture, no GPU train)
+uv run python -m prism_challenge.evaluator.official_compare_harness \
+  --output-dir dist/official-compare \
+  --device-class fixture
+
+# 3) Inspect the report
+cat dist/official-compare/prism_compare_report.v1.json
+```
+
+Targeted unit proof (no NVIDIA):
+
+```bash
+uv run pytest tests/test_official_compare_harness.py tests/test_official_comparison_scoring.py -q
+```
+
+Report fields of interest:
+
+| Field | Meaning |
+| --- | --- |
+| `ranking.winner` | `a`, `b`, or `tie` under held-out primary then bpb secondary |
+| `ranking.outcome_label` | Human-readable winner label (package family id) |
+| `side_a` / `side_b` | Bundle hashes, mean held-out + recomputed bpb, validity |
+| `gpu_verification.status` | `DEFERRED` when nvidia-smi/`/dev/nvidia*`/nvidia runtime absent; never claimed PASS by the harness |
+| `tee_note` | Always orthogonal: REAL-PROVIDER PASS not claimed |
+
+Do not treat the offline fixture winner as an automatic emission weight crown unless production leaderboard scoring independently agrees (leaderboard stays bpb-primary; Official Comparison invert is the lab surface only).
+
 ## Troubleshooting
 
 | Symptom | Likely cause |
@@ -222,3 +262,4 @@ curl -H "Authorization: Bearer dev-secret" -H "X-Base-Challenge-Slug: prism" \
 | `result_envelope_invalid` | Body is not a full `ExternalResultEnvelope` |
 | TEE elevated tier never grants | Expected until real-provider contracts land; only local fixtures can PASS |
 | `missing_locked_data` | The read-only FineWeb-Edu train mount is absent or empty on the GPU node |
+| Offline compare says GPU DEFERRED | Expected without `nvidia-smi`; use fixture/CPU path and do not claim GPU verify PASS |
