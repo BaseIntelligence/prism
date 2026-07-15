@@ -11,8 +11,9 @@ itself, authors the run manifest, and ignores any value the miner reports.
 A single combined module no longer satisfies the contract.
 See [Architecture](architecture.md) and [Scoring](scoring.md) for the re-execution and scoring detail.
 For the architecture-agnostic **Official Comparison Protocol v1** (held-out primary ranking, honest
-hooks table, GPU deferred without NVIDIA) and multimetric scorecard annex **v1.1**
-(`scorecard_id=multimetric.v1.1`), see [Official Comparison](official-comparison.md).
+hooks table, GPU deferred without NVIDIA), multimetric scorecard annex **v1.1**
+(`scorecard_id=multimetric.v1.1`), Complete View, and challenge-owned train series
+**`prism_train_series.v1`**, see [Official Comparison](official-comparison.md).
 ## The Two-Script Contract
 
 A bundle must contain two **distinct** scripts.
@@ -47,11 +48,20 @@ challenge-provided logging handle, never as the basis of the score.
 | --- | --- | --- |
 | `build_model(ctx) → nn.Module` | Yes | Indirectly (must construct under forced seed / param cap) |
 | `train(ctx)` consuming `ctx.iter_train_batches(...)` | Yes for honest online capture | Capture path is challenge-owned; return value ignored |
+| Challenge-owned **`prism_train_series.v1`** (online CE/bpb, tokens, wall, **grad_norm**, **clip_events**) | Required when Official pin sets `require_train_series` | **Yes for series residual / fail-closed Official pin** — challenge capture only |
 | Optional logs / free-form diagnostics under `artifacts_dir` | Optional | **No** — non-authoritative diagnostics only |
+| Miner dashboards / miner-written loss or grad series | Optional cosmetics | **Never** — ignored for grade; does not unblock missing challenge series |
 | Miner self-reported bpb / `final_score` / home-rolled manifest | Forbidden as trust root | **Never** — Prism recomputes official metrics |
 
+**Rating honesty (scientific vs emission):** multi-axis Official Comparison / Complete View is the
+**scientific miner architecture grade**; the emission leaderboard remains **bpb-primary**. Train
+series densify sample-eff / stability residual and operator time-flow visibility, and **never sole
+primary rank** over held-out or recomputed bpb. Official grade can **fail-closed** if the pin
+requires series and challenge capture is missing/empty/corrupt.
+
 Wall-clock and miner-timing claims never rank. Full Official Comparison honesty checklist:
-[Official Comparison Protocol v1](official-comparison.md#7-training-script-honest-hooks-contract).
+[Official Comparison Protocol v1](official-comparison.md#7-training-script-honest-hooks-contract)
+and [§17 train series telemetry](official-comparison.md#17-challenge-owned-train-series-telemetry-prism_train_seriesv1).
 
 An optional `prism.yaml` declares the entrypoints and tokenizer:
 

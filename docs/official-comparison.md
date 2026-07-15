@@ -854,4 +854,149 @@ Section 15 remains the complete.v1.2 identity and A→Z residual matrix descript
 
 ---
 
-*End of Prism Official Comparison Protocol v1 (+ multimetric scorecard annex v1.1 + Complete View v1.2 + Complete View v1.3 reasoning/logic).*
+## 17. Challenge-owned train series telemetry (`prism_train_series.v1`)
+
+Official Comparison / Complete View rate **architecture packages** scientifically. Operators also need a **time-flow** view of how a package trained (loss shape, gradients, clip thrash) under the same honesty rules as capturable ceilings. That surface is challenge-owned train series telemetry.
+
+| Field | Value |
+| --- | --- |
+| Machine schema | **`prism_train_series.v1`** (identity-locked; product-equivalent names must keep this string) |
+| Authority | **Challenge-owned only** (same trust class as online_loss / `prism_run_manifest.v2`) |
+| Miner dashboards / self-logs | **Non-authoritative** — ignored for grade, residual, and Official validity |
+| Scientific grade surface | Multi-axis Official Comparison / Complete View (held-out primary + bpb secondary + polar axes) |
+| Emission leaderboard | Remains **bpb-primary** (`final_score` path) — series never substitute emissions |
+| Rank role of series | **Visibility** + densify **sample-eff / stability residual only** — **never sole primary rank** over held-out/bpb Official axes |
+| Fail-closed pin | When Official / Complete View grading pin sets `require_train_series=true`, missing / empty / corrupt challenge series **fail-closes** Official grade (not silent PASS) |
+
+### 17.1 Rating system lock (scientific vs emission)
+
+| Surface | Primary signal | Series role |
+| --- | --- | --- |
+| **Scientific miner arch grade** | Multi-axis Official Comparison / Complete View: held-out / generalization primary, prequential bpb secondary, multi-axis vector (long-ctx, reasoning, sample-eff, …), `TIE_POLAR` honesty | Time-flow visibility; densify sample-eff marks & stability residual (`grad_norm` / clip / nan); **not** sole primary over heldout/bpb |
+| **Emission / subnet leaderboard** | Prequential bpb → `final_score` (held-out bounded near-tie) | Observability only; never emission substitution |
+| **Miner dashboards** | Cosmetic | Always untrusted; cannot certify Official grade or unblock missing challenge series |
+
+### 17.2 Schema identity and point fields
+
+Preferred side-car (volume-friendly) or embedded series object:
+
+```json
+{
+  "schema": "prism_train_series.v1",
+  "submission_id": "...",
+  "run_id": "prism-reexec-...",
+  "authority": "challenge",
+  "x_axis": "batch_index",
+  "token_budget": 500000,
+  "points": [
+    {
+      "i": 0,
+      "tokens_seen": 512,
+      "covered_bytes": 2048,
+      "train_ce_nats": 10.3,
+      "running_bpb": 12.1,
+      "wall_s": 0.42,
+      "grad_norm": 1.2,
+      "clip_event": false,
+      "param_norm": null,
+      "lr": null,
+      "nan_inf": false
+    }
+  ],
+  "aggregates": {
+    "n_points": 976,
+    "mean_step_ms": 12.4,
+    "p99_step_ms": 40.1,
+    "grad_spike_rate": 0.0,
+    "nan_inf_batches": 0,
+    "clip_events": 0
+  },
+  "miner_reported_ignored": true
+}
+```
+
+Normative point fields (challenge-authored):
+
+| Field | Required for series v1? | Notes |
+| --- | --- | --- |
+| step / batch index (`i`) or token_index | Yes (x-axis identity) | Align with instrument cadence |
+| `train_ce_nats` / running prequential proxy | Yes | Same family as `_OnlineLossCapture` `online_loss` |
+| `tokens_seen` (cumulative) | Yes | Token progress x-axis |
+| `covered_bytes` (cumulative) | Yes when byte-basis bpb is shown | Matches scoring byte basis |
+| `wall_s` / step wall deltas | Yes | Safety / thrash diagnostic only — **wall never ranks** |
+| `grad_norm` | **Mandatory** under full telemetry pin | Challenge instrumentation around miner optim steps — **not** miner self-report |
+| `clip_event` / clip counts | **Mandatory** under full telemetry pin | Clip firings / fraction when clip configured |
+| `param_norm`, `lr` | Optional | Null + reason when not machine-visible |
+| `nan_inf` | Yes when instrument can observe | Aligns with pred-loss NaN/Inf gate |
+
+Manifest pointer sketch (when series is side-car):
+
+```json
+"metrics": {
+  "online_loss": ["...legacy retained..."],
+  "train_series_schema": "prism_train_series.v1",
+  "train_series_path": "prism_train_series.v1.jsonl",
+  "train_series_sha256": "..."
+}
+```
+
+Series content is challenge-owned and participates in hashing / proof path when the Official pin requires it. Miner-written "train_series" JSON never unblocks a missing challenge stream.
+
+### 17.3 Authority and anti-gaming
+
+1. **Challenge capture only** — series produced inside Prism re-exec (instrument around `ctx.iter_train_batches` / graded train path), same ownership as online CE.
+2. **Miner reports ignored** — dashboards, prints, free-form artifacts under `artifacts_dir`, and miner-authored series cannot certify Official grade, residuals, or emission eligibility.
+3. **Gradients mandatory as challenge instrumentation** — `grad_norm` + `clip_events` come from challenge hooks / instrument, not miner logger aesthetics.
+4. **No secret-val leak** — series must not stream secret held-out into the miner process.
+5. **Wall-clock never primary** — wall series exist for thrash visibility only.
+
+### 17.4 Fail-closed Official grade when series required
+
+When the Official Comparison / Complete View grading pin sets **`require_train_series=true`** (or equivalent product flag):
+
+| Condition | Official scientific grade outcome |
+| --- | --- |
+| Challenge series present, finite, provenance `authority=challenge` | Eligible for Official / Complete View grade (subject to other V gates) |
+| Series **missing**, empty, corrupt, non-finite, miner-only provenance | **Fail-closed** Official grade — invalid / incomplete, **not** silent PASS |
+| Miner dashboard present while challenge series missing | Still fail-closed — miner channel never authorizes |
+
+Emission leaderboard may still score remaining bpb capture on a separate path with explicit incomplete-telemetry flags, but Official scientific rank must not pretend series was verified when the pin required it.
+
+### 17.5 Residual role only (never sole primary rank)
+
+Series may:
+
+- densify **sample-efficiency** marks (online CE / running bpb vs tokens),
+- real-fill **stability residual** (`grad_spike_rate`, clip thrash, nan_inf rate),
+- drive **operator time-flow UI** (loss/bpb + grad_norm vs tokens/time).
+
+Series must **not**:
+
+- sole-rank packages over Official held-out primary or recomputed bpb secondary,
+- replace multi-axis Complete View,
+- become emission weight primary,
+- unlock **REAL-PROVIDER TEE PASS** (telemetry and lab trains remain orthogonal; REAL TEE **BLOCKED** until provider contracts exist).
+
+### 17.6 Operator / API sketch
+
+| Surface | Role |
+| --- | --- |
+| Existing `GET .../submissions/{id}/curve` | Legacy online_loss vs covered_bytes |
+| Extended train-series read (product path) | Multi-channel `prism_train_series.v1` including `grad_norm` / clip when present under existing auth |
+| Operators UI / chart | Time-flow of loss/bpb + grad_norm; badge **challenge-owned** |
+| Miner extra logs | Optional dashed "self-report"; never grade |
+
+Capture and wire implementations land in subsequent telemetry-rt product features; this section locks **schema identity, authority, scientific-vs-emission grade split, residual rank role, and fail-closed policy**.
+
+### 17.7 Non-claims
+
+1. Train series are **not** REAL-PROVIDER TEE evidence.
+2. Train series are **not** emission leaderboard primary (bpb remains emission primary).
+3. Inspectable lamp charts do **not** override held-out / polar Official rules.
+4. Miner aesthetic grad/loss dashboards never certify scientific miner grade.
+
+Pointer: [Operators](operators.md) train series section; [Scoring](scoring.md) scientific-vs-emission dual surface; [Submissions](submissions.md) honest hooks.
+
+---
+
+*End of Prism Official Comparison Protocol v1 (+ multimetric scorecard annex v1.1 + Complete View v1.2 + Complete View v1.3 reasoning/logic + challenge-owned train series telemetry).*

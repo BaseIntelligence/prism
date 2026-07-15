@@ -267,6 +267,95 @@ def test_official_comparison_complete_view_v1_3_reasoning_is_documented() -> Non
     assert "blocked" in op_lower
 
 
+def test_train_series_telemetry_protocol_is_documented() -> None:
+    """Challenge-owned prism_train_series.v1 protocol docs (VAL-TELE-001)."""
+    protocol = read_doc("docs/official-comparison.md")
+    operators = read_doc("docs/operators.md")
+    submissions = read_doc("docs/submissions.md")
+    lower = protocol.lower()
+    op_lower = operators.lower()
+    sub_lower = submissions.lower()
+
+    # Schema identity + ownership (VAL-TELE-001).
+    assert "prism_train_series.v1" in protocol
+    assert "challenge-owned" in lower or "challenge owned" in lower
+    assert "authority" in lower
+    assert "miner" in lower and (
+        "non-authoritative" in lower
+        or "never authoritative" in lower
+        or "ignored" in lower
+        or "self-report" in lower
+    )
+
+    # Point / channel catalogue anchors.
+    assert "grad_norm" in lower
+    assert "clip" in lower
+    assert "tokens_seen" in lower or "tokens" in lower
+    assert "wall" in lower
+    assert "online" in lower or "train_ce" in lower or "bpb" in lower
+
+    # Fail-closed when Official grade requires series.
+    assert "fail-closed" in lower or "fail closed" in lower
+    assert "require_train_series" in lower or "require train series" in lower
+
+    # Operators + submissions honesty surfaces.
+    assert "prism_train_series.v1" in operators
+    assert "challenge-owned" in op_lower or "challenge owned" in op_lower
+    assert "grad_norm" in op_lower
+    assert "fail-closed" in op_lower or "fail closed" in op_lower
+    assert "prism_train_series.v1" in submissions
+    assert "grad_norm" in sub_lower
+    assert "clip" in sub_lower
+
+
+def test_train_series_scientific_vs_emission_grade_is_documented() -> None:
+    """Scientific multi-axis Official grade vs emission bpb + residual series (VAL-TELE-012, VAL-TELE-010)."""
+    protocol = read_doc("docs/official-comparison.md")
+    scoring = read_doc("docs/scoring.md")
+    operators = read_doc("docs/operators.md")
+    submissions = read_doc("docs/submissions.md")
+    lower = protocol.lower()
+    scoring_lower = scoring.lower()
+    op_lower = operators.lower()
+    sub_lower = submissions.lower()
+
+    # VAL-TELE-012: multi-axis Official/Complete View = scientific miner grade; emission bpb-primary.
+    assert "scientific" in lower
+    assert "official comparison" in lower or "complete view" in lower
+    assert "multi-axis" in lower or "multi axis" in lower
+    assert "emission" in lower
+    assert "bpb-primary" in lower or ("bpb" in lower and "primary" in lower)
+    assert "leaderboard" in lower
+
+    assert "scientific" in scoring_lower
+    assert "prism_train_series.v1" in scoring
+    assert "bpb-primary" in scoring_lower or (
+        "emission" in scoring_lower and "bpb" in scoring_lower and "primary" in scoring_lower
+    )
+    assert "leaderboard" in scoring_lower
+
+    assert "scientific" in op_lower
+    assert "emission" in op_lower
+    assert "bpb-primary" in op_lower or ("bpb" in op_lower and "primary" in op_lower)
+
+    assert "scientific" in sub_lower
+    assert "emission" in sub_lower
+    assert "bpb-primary" in sub_lower or ("bpb" in sub_lower and "primary" in sub_lower)
+
+    # VAL-TELE-010: series residual only — visibility + sample-eff/stability densify; never sole primary.
+    assert "sample-eff" in lower or "sample efficiency" in lower or "sample_eff" in lower
+    assert "stability" in lower
+    assert "residual" in lower
+    assert "never sole" in lower or "sole primary" in lower
+    assert "not" in lower or "never" in lower
+
+    assert "residual" in scoring_lower or "never sole" in scoring_lower
+    assert "sample-eff" in scoring_lower or "sample-efficiency" in scoring_lower or "stability" in scoring_lower
+    assert "residual" in op_lower or "never sole" in op_lower
+    assert "sample-eff" in op_lower or "sample-efficiency" in op_lower or "stability" in op_lower
+    assert "residual" in sub_lower or "never sole" in sub_lower
+
+
 def test_llm_hard_gate_is_documented() -> None:
     """Docs say the LLM hard gate/gateway are removed; admission is deterministic."""
     security = read_doc("docs/security.md")

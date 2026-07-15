@@ -6,18 +6,20 @@ bits-per-byte (bpb)** score the challenge computes itself from a forced-init re-
 delta breaks near-ties and an anti-memorization gap penalizes overfitting. **Lower bits-per-byte is
 better** on that path.
 
-> **Official Comparison Protocol v1 ranking invert (+ scorecard v1.1).** The offline
-> [Official Comparison](official-comparison.md) surface (**not** this leaderboard) ranks with
-> **held-out / generalization as PRIMARY** and prequential bpb as **SECONDARY**. The additive
-> multi-metric scorecard annex (`scorecard_id=multimetric.v1.1`) publishes validity,
-> short-gen, long-ctx, sample-efficiency, memorization, multi-seed, efficiency, and stability
-> fields and applies **`TIE_POLAR`** / `crown_allowed=false` when short-gen vs long-ctx disagree.
-> When axes do not polar-conflict, the default Official Comparison winner stays the v1 heldout
-> primary rule. Do not apply “bpb primary” language from this page to Official Comparison
-> headlines, and do not treat the scorecard multi-metric vector as emission ranking. Emission
-> weights still follow the leaderboard path below unless a separate product mode says otherwise.
-> Prior LAB-GPU K=1 short-ctx wins are **provisional only**; REAL-PROVIDER TEE remains orthogonal
-> and **BLOCKED**.
+> **Official Comparison Protocol v1 ranking invert (+ scorecard v1.1 / Complete View).** The offline
+> [Official Comparison](official-comparison.md) surface (**not** this leaderboard) is the
+> **scientific miner architecture grade**: multi-axis Official / Complete View with
+> **held-out / generalization as PRIMARY**, prequential bpb as **SECONDARY**, plus polar honesty
+> (`TIE_POLAR` / `crown_allowed=false` when short-gen vs long-ctx or other polar axes disagree).
+> The additive multi-metric scorecard annex (`scorecard_id=multimetric.v1.1`) and Complete View
+> publish the scientific vector. Do **not** apply “bpb primary” language from this page to Official
+> Comparison headlines, and do not treat the multi-metric vector as emission ranking. **Emission**
+> leaderboard remains **bpb-primary** on the path below. Challenge-owned **`prism_train_series.v1`**
+> time-flow (loss/bpb + mandatory `grad_norm` / clip when instrumented) is **visibility + residual
+> densify for sample-eff/stability only** — never sole primary rank over held-out/bpb. When an
+> Official grade pin **requires** the series and it is missing/corrupt, Official grade **fail-closes**
+> (not silent PASS); miner dashboards remain non-authoritative. Prior LAB-GPU K=1 short-ctx wins are
+> **provisional only**; REAL-PROVIDER TEE remains orthogonal and **BLOCKED**.
 ```mermaid
 flowchart LR
     Loss[Single-pass online loss stream] --> Bpb[Prequential bits-per-byte]
@@ -106,9 +108,12 @@ Every number above is recomputed by the challenge from the challenge-authored
 raw-loss term and the v1-NAS architecture/training ownership pools are retired from the score.
 
 Miner self-reports remain non-authoritative on both the leaderboard path and Official Comparison
-mode (including scorecard v1.1). REAL-PROVIDER TEE labels are orthogonal to ranking: see
-[Official Comparison](official-comparison.md) § TEE honesty / scorecard non-claims and
-[Security](security.md).
+mode (including scorecard v1.1, Complete View, and train series). Challenge-owned
+`prism_train_series.v1` may densify sample-efficiency / stability residuals and power time-flow
+charts but **must not** sole-rank mining packages over Official held-out or recomputed bpb axes,
+and **must not** substitute this leaderboard's bpb primary. REAL-PROVIDER TEE labels are
+orthogonal to ranking: see [Official Comparison](official-comparison.md) §17 train series telemetry,
+scorecard / TEE non-claims, and [Security](security.md).
 ## Reference Studies
 
 - **Prequential / online coding** — Dawid, 1984: score the integrated predict-then-train loss, not a

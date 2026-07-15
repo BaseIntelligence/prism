@@ -323,6 +323,33 @@ jq '{score_class, ranking, real_provider_tee, gpu_verification}' \
 Protocol axioms still hold: held-out **primary**, prequential bpb **secondary**, wall-clock may be recorded but **never ranks**, miner self-report is non-authoritative. Exit code `2` with `BLOCKED:` means dual-family manifests were missing — do not invent scores. No HA-live Swarm mutate and no `set_weights` are required for ranking.
 
 **Provisional honesty for prior K=1 short-ctx LAB-GPU wins:** a single-seed mamba heldout_delta lead under short context is a valid **provisional** lab observation under Protocol v1, **not** multi-seed public architecture superiority. Apply the multimetric.v1.1 scorecard (long-ctx, sample-eff, K≥3, efficiency, polar rules) before any crown language. REAL-PROVIDER TEE remains BLOCKED on this path.
+
+### Challenge-owned train series telemetry (operators)
+
+Machine identity: **`schema=prism_train_series.v1`**. Full protocol: [Official Comparison §17](official-comparison.md#17-challenge-owned-train-series-telemetry-prism_train_seriesv1).
+
+| Operator note | Detail |
+| --- | --- |
+| Authority | **Challenge-owned** series only (online CE/bpb, tokens_seen, wall, **mandatory grad_norm + clip_events** under the telemetry pin). Miner dashboards / self-logs are **non-authoritative** and never certify grade |
+| Scientific miner grade | Multi-axis Official Comparison / Complete View (held-out primary + bpb secondary + polar honesty) |
+| Emission leaderboard | Remains **bpb-primary** — series are **not** emission substitution |
+| Rank role of series | Visibility + densify **sample-eff / stability residual** only — **never sole primary rank** over held-out/bpb |
+| Fail-closed Official pin | If grading pin sets `require_train_series` and series is missing/empty/corrupt → Official scientific grade **fail-closes** (not silent PASS) |
+| APIs | Existing `GET .../submissions/{id}/curve` (loss vs bytes); product train-series path exposes `prism_train_series.v1` multi-channel including grad_norm/clip when instrumented under existing auth |
+| TEE / ops | Series realize lab observability only; REAL-PROVIDER TEE **BLOCKED**; no live Swarm mutate; no `set_weights` from telemetry |
+
+```bash
+# Legacy curve (online_loss vs covered_bytes)
+curl -H "Authorization: Bearer $TOKEN" -H "X-Base-Challenge-Slug: prism" \
+  "http://localhost:8000/internal/v1/submissions/${SUBMISSION_ID}/curve"
+
+# Train series schema identity (when product route lands) — challenge-owned points only
+jq '{schema, authority, miner_reported_ignored, n: (.points|length), grads: [.points[].grad_norm][0:5]}' \
+  prism_train_series.v1.json
+```
+
+Do not rank packages solely on prettier grad_norm aesthetics. Use multi-axis Official / Complete View for scientific claims; keep emission on the bpb leaderboard path.
+
 ## Troubleshooting
 
 | Symptom | Likely cause |
@@ -341,3 +368,5 @@ Protocol axioms still hold: held-out **primary**, prequential bpb **secondary**,
 | LAB-GPU vs REAL-PROVIDER | Lab GPU score class is scientific only; REAL-PROVIDER TEE remains BLOCKED |
 | Prior mamba short-ctx win treated as “Mamba better architecture” | K=1 short-ctx LAB-GPU is provisional; require multimetric.v1.1 scorecard + K≥3; TIE_POLAR if short vs long axes disagree |
 | Scorecard long-ctx / sample-eff fields missing | Suite not run yet — mark not-run/BLOCKED; do not invent metrics |
+| Official grade missing train series | Pin requires `prism_train_series.v1` and capture empty/miner-only — fail-closed Official grade; do not PASS on miner dashboard |
+| Ranking only on grad aesthetics / wall_s | Forbidden — series residual never sole-primary; emission stays bpb-primary; Official heldout/bpb multi-axis still rule |
