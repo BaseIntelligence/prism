@@ -116,6 +116,10 @@ class ProtocolPin:
     primary_form: PrimaryForm = PRIMARY_FORM_HELDOUT_DELTA
     force_iter_train_batches: bool = True
     require_trained_state: bool = True
+    # When True, challenge-owned prism_train_series.v1 is mandatory for Official grade
+    # (docs §17.4 / VAL-TELE-009). Missing / empty / corrupt series fail-closes the
+    # scientific grade (not silent PASS). Series remain residual-only for rank.
+    require_train_series: bool = False
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -135,6 +139,7 @@ class ProtocolPin:
             "primary_form": self.primary_form,
             "force_iter_train_batches": self.force_iter_train_batches,
             "require_trained_state": self.require_trained_state,
+            "require_train_series": self.require_train_series,
             "wall_clock_never_ranks": OFFICIAL_WALL_CLOCK_NEVER_RANKS,
         }
 
@@ -1528,3 +1533,272 @@ def attach_scorecard_to_report(
         "honesty_note": SCORECARD_PROVISIONAL_HONESTY_NOTE,
     }
     return out
+
+
+# --- Train series Official grade fail-closed (VAL-TELE-009 / docs §17.4) -------------------
+# Series gate is orthogonal to v1 heldout/bpb rank keys: when pin.require_train_series
+# is True, missing / empty / corrupt / miner-only challenge series invalidates the
+# Official scientific grade. Series never sole-rank over heldout/bpb (VAL-TELE-010).
+
+
+OFFICIAL_GRADE_INVALID_SERIES_REASONS: frozenset[str] = frozenset(
+    {
+        "train_series_missing",
+        "train_series_empty",
+        "train_series_corrupt",
+        "train_series_not_challenge_owned",
+        "train_series_miner_only",
+        "train_series_missing_axes",
+        "train_series_nonfinite",
+        "train_series_digest_mismatch",
+    }
+)
+
+
+def evaluate_train_series_for_official_grade(
+    series: Mapping[str, Any] | None,
+    *,
+    require_train_series: bool,
+    expected_sha256: str | None = None,
+    miner_series: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Evaluate challenge-owned train series eligibility for Official grade.
+
+    When ``require_train_series`` is False, the gate is inactive (``required=False``,
+    ``ok=True``) — series absence does not fail the grade.
+
+    When True (Official / Complete View pin option): missing, empty, corrupt,
+    non-challenge, miner-only, incomplete axes, non-finite required fields, or digest
+    mismatch → ``ok=False`` and ``grade_valid=False`` (fail-closed, not silent PASS).
+
+    A miner dashboard / forged series **never** unblocks a missing challenge series.
+    Series content does **not** set the sole rank primary over heldout/bpb.
+    """
+    # Lazy import: train_series imports schemas only; avoid import cycles with container.
+    from .train_series import (  # noqa: PLC0415
+        series_has_required_axes,
+        series_is_challenge_owned,
+        train_series_sha256,
+    )
+
+    reasons: list[str] = []
+    residual_only = True  # always residual densify / visibility, never sole primary
+    present = isinstance(series, Mapping) and bool(series)
+    challenge_owned = series_is_challenge_owned(series) if present else False
+    axes_ok = series_has_required_axes(series) if present else False
+    scoreable = False
+    nonfinite = False
+    digest_ok: bool | None = None
+
+    if not require_train_series:
+        return {
+            "required": False,
+            "ok": True,
+            "grade_valid": True,
+            "present": present,
+            "challenge_owned": challenge_owned,
+            "axes_ok": axes_ok,
+            "scoreable": challenge_owned and axes_ok,
+            "reasons": [],
+            "miner_series_ignored": True,
+            "series_residual_only": residual_only,
+            "series_may_sole_rank": False,
+            "detail": "require_train_series=false; series gate inactive",
+        }
+
+    if not present:
+        reasons.append("train_series_missing")
+    elif not challenge_owned:
+        # Distinguish empty points vs authority/miner/schema rejection.
+        points_probe = series.get("points") if isinstance(series, Mapping) else None
+        authority = series.get("authority") if isinstance(series, Mapping) else None
+        if isinstance(points_probe, list) and len(points_probe) == 0:
+            reasons.append("train_series_empty")
+        elif authority == "miner" or (
+            isinstance(series, Mapping) and series.get("miner_reported_ignored") is False
+        ):
+            reasons.append("train_series_miner_only")
+        elif isinstance(series, Mapping) and series.get("schema") not in (
+            None,
+            "prism_train_series.v1",
+        ):
+            reasons.append("train_series_corrupt")
+        elif not isinstance(points_probe, list):
+            reasons.append("train_series_corrupt")
+        else:
+            reasons.append("train_series_not_challenge_owned")
+    else:
+        assert series is not None
+        if expected_sha256 is not None:
+            try:
+                digest_ok = train_series_sha256(series) == expected_sha256
+            except (TypeError, ValueError):
+                digest_ok = False
+            if not digest_ok:
+                reasons.append("train_series_digest_mismatch")
+        if not axes_ok:
+            reasons.append("train_series_missing_axes")
+        # Required numeric axes finite when present on points.
+        raw_points = series.get("points")
+        point_list: list[Any] = list(raw_points) if isinstance(raw_points, list) else []
+        for point in point_list:
+            if not isinstance(point, Mapping):
+                reasons.append("train_series_corrupt")
+                break
+            for key in ("tokens_seen", "train_ce_nats", "wall_s"):
+                val = point.get(key)
+                if isinstance(val, bool) or not isinstance(val, int | float):
+                    reasons.append("train_series_corrupt")
+                    break
+                if not math.isfinite(float(val)):
+                    nonfinite = True
+                    reasons.append("train_series_nonfinite")
+                    break
+            if reasons:
+                break
+        scoreable = not reasons and axes_ok and challenge_owned
+
+    # Miner channel never authorizes a missing/failed challenge series.
+    _ = miner_series  # accepted for API completeness; never unblocks
+
+    reasons = list(dict.fromkeys(reasons))
+    ok = not reasons
+    return {
+        "required": True,
+        "ok": ok,
+        "grade_valid": ok,
+        "present": present,
+        "challenge_owned": challenge_owned,
+        "axes_ok": axes_ok,
+        "scoreable": scoreable and ok,
+        "nonfinite": nonfinite,
+        "digest_ok": digest_ok,
+        "reasons": reasons,
+        "miner_series_ignored": True,
+        "series_residual_only": residual_only,
+        "series_may_sole_rank": False,
+        "detail": (
+            "challenge series accepted for Official grade"
+            if ok
+            else f"Official grade fail-closed: {','.join(reasons) or 'unknown'}"
+        ),
+    }
+
+
+def apply_train_series_requirement_to_grade(
+    *,
+    record: OfficialScoreRecord | None = None,
+    series: Mapping[str, Any] | None = None,
+    pin: ProtocolPin | Mapping[str, Any] | None = None,
+    require_train_series: bool | None = None,
+    expected_sha256: str | None = None,
+    miner_series: Mapping[str, Any] | None = None,
+    validity: ValidityGateRecord | Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Combine series gate with optional Validity residual into an Official grade block.
+
+    Returns a machine-readable grade summary:
+
+    * ``grade_valid`` — False when series required and invalid (fail-closed).
+    * ``official_rank_eligible`` — False when series gate or validity fails.
+    * ``series_residual_only`` — True always (series never sole primary rank).
+    * ``silent_pass`` — always False when gate fails (documents not-silent-PASS).
+
+    When require is inactive, prior validity / record.valid still govern rank eligibility
+    for other reasons, but series absence alone does not invalidate.
+    """
+    if require_train_series is None:
+        if isinstance(pin, ProtocolPin):
+            require_train_series = bool(pin.require_train_series)
+        elif isinstance(pin, Mapping):
+            require_train_series = bool(pin.get("require_train_series", False))
+        else:
+            require_train_series = False
+    series_gate = evaluate_train_series_for_official_grade(
+        series,
+        require_train_series=bool(require_train_series),
+        expected_sha256=expected_sha256,
+        miner_series=miner_series,
+    )
+    validity_ok = True
+    validity_reasons: list[str] = []
+    if isinstance(validity, ValidityGateRecord):
+        validity_ok = bool(validity.ok)
+        validity_reasons = list(validity.reasons)
+    elif isinstance(validity, Mapping):
+        validity_ok = bool(validity.get("ok", True))
+        raw_reasons = validity.get("reasons") or []
+        if isinstance(raw_reasons, list | tuple):
+            validity_reasons = [str(r) for r in raw_reasons]
+    record_valid = True if record is None else bool(record.valid and not record.step0_anomaly)
+
+    series_ok = bool(series_gate["ok"])
+    grade_valid = series_ok and validity_ok and record_valid
+    reasons: list[str] = []
+    if not series_ok:
+        reasons.extend(str(r) for r in series_gate.get("reasons") or [])
+    if not validity_ok:
+        reasons.extend(validity_reasons)
+    if record is not None and not record_valid:
+        if record.step0_anomaly:
+            reasons.append("step0_anomaly")
+        if not record.valid:
+            reasons.append("record_invalid")
+    reasons = list(dict.fromkeys(reasons))
+
+    return {
+        "require_train_series": bool(require_train_series),
+        "grade_valid": grade_valid,
+        "official_rank_eligible": grade_valid,
+        "silent_pass": False if (bool(require_train_series) and not series_ok) else None,
+        "series_gate": series_gate,
+        "series_residual_only": True,
+        "series_may_sole_rank": False,
+        "validity_ok": validity_ok,
+        "record_valid": record_valid,
+        "reasons": reasons,
+        "detail": (
+            "Official grade eligible"
+            if grade_valid
+            else f"Official grade invalid ({','.join(reasons) or 'unknown'})"
+        ),
+    }
+
+
+def densify_stability_from_train_series(
+    series: Mapping[str, Any] | None,
+) -> dict[str, Any]:
+    """Extract stability residual densifiers from challenge series (never sole rank).
+
+    Returns ``grad_spike_rate``, ``clip_events``, ``nan_inf_batches`` when series is
+    challenge-owned; otherwise empty / null honest residuals. **Must not** be used as
+    Official primary rank over heldout/bpb (VAL-TELE-010).
+    """
+    from .train_series import series_is_challenge_owned  # noqa: PLC0415
+
+    if not series_is_challenge_owned(series):
+        return {
+            "ok": False,
+            "grad_spike_rate": None,
+            "clip_events": None,
+            "nan_inf_batches": None,
+            "n_points": 0,
+            "series_residual_only": True,
+            "series_may_sole_rank": False,
+            "reason": "series_not_challenge_owned_or_missing",
+        }
+    assert series is not None
+    raw_agg = series.get("aggregates")
+    aggregates: Mapping[str, Any] = raw_agg if isinstance(raw_agg, Mapping) else {}
+    raw_points = series.get("points")
+    points_list: list[Any] = list(raw_points) if isinstance(raw_points, list) else []
+    return {
+        "ok": True,
+        "grad_spike_rate": aggregates.get("grad_spike_rate"),
+        "clip_events": aggregates.get("clip_events"),
+        "nan_inf_batches": aggregates.get("nan_inf_batches"),
+        "n_points": aggregates.get("n_points", len(points_list)),
+        "series_residual_only": True,
+        "series_may_sole_rank": False,
+        "reason": None,
+    }

@@ -312,6 +312,114 @@ def sanitize_point_for_api(point: Mapping[str, Any]) -> dict[str, Any] | None:
     return out
 
 
+def densify_sample_eff_from_train_series(
+    series: Mapping[str, Any] | None,
+    *,
+    mark_tokens: Sequence[int] | None = None,
+) -> dict[str, Any]:
+    """Derive sample-efficiency residual marks from challenge series (never sole rank).
+
+    Offline densify of running bpb / CE vs tokens_seen for Complete View / scorecard
+    residual panels. Returns honest null+reason when series is missing or non-challenge.
+    ``series_may_sole_rank`` is always False (VAL-TELE-010).
+    """
+    if not series_is_challenge_owned(series):
+        return {
+            "ok": False,
+            "marks": {},
+            "series_residual_only": True,
+            "series_may_sole_rank": False,
+            "reason": "series_not_challenge_owned_or_missing",
+        }
+    assert series is not None
+    raw_points = series.get("points")
+    points: list[Any] = list(raw_points) if isinstance(raw_points, list) else []
+    default_marks = (10_000, 50_000, 100_000, 250_000, 500_000)
+    marks = tuple(mark_tokens) if mark_tokens is not None else default_marks
+    out_marks: dict[str, float | None] = {}
+    for mark in marks:
+        chosen: float | None = None
+        for point in points:
+            if not isinstance(point, Mapping):
+                continue
+            tokens = point.get("tokens_seen")
+            if not isinstance(tokens, int | float):
+                continue
+            if int(tokens) < int(mark):
+                continue
+            bpb = point.get("running_bpb")
+            if isinstance(bpb, int | float) and math.isfinite(float(bpb)):
+                chosen = float(bpb)
+                break
+        out_marks[str(int(mark))] = chosen
+    return {
+        "ok": True,
+        "marks": out_marks,
+        "n_points": len(points),
+        "series_residual_only": True,
+        "series_may_sole_rank": False,
+        "reason": None,
+    }
+
+
+def make_fixture_series(
+    *,
+    submission_id: str,
+    run_id: str,
+    family: str,
+    n_points: int = 24,
+    start_ce: float = 4.0,
+    end_ce: float = 1.5,
+    tokens_per_step: int = 512,
+    wall_per_step: float = 0.05,
+    grad_start: float = 2.5,
+    grad_end: float = 0.4,
+    clip_every: int = 5,
+    seed_offset: float = 0.0,
+) -> dict[str, Any]:
+    """Build a synthetic challenge-owned series for dual-family time-flow evidence.
+
+    Used by VAL-TELE-011 fixture export and unit tests that need two architecture
+    (or two-run) series with loss + grad_norm + clip without paid Lium.
+    """
+    points: list[dict[str, Any]] = []
+    for i in range(max(1, n_points)):
+        frac = i / max(1, n_points - 1)
+        ce = start_ce + (end_ce - start_ce) * frac + seed_offset * 0.01
+        tokens = tokens_per_step * (i + 1)
+        covered = float(tokens * 4)
+        running = compute_running_bpb(
+            sum_nll_nats=ce * tokens,  # rough proxy for fixture visualizations
+            covered_bytes=covered,
+        )
+        grad = grad_start + (grad_end - grad_start) * frac
+        clip = (i % max(1, clip_every) == 0) and i > 0
+        points.append(
+            series_point(
+                i=i,
+                tokens_seen=tokens,
+                covered_bytes=covered,
+                train_ce_nats=ce,
+                running_bpb=running,
+                wall_s=wall_per_step * (i + 1),
+                grad_norm=grad,
+                clip_event=clip,
+                nan_inf=False,
+                param_norm=None,
+                lr=None,
+            )
+        )
+    series = build_train_series_v1(
+        submission_id=submission_id,
+        run_id=run_id,
+        points=points,
+        token_budget=tokens_per_step * n_points,
+        nan_inf_batches=0,
+        extra_aggregates={"family": family, "fixture": True},
+    )
+    return series
+
+
 def downsample_train_series_for_api(
     series: Mapping[str, Any] | None,
     *,
