@@ -835,7 +835,7 @@ def _axis_lead_from_values(
     return "tie"
 
 
-def _default_axis_scores_from_records(
+def default_axis_scores_from_records(
     a: OfficialScoreRecord,
     b: OfficialScoreRecord,
 ) -> dict[str, tuple[CompleteAxisScore, CompleteAxisScore]]:
@@ -843,6 +843,7 @@ def _default_axis_scores_from_records(
 
     Expanded multi-T / depth / unfused suite fields are filled by later features
     via :func:`build_complete_view` overrides; here we bootstrap from v1.1 fields.
+    Reasoning axis starts null until P10 ``logic_rel_macro`` / suite_mean is filled.
     """
     short_a = _finite_or_none(a.heldout_delta)
     short_b = _finite_or_none(b.heldout_delta)
@@ -970,7 +971,7 @@ def compare_complete_multi_axis(
     """
     eps_map = {**COMPLETE_VIEW_DEFAULT_EPS, **(dict(eps_by_axis or {}))}
     axes_in_play = list(polar_axes or COMPLETE_VIEW_POLAR_AXES)
-    raw_scores = axis_scores or _default_axis_scores_from_records(a, b)
+    raw_scores = axis_scores or default_axis_scores_from_records(a, b)
 
     per_axis: dict[str, AxisLead] = {}
     metric_vector: dict[str, Any] = {"a": {}, "b": {}}
@@ -1578,6 +1579,7 @@ __all__ = [
     "compare_complete_multi_axis",
     "complete_view_identity",
     "complete_view_metric_matrix",
+    "default_axis_scores_from_records",
     "reasoning_panel_shell",
     "validate_complete_view_document",
 ]
