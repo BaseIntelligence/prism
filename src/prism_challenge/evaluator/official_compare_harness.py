@@ -40,6 +40,7 @@ from .official_comparison import (
     OfficialScoreRecord,
     ProtocolPin,
     aggregate_official_records,
+    apply_train_series_requirement_to_grade,
     attach_scorecard_to_report,
     compare_official_scorecard,
     official_record_from_manifest,
@@ -494,11 +495,21 @@ def build_compare_report(
     score_class: ScoreClass = SCORE_CLASS_FIXTURE,
     tee_class: str = TEE_CLASS_NOT_CLAIMED,
     artifact_source: str | None = None,
+    train_series_a: Mapping[str, Any] | None = None,
+    train_series_b: Mapping[str, Any] | None = None,
+    train_series_sha256_a: str | None = None,
+    train_series_sha256_b: str | None = None,
 ) -> dict[str, Any]:
     """Emit a ``prism_compare_report.v1`` document (docs §10 sketch).
 
     ``score_class=LAB-GPU`` labels host ranking of real remote CUDA train artifacts.
     Fixture/CPU dual-family remains the default and keeps host GPU DEFERRED honesty.
+
+    When ``pin.require_train_series`` is True, apply the Official train-series grade gate
+    (fail-closed on missing/empty/corrupt/digest mismatch) and fold the outcome into
+    ``validity`` + a top-level ``train_series_grade`` block. Callers that already own
+    challenge series may pass ``train_series_a`` / ``train_series_b`` (and optional
+    on-disk digests); otherwise the pin-on path fail-closes for missing series.
     """
     if gpu is not None:
         gpu_info = dict(gpu)
@@ -513,6 +524,29 @@ def build_compare_report(
         "b": side_b.wall_clock_seconds,
         "used_for_rank": False,
     }
+    # Official grade series pin (docs §17.4 / VAL-TELE-009): when require is set, missing or
+    # bad challenge series fail-closes scientific grade (not silent PASS). Series never sole-rank.
+    grade_a = apply_train_series_requirement_to_grade(
+        record=side_a,
+        series=train_series_a,
+        pin=pin,
+        expected_sha256=train_series_sha256_a,
+    )
+    grade_b = apply_train_series_requirement_to_grade(
+        record=side_b,
+        series=train_series_b,
+        pin=pin,
+        expected_sha256=train_series_sha256_b,
+    )
+    series_grade_ok = bool(grade_a["grade_valid"] and grade_b["grade_valid"])
+    if pin.require_train_series and not series_grade_ok:
+        validity_ok = False
+    series_reasons: list[str] = []
+    if pin.require_train_series:
+        for prefix, grade in (("a", grade_a), ("b", grade_b)):
+            for reason in grade.get("reasons") or []:
+                series_reasons.append(f"{prefix}:{reason}")
+    combined_validity_reasons = list(validity_reasons) + series_reasons
     report: dict[str, Any] = {
         "schema": REPORT_SCHEMA,
         "protocol_id": pin.protocol_id,
@@ -575,12 +609,23 @@ def build_compare_report(
         },
         "validity": {
             "ok": validity_ok,
-            "reasons": list(validity_reasons),
+            "reasons": list(combined_validity_reasons),
             "wall_clock_never_ranks": True,
             "miner_self_report_never_authoritative": True,
             "matched_budget": True,
             "required_entry_scripts": list(REQUIRED_ENTRY_SCRIPTS),
             "score_class": score_class,
+            "require_train_series": bool(pin.require_train_series),
+            "train_series_grade_ok": series_grade_ok,
+        },
+        "train_series_grade": {
+            "require_train_series": bool(pin.require_train_series),
+            "grade_valid": series_grade_ok,
+            "silent_pass": False if (pin.require_train_series and not series_grade_ok) else None,
+            "series_residual_only": True,
+            "series_may_sole_rank": False,
+            "side_a": grade_a,
+            "side_b": grade_b,
         },
         "gpu_verification": gpu_info,
         "wall_clock_recorded": wall_clock_recorded,

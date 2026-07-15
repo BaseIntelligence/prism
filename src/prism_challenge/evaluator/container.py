@@ -1978,7 +1978,10 @@ def _author_train_series():
         series["aggregates"]["grad_spike_rate"] = sum(1 for g in grads if g > thr) / float(
             len(grads)
         )
-    text = json.dumps(series, sort_keys=True, indent=2)
+    # Compact sort_keys JSON — must match host serialize_train_series_v1 /
+    # train_series_sha256 Mapping form so Official expected_sha256 checks agree with
+    # the on-disk side-car digest folded into the challenge manifest (no pretty indent).
+    text = json.dumps(series, sort_keys=True, separators=(",", ":"))
     series_path.write_text(text, encoding="utf-8")
     digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
     return TRAIN_SERIES_V1_FILENAME, digest, clip_events

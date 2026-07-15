@@ -246,8 +246,16 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     index = export_evidence(args.out)
     print(json.dumps({"ok": True, "out": str(args.out), "series": list(index["series"].keys())}))
-    # Hard invariant: good dual series present; RED cases fail grade.
+    # Hard invariant: good dual series present; RED cases fail grade; good path is grade_valid.
     assert len(index["series"]) >= 2
+    for name, meta in index["series"].items():
+        gate = meta["series_gate_require_on"]
+        assert gate["grade_valid"] is True, (
+            f"good series {name} must grade_valid under require_train_series "
+            f"(got reasons={gate.get('reasons')})"
+        )
+        assert gate["ok"] is True
+        assert "train_series_digest_mismatch" not in (gate.get("reasons") or [])
     red_path = Path(args.out) / index["val_tele_009_red_cases"]
     red = json.loads(red_path.read_text(encoding="utf-8"))
     assert red["missing"]["grade_valid"] is False

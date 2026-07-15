@@ -23,8 +23,10 @@ from prism_challenge.evaluator.train_series import (
     build_train_series_v1,
     densify_sample_eff_from_train_series,
     make_fixture_series,
+    serialize_train_series_v1,
     series_point,
     train_series_sha256,
+    write_train_series_artifact,
 )
 
 
@@ -201,6 +203,40 @@ def test_require_on_good_series_allows_grade() -> None:
         series=series,
         pin=ProtocolPin(require_train_series=True),
         expected_sha256=digest,
+    )
+    assert grade["grade_valid"] is True
+    assert grade["official_rank_eligible"] is True
+
+
+def test_write_artifact_digest_matches_mapping_hash_under_require(tmp_path) -> None:
+    """BLOCKING fix: artifact write digest and Mapping re-hash share one serialize form.
+
+    Prior bug: write used pretty indent=2 while train_series_sha256(Mapping) used
+    compact separators → evaluate_train_series_for_official_grade falsedigested
+    train_series_digest_mismatch on good series.
+    """
+    series = _good_series()
+    path, disk_digest = write_train_series_artifact(tmp_path, series)
+    raw = path.read_bytes()
+    assert train_series_sha256(raw) == disk_digest
+    assert train_series_sha256(series) == disk_digest
+    assert serialize_train_series_v1(series) == raw
+    # Pretty re-encode would yield a different digest — guard the identity LOCk.
+    pretty = __import__("json").dumps(dict(series), sort_keys=True, indent=2).encode("utf-8")
+    assert train_series_sha256(pretty) != disk_digest
+
+    gate = evaluate_train_series_for_official_grade(
+        series, require_train_series=True, expected_sha256=disk_digest
+    )
+    assert gate["ok"] is True
+    assert gate["grade_valid"] is True
+    assert gate["reasons"] == []
+
+    grade = apply_train_series_requirement_to_grade(
+        record=_clean_record(),
+        series=series,
+        pin=ProtocolPin(require_train_series=True),
+        expected_sha256=disk_digest,
     )
     assert grade["grade_valid"] is True
     assert grade["official_rank_eligible"] is True

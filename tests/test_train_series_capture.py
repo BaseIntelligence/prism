@@ -23,9 +23,11 @@ from prism_challenge.evaluator.schemas import (
 from prism_challenge.evaluator.train_series import (
     build_train_series_v1,
     load_challenge_series,
+    serialize_train_series_v1,
     series_has_required_axes,
     series_is_challenge_owned,
     train_series_sha256,
+    write_train_series_artifact,
 )
 
 # Honest train that also plants a forged miner_series / forged dashboards for authority checks.
@@ -278,8 +280,11 @@ def test_load_challenge_series_rejects_wrong_digest(tmp_path: Path) -> None:
     series = build_train_series_v1(
         submission_id="s", run_id="r", points=points, token_budget=None, nan_inf_batches=0
     )
-    path = tmp_path / TRAIN_SERIES_V1_FILENAME
-    path.write_text(json.dumps(series, sort_keys=True, indent=2), encoding="utf-8")
-    digest = train_series_sha256(path.read_bytes())
+    path, digest = write_train_series_artifact(tmp_path, series)
+    assert path.is_file()
+    # Mapping digest and on-disk digest share the compact canonicalize form.
+    assert train_series_sha256(series) == digest
+    assert train_series_sha256(path.read_bytes()) == digest
+    assert serialize_train_series_v1(series) == path.read_bytes()
     assert load_challenge_series(tmp_path, expected_sha256=digest) is not None
     assert load_challenge_series(tmp_path, expected_sha256="0" * 64) is None

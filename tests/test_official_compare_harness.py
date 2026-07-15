@@ -26,6 +26,7 @@ from prism_challenge.evaluator.official_compare_harness import (
     FamilySynthProfile,
     LabGpuArtifactsMissingError,
     SynthSeedMetrics,
+    aggregate_side,
     build_compare_report,
     default_protocol_pin,
     gpu_verification_status,
@@ -48,6 +49,11 @@ from prism_challenge.evaluator.official_comparison import (
     ProtocolPin,
     compare_official,
     protocol_budget_constants,
+)
+from prism_challenge.evaluator.train_series import (
+    make_fixture_series,
+    train_series_sha256,
+    write_train_series_artifact,
 )
 from prism_challenge.seed_packaging import REQUIRED_ENTRY_SCRIPTS, SEED_FAMILIES
 
@@ -502,3 +508,63 @@ def test_harness_cli_lab_gpu_missing_exits_blocked(
     )
     assert code == 2
     assert "BLOCKED" in capsys.readouterr().out
+
+
+def test_require_train_series_pin_fail_closed_without_series(tmp_path: Path) -> None:
+    """When pin.require_train_series, harness grade fails closed if series not supplied."""
+    pin = ProtocolPin(require_train_series=True, seeds=OFFICIAL_DEFAULT_SEEDS)
+    report = run_dual_family_official_compare(tmp_path, pin=pin)
+    assert report["pin"]["require_train_series"] is True
+    assert report["train_series_grade"]["require_train_series"] is True
+    assert report["train_series_grade"]["grade_valid"] is False
+    assert report["train_series_grade"]["silent_pass"] is False
+    assert report["validity"]["ok"] is False
+    assert report["validity"]["train_series_grade_ok"] is False
+    assert any("train_series_missing" in r for r in report["validity"]["reasons"])
+
+
+def test_require_train_series_pin_allows_good_series_with_disk_digest(tmp_path: Path) -> None:
+    """Harness path: good dual series + compact on-disk digests → grade_valid=true."""
+    pin = ProtocolPin(require_train_series=True, seeds=OFFICIAL_DEFAULT_SEEDS)
+    series_a = make_fixture_series(
+        submission_id="harness-a",
+        run_id="prism-reexec-harness-a",
+        family="transformer",
+        n_points=8,
+    )
+    series_b = make_fixture_series(
+        submission_id="harness-b",
+        run_id="prism-reexec-harness-b",
+        family="mamba",
+        n_points=8,
+        seed_offset=1.0,
+    )
+    art_a = tmp_path / "series_a"
+    art_b = tmp_path / "series_b"
+    art_a.mkdir()
+    art_b.mkdir()
+    _, dig_a = write_train_series_artifact(art_a, series_a)
+    _, dig_b = write_train_series_artifact(art_b, series_b)
+    assert train_series_sha256(series_a) == dig_a
+    assert train_series_sha256(series_b) == dig_b
+
+    packed = package_unknown_style_pair(tmp_path / "packages")
+    agg_a = aggregate_side(DEFAULT_TRANSFORMER_PROFILE, pin=pin)
+    agg_b = aggregate_side(DEFAULT_MAMBA_PROFILE, pin=pin)
+    result = compare_official(agg_a, agg_b)
+    report = build_compare_report(
+        pin=pin,
+        side_a=agg_a,
+        side_b=agg_b,
+        packed=packed,
+        result=result,
+        train_series_a=series_a,
+        train_series_b=series_b,
+        train_series_sha256_a=dig_a,
+        train_series_sha256_b=dig_b,
+    )
+    assert report["train_series_grade"]["grade_valid"] is True
+    assert report["train_series_grade"]["side_a"]["grade_valid"] is True
+    assert report["train_series_grade"]["side_b"]["grade_valid"] is True
+    assert report["validity"]["train_series_grade_ok"] is True
+    assert report["validity"]["ok"] is True

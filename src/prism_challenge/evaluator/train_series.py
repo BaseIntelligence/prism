@@ -27,15 +27,42 @@ from .schemas import (
 
 TRAIN_SERIES_AUTHORITY = "challenge"
 
+# One canonical on-disk / Mapping encode for digest identity (VAL-TELE + Official grade).
+# Pretty (indent=2) vs compact must never diverge: artifact pointers use these exact bytes,
+# and ``evaluate_train_series_for_official_grade(..., expected_sha256=...)`` re-hashes Mapping
+# with the same form so good series no longer false-fail ``train_series_digest_mismatch``.
+_TRAIN_SERIES_JSON_SEPARATORS = (",", ":")
+
+
+def serialize_train_series_v1(payload: Mapping[str, Any]) -> bytes:
+    """Canonical UTF-8 JSON bytes for ``prism_train_series.v1`` digests and side-cars.
+
+    Always ``sort_keys=True`` with compact separators (no pretty indent). Callers that
+    need identities commensurate with ``metrics.train_series_sha256`` / Official
+    ``expected_sha256`` must use this path (or hash the resulting on-disk bytes unchanged).
+    """
+    return json.dumps(
+        dict(payload),
+        sort_keys=True,
+        separators=_TRAIN_SERIES_JSON_SEPARATORS,
+        ensure_ascii=True,
+    ).encode("utf-8")
+
 
 def train_series_sha256(payload: Mapping[str, Any] | str | bytes) -> str:
-    """Canonical sha256 of a train-series payload (stable JSON or raw bytes)."""
+    """Canonical sha256 of a train-series payload (stable JSON or raw on-disk bytes).
+
+    * ``bytes`` / ``str``: hash the given material as-is (use for authenticating on-disk
+      side-cars without re-encoding).
+    * ``Mapping``: hash :func:`serialize_train_series_v1` so Mapping digests match
+      compact artifact writes.
+    """
     if isinstance(payload, bytes):
         raw = payload
     elif isinstance(payload, str):
         raw = payload.encode("utf-8")
     else:
-        raw = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        raw = serialize_train_series_v1(payload)
     return hashlib.sha256(raw).hexdigest()
 
 
@@ -176,7 +203,12 @@ def write_train_series_artifact(
     *,
     filename: str = TRAIN_SERIES_V1_FILENAME,
 ) -> tuple[Path, str]:
-    """Persist series JSON under artifacts; return path + sha256 of on-disk bytes."""
+    """Persist series JSON under artifacts; return path + sha256 of on-disk bytes.
+
+    On-disk encoding is the canonical compact form (:func:`serialize_train_series_v1`),
+    so ``train_series_sha256(series_mapping)`` equals the returned digest (and so Official
+    grade ``expected_sha256`` checks against Mapping re-hash do not false-fail).
+    """
     path = Path(artifacts_dir) / filename
     # Drop any miner-planted file first so a hostile forged series never survives.
     try:
@@ -185,9 +217,9 @@ def write_train_series_artifact(
         pass
     except OSError:
         pass
-    text = json.dumps(dict(series), sort_keys=True, indent=2)
-    path.write_text(text, encoding="utf-8")
-    digest = train_series_sha256(text.encode("utf-8"))
+    raw = serialize_train_series_v1(series)
+    path.write_bytes(raw)
+    digest = train_series_sha256(raw)
     return path, digest
 
 
