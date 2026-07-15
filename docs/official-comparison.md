@@ -767,7 +767,7 @@ These scores are for **~7M from-scratch single-pass** lab seeds (realized counts
 3. Not the production **emission weight crown** (leaderboard stays bpb-primary).
 4. **REAL-PROVIDER TEE PASS** remains **BLOCKED** (orthogonal; suite fill never unlocks REAL).
 5. Efficiency / wall-clock never sole-rank; no opaque weighted sole crown.
-6. Near-chance us both-sides outcomes are **valid science** at seed scale, not a product failure.
+6. Near-chance on both-sides outcomes are **valid science** at seed scale, not a product failure.
 
 ### 16.2 Probe catalogue (must-have, challenge-owned)
 

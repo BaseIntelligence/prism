@@ -280,3 +280,37 @@ def test_val_reason_001_missing_p10_probe_fails_validation() -> None:
     bad["panels"] = panels
     problems = validate_complete_view_document(bad)
     assert any("boolean_parity_xor" in e for e in problems)
+
+
+def test_validate_prefers_structural_honesty_non_claims_flags() -> None:
+    """human_agi / gsm8k primary / seed-scale lab flags are hard structural locks."""
+    a = _rec(label="A")
+    b = _rec(label="B")
+    doc = build_complete_view(a, b)
+    assert_complete_view_document(doc)
+
+    for flag, bad_val, needle in (
+        ("human_agi_reasoning", True, "human_agi_reasoning"),
+        ("gsm8k_mmlu_primary", True, "gsm8k_mmlu_primary"),
+        ("seed_scale_logic_is_lab_only", False, "seed_scale_logic_is_lab_only"),
+    ):
+        broken = dict(doc)
+        nc = dict(doc["non_claims"])
+        nc[flag] = bad_val
+        broken["non_claims"] = nc
+        problems = validate_complete_view_document(broken)
+        assert any(needle in e for e in problems), (flag, problems)
+
+    # Omitting any of the three is also rejected (prefer presence over defaults).
+    missing = dict(doc)
+    nc2 = dict(doc["non_claims"])
+    del nc2["seed_scale_logic_is_lab_only"]
+    missing["non_claims"] = nc2
+    problems2 = validate_complete_view_document(missing)
+    assert any("seed_scale_logic_is_lab_only" in e for e in problems2)
+
+
+def test_docs_typo_near_chance_on_both_sides() -> None:
+    protocol = Path("docs/official-comparison.md").read_text(encoding="utf-8")
+    assert "Near-chance on both-sides" in protocol
+    assert "Near-chance us both-sides" not in protocol

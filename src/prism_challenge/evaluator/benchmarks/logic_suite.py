@@ -334,7 +334,13 @@ def gen_sort_order(
     suite_seed: int = DEFAULT_LOGIC_SUITE_SEED,
     ns: Sequence[int] = (3, 4, 5),
 ) -> LogicTrial:
-    """RL-05: Sort/order sequencing via min/max/median (chance ~1/n, table 0.25)."""
+    """RL-05: Sort/order sequencing via min/max/median (mode-aware chance).
+
+    Protocol table chance stays 0.25 for suite bookkeeping, but each mode
+    records its true closed-set chance: ~1/|candidates| for min/max/median and
+    0.5 for binary ``is_sorted``. Scoring uses those mode chances for relative
+    labels so seats stay consistent (hygiene: mixed binary vs n-way sets).
+    """
     rng = _rng("sort_order", trial_i, suite_seed=suite_seed)
     n = ns[trial_i % len(ns)]
     vals = [rng.randint(0, 9) for _ in range(n)]
@@ -375,12 +381,19 @@ def gen_sort_order(
         cands = ("yes", "no")
     if gold not in cands:
         cands = cands + (gold,)
+    mode_chance = 0.5 if mode == "is_sorted" else (1.0 / float(len(cands)) if cands else 0.25)
     return LogicTrial(
         probe="sort_order",
         prompt=prompt,
         gold=gold,
         candidates=cands,
-        meta={"mode": mode, "vals": vals, "n": n},
+        meta={
+            "mode": mode,
+            "vals": vals,
+            "n": n,
+            "chance": mode_chance,
+            "protocol_chance": float(LOGIC_CHANCE.get("sort_order", 0.25)),
+        },
     )
 
 
@@ -451,16 +464,21 @@ def gen_count_stream(
     suite_seed: int = DEFAULT_LOGIC_SUITE_SEED,
     stream_lengths: Sequence[int] = (8, 16, 32),
 ) -> LogicTrial:
-    """RL-07: Count occurrences of a target symbol in a stream (chance 0.1 for 0..9)."""
+    """RL-07: Count occurrences of a target symbol in a stream (chance 0.1 for 0..9).
+
+    Gold domain always matches true stream counts in ``0..9`` (table chance 0.1).
+    Streams are constructed from a sampled count rather than post-hoc clamping, so
+    ``meta['count']`` never disagrees with gold even when stream_len is 32.
+    """
     rng = _rng("count_stream", trial_i, suite_seed=suite_seed)
     s_len = stream_lengths[trial_i % len(stream_lengths)]
     target = rng.choice(list("ABCDE"))
     fillers = list("FGHIJ")
-    stream = [rng.choice(fillers + [target]) for _ in range(s_len)]
-    count = sum(1 for x in stream if x == target)
-    # Clamp answer space to 0..9 for chance 0.1 table
-    count_clamped = min(9, count)
-    gold = str(count_clamped)
+    # Sample true count in digit domain first so gold == count always holds.
+    count = int(rng.randint(0, min(9, s_len)))
+    stream = [target] * count + [rng.choice(fillers) for _ in range(s_len - count)]
+    rng.shuffle(stream)
+    gold = str(count)
     stream_s = " ".join(stream)
     prompt = f"count: stream=[{stream_s}] ; target={target} ; q=count → ?"
     return LogicTrial(
@@ -468,7 +486,13 @@ def gen_count_stream(
         prompt=prompt,
         gold=gold,
         candidates=DIGIT_SYMBOLS,
-        meta={"stream_len": s_len, "target": target, "count": count},
+        meta={
+            "stream_len": s_len,
+            "target": target,
+            "count": count,
+            "gold_domain": "0..9",
+            "clamped": False,
+        },
     )
 
 
@@ -701,6 +725,25 @@ def score_logic_closed_accuracy(
     )
 
 
+def _trial_chance(trial: LogicTrial, *, probe: str | None = None) -> float:
+    """Per-trial chance: prefer explicit meta chance (sort modes) else table."""
+    meta = trial.meta or {}
+    raw = meta.get("chance")
+    if isinstance(raw, (int, float)) and math.isfinite(float(raw)) and float(raw) > 0.0:
+        return float(raw)
+    p = probe or trial.probe
+    return float(LOGIC_CHANCE.get(p, 0.0))
+
+
+def _mean_trial_chance(trials: Sequence[LogicTrial], *, probe: str | None = None) -> float:
+    """Macro mean of per-trial chances (sort_order mode-mix honesty)."""
+    if not trials:
+        p = probe or "unknown"
+        return float(LOGIC_CHANCE.get(p, 0.0))
+    vals = [_trial_chance(t, probe=probe) for t in trials]
+    return float(sum(vals) / len(vals))
+
+
 def score_logic_from_predictions(
     trials: Sequence[LogicTrial],
     predictions: Sequence[str],
@@ -709,7 +752,13 @@ def score_logic_from_predictions(
     forced_ce_values: Sequence[float] | None = None,
     device: str = "fixture",
 ) -> LogicTaskScore:
-    """Score predicted answer strings against gold trials (fixture or model)."""
+    """Score predicted answer strings against gold trials (fixture or model).
+
+    Protocol ``LOGIC_CHANCE`` remains the dual-channel / panel table chance.
+    When trials publish per-mode ``meta['chance']`` (e.g. sort_order is_sorted
+    vs min/max/median), the mode-mean is stored on ``detail`` for honesty so
+    chance labels stay interpretable without breaking table locks.
+    """
     if not trials:
         p = probe or "unknown"
         ch = float(LOGIC_CHANCE.get(p, 0.0))
@@ -726,8 +775,32 @@ def score_logic_from_predictions(
             raise ValueError("forced_ce_values/trials length mismatch")
         vals = [float(x) for x in forced_ce_values if math.isfinite(float(x))]
         ce = (sum(vals) / len(vals)) if vals else None
+    protocol_ch = float(LOGIC_CHANCE.get(p_name, 0.0))
+    # Protocol table chance stays authoritative for suite/panel/contracts.
+    # Mode-aware bookkeeping is detail-only (sort_order binary vs n-way mix).
+    mode_chances = [
+        float(t.meta["chance"])
+        for t in trials
+        if isinstance(t.meta, Mapping)
+        and isinstance(t.meta.get("chance"), (int, float))
+        and math.isfinite(float(t.meta["chance"]))
+        and float(t.meta["chance"]) > 0.0
+    ]
+    detail: dict[str, Any] = {
+        "n_trials": len(trials),
+        "protocol_chance": protocol_ch,
+        "chance_source": "protocol_table",
+    }
+    if mode_chances and len(mode_chances) == len(trials):
+        mode_mean = float(sum(mode_chances) / len(mode_chances))
+        detail["mode_chance_mean"] = mode_mean
+        detail["mode_chance_labels"] = [_trial_chance(t, probe=p_name) for t in trials]
+        detail["chance_mode_note"] = (
+            "protocol chance stays locked to LOGIC_CHANCE table; "
+            "mode_chance_* documents actual closed-set sizes (e.g. is_sorted=0.5)"
+        )
     return score_logic_closed_accuracy(
-        correct, probe=p_name, forced_ce=ce, device=device, detail={"n_trials": len(trials)}
+        correct, probe=p_name, chance=protocol_ch, forced_ce=ce, device=device, detail=detail
     )
 
 
@@ -842,12 +915,94 @@ def tokenize_simple(text: str) -> list[int]:
     return [min(255, max(1, ord(ch) if 0 < ord(ch) < 256 else 63)) for ch in text]
 
 
+def encode_answer_ids(
+    answer: str,
+    *,
+    encode: Callable[[str], Sequence[int]] | None = None,
+) -> list[int]:
+    """Encode a closed-choice answer string into one or more token ids.
+
+    Default uses full :func:`tokenize_simple` **sequence** (not first-byte only) so
+    multi-char / multi-candidate answers (``e0..e7``, reverse_edit strings) stay
+    distinct. Callers with train-pin tokenizers (gpt2 tiktoken) should pass
+    ``encode=`` that returns the full multi-token id list.
+    """
+    if encode is None:
+        ids = tokenize_simple(answer)
+    else:
+        ids = list(encode(answer))
+    return [int(x) for x in ids]
+
+
+def _answers_are_single_token(
+    trials: Sequence[LogicTrial],
+    encode: Callable[[str], Sequence[int]],
+) -> bool:
+    for t in trials:
+        for s in (t.gold, *t.candidates):
+            if len(encode_answer_ids(str(s), encode=encode)) != 1:
+                return False
+    return True
+
+
+def _candidates_share_first_id(
+    trials: Sequence[LogicTrial],
+    encode: Callable[[str], Sequence[int]],
+) -> bool:
+    """True when any trial's closed set collapses under first-token encoding."""
+    for t in trials:
+        firsts = []
+        for s in t.candidates:
+            ids = encode_answer_ids(str(s), encode=encode)
+            firsts.append(int(ids[0]) if ids else 0)
+        if len(firsts) >= 2 and len(set(firsts)) < len(firsts):
+            return True
+    return False
+
+
+def closed_choice_rank_preds(
+    trials: Sequence[LogicTrial],
+    *,
+    nll_fn: Callable[[Sequence[int]], Sequence[float] | float],
+    encode: Callable[[str], Sequence[int]] | None = None,
+    prompt_encode: Callable[[str], Sequence[int]] | None = None,
+) -> list[str]:
+    """Pick the candidate with lowest teacher-forced answer NLL (multi-token safe).
+
+    This is the default host densify closed scorer when candidates are multi-token
+    or would collapse under first-byte / first-token rank.
+    """
+    enc = encode if encode is not None else tokenize_simple
+    penc = prompt_encode if prompt_encode is not None else enc
+    preds: list[str] = []
+    for t in trials:
+        best_s = t.gold
+        best_nll = float("inf")
+        # Stable order: candidates as published; lower NLL wins; ties prefer earlier.
+        for c in t.candidates:
+            nll = probe_forced_answer_ce(
+                nll_fn,
+                t.prompt,
+                str(c),
+                basis="nats",
+                encode=enc,
+                prompt_encode=penc,
+            )
+            if nll < best_nll:
+                best_nll = nll
+                best_s = str(c)
+        preds.append(best_s)
+    return preds
+
+
 def probe_forced_answer_ce(
     nll_fn: Callable[[Sequence[int]], Sequence[float] | float],
     prompt: str,
     answer: str,
     *,
     basis: Literal["nats", "bits"] = "nats",
+    encode: Callable[[str], Sequence[int]] | None = None,
+    prompt_encode: Callable[[str], Sequence[int]] | None = None,
 ) -> float:
     """Forced CE on gold answer span only (teacher-forced masses via NLL callable).
 
@@ -855,9 +1010,13 @@ def probe_forced_answer_ce(
     - a scalar mean NLL over answer tokens, or
     - a per-token NLL stream (we average the **answer suffix** only).
     Architecture-agnostic: no attention/SSM state inspection.
+
+    Optional ``encode`` / ``prompt_encode`` override the tokenizer so multi-token
+    densify paths (gpt2) share identity with train pin.
     """
-    prompt_ids = tokenize_simple(prompt)
-    answer_ids = tokenize_simple(answer)
+    penc = prompt_encode if prompt_encode is not None else encode
+    prompt_ids = encode_answer_ids(prompt, encode=penc)
+    answer_ids = encode_answer_ids(answer, encode=encode)
     if not answer_ids:
         return float("inf")
     full = prompt_ids + answer_ids
@@ -888,14 +1047,24 @@ def score_probe_with_logits(
     probe: str | None = None,
     nll_fn: Callable[[Sequence[int]], Sequence[float] | float] | None = None,
     encode_answer: Callable[[str], int] | None = None,
+    encode_answer_seq: Callable[[str], Sequence[int]] | None = None,
     device: str = "cpu",
 ) -> LogicTaskScore:
-    """Host densify path: closed accuracy via logits + optional forced CE NLL.
+    """Host densify path: closed accuracy via logits / multi-token NLL rank + forced CE.
 
-    ``logits_fn(prompt)`` → 1D vocab logits. When ``encode_answer`` is provided,
-    candidate strings are mapped to single target token ids; otherwise answers are
-    mapped through ``tokenize_simple`` first-byte and checked via
-    :func:`probe_next_token_accuracy` closed sets.
+    Prefer multi-token-safe closed scoring:
+
+    1. If ``nll_fn`` is provided **and** (candidates are multi-token under the
+       configured encode **or** first ids collide for any closed set, e.g.
+       ``e0..e7`` under byte encode), rank candidates by teacher-forced answer
+       NLL via :func:`closed_choice_rank_preds`. This is the correct host densify
+       path for multihop_binding and reverse_edit.
+    2. Else, when every candidate is a single token and ids don't collide, use
+       next-token closed accuracy via :func:`probe_next_token_accuracy`.
+    3. ``encode_answer`` (single id) is honored for pure next-token rank only;
+       prefer ``encode_answer_seq`` for multi-token full-string sequences.
+    4. Default ``tokenize_simple`` encoding always uses the **full string sequence**,
+       never first-byte alone when multi-token NLL ranking is active.
     """
     if not trials:
         p = probe or "unknown"
@@ -904,34 +1073,98 @@ def score_probe_with_logits(
             probe=p, accuracy=0.0, chance=ch, relative=0.0, forced_ce=None, trials=0, device=device
         )
     p_name = probe or trials[0].probe
-    contexts = [t.prompt for t in trials]
-    if encode_answer is None:
 
-        def _enc(s: str) -> int:
-            ids = tokenize_simple(s)
-            return int(ids[0]) if ids else 0
+    # Resolve multi-token encode (seq); first-token adapter for closed next-token path.
+    if encode_answer_seq is not None:
+        enc_seq: Callable[[str], Sequence[int]] = encode_answer_seq
+    elif encode_answer is not None:
+        # Legacy single-id adapter: wrap as one-token sequences.
+        def enc_seq(s: str, _e: Callable[[str], int] = encode_answer) -> Sequence[int]:
+            return [int(_e(s))]
+    else:
+        enc_seq = tokenize_simple
 
-        encode_answer = _enc
-    targets = [encode_answer(t.gold) for t in trials]
-    cand_sets = [[encode_answer(c) for c in t.candidates] for t in trials]
-    outcomes = probe_next_token_accuracy(logits_fn, contexts, targets, candidate_sets=cand_sets)
+    multi_token_candidates = not _answers_are_single_token(trials, enc_seq)
+    first_id_collision = _candidates_share_first_id(trials, enc_seq)
+    use_multitoken = nll_fn is not None and (
+        multi_token_candidates or first_id_collision
+    )
+
     ce_vals: list[float] | None = None
-    if nll_fn is not None:
-        ce_vals = [probe_forced_answer_ce(nll_fn, t.prompt, t.gold, basis="nats") for t in trials]
-    # Reconstruct string preds only for CE pairing; accuracy already from logits.
-    preds: list[str] = []
-    for ok, t in zip(outcomes, trials, strict=True):
-        if ok:
-            preds.append(t.gold)
+    detail_method: str
+    if use_multitoken:
+        assert nll_fn is not None
+        preds = closed_choice_rank_preds(trials, nll_fn=nll_fn, encode=enc_seq)
+        detail_method = "forced_nll_rank"
+        ce_vals = [
+            probe_forced_answer_ce(nll_fn, t.prompt, t.gold, basis="nats", encode=enc_seq)
+            for t in trials
+        ]
+    else:
+        # Single-token closed rank from next-token logits.
+        contexts = [t.prompt for t in trials]
+        if encode_answer is not None:
+            enc_tok = encode_answer
         else:
-            wrong = next((c for c in t.candidates if c != t.gold), "__x__")
-            preds.append(wrong)
-    return score_logic_from_predictions(
+
+            def enc_tok(s: str, _seq: Callable[[str], Sequence[int]] = enc_seq) -> int:
+                ids = encode_answer_ids(s, encode=_seq)
+                return int(ids[0]) if ids else 0
+
+        targets = [enc_tok(t.gold) for t in trials]
+        cand_sets = [[enc_tok(c) for c in t.candidates] for t in trials]
+        # Guard: if still collapsed after encode, refuse false-perfect next-token.
+        if any(len(set(cs)) < len(cs) for cs in cand_sets):
+            if nll_fn is None:
+                # Cannot rank freely; mark all wrong rather than invent perfect.
+                preds = [
+                    next((c for c in t.candidates if c != t.gold), "__x__") for t in trials
+                ]
+                detail_method = "collapsed_ids_abstain"
+            else:
+                preds = closed_choice_rank_preds(trials, nll_fn=nll_fn, encode=enc_seq)
+                detail_method = "forced_nll_rank_collapsed_fallback"
+                ce_vals = [
+                    probe_forced_answer_ce(nll_fn, t.prompt, t.gold, basis="nats", encode=enc_seq)
+                    for t in trials
+                ]
+        else:
+            outcomes = probe_next_token_accuracy(
+                logits_fn, contexts, targets, candidate_sets=cand_sets
+            )
+            preds = []
+            for ok, t in zip(outcomes, trials, strict=True):
+                if ok:
+                    preds.append(t.gold)
+                else:
+                    wrong = next((c for c in t.candidates if c != t.gold), "__x__")
+                    preds.append(wrong)
+            detail_method = "next_token"
+            if nll_fn is not None:
+                ce_vals = [
+                    probe_forced_answer_ce(nll_fn, t.prompt, t.gold, basis="nats", encode=enc_seq)
+                    for t in trials
+                ]
+
+    score = score_logic_from_predictions(
         trials,
         preds,
         probe=p_name,
         forced_ce_values=ce_vals,
         device=device,
+    )
+    # Preserve method on detail for densify audit.
+    detail = dict(score.detail or {})
+    detail["closed_rank_method"] = detail_method
+    return LogicTaskScore(
+        probe=score.probe,
+        accuracy=score.accuracy,
+        chance=score.chance,
+        relative=score.relative,
+        forced_ce=score.forced_ce,
+        trials=score.trials,
+        device=score.device,
+        detail=detail,
     )
 
 
@@ -1010,7 +1243,9 @@ __all__ = [
     "LogicTaskScore",
     "LogicTrial",
     "chance_predictions",
+    "closed_choice_rank_preds",
     "documented_logic_suite",
+    "encode_answer_ids",
     "fixture_forced_ce_from_accuracy",
     "gen_arith_digit_mod",
     "gen_boolean_parity_xor",

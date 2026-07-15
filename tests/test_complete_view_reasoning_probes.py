@@ -15,11 +15,15 @@ from prism_challenge.evaluator.benchmarks.logic_suite import (
     DEFAULT_TRIALS_PER_PROBE,
     GENERATOR_BY_PROBE,
     LOGIC_PROBE_KEYS,
+    closed_choice_rank_preds,
     documented_logic_suite,
+    encode_answer_ids,
     fixture_forced_ce_from_accuracy,
     gen_boolean_parity_xor,
+    gen_count_stream,
     gen_multihop_binding,
     gen_reverse_edit,
+    gen_sort_order,
     generate_logic_suite,
     generate_probe_trials,
     logic_trial_seed,
@@ -438,3 +442,152 @@ def test_score_probe_fixture_default_trials() -> None:
 def test_boolean_generator_modes_include_xor_and_parity() -> None:
     modes = {gen_boolean_parity_xor(i).meta["mode"] for i in range(8)}
     assert "xor" in modes and "parity" in modes
+
+
+# --- Scoring hygiene (first-byte collapse, count domain, sort chance) -------------
+
+
+def test_encode_answer_ids_keeps_multihop_entities_distinct() -> None:
+    """e0..e7 must not collapse under default encode (hygiene: no first-byte only)."""
+    cands = ("e0", "e1", "e2", "e3", "e4", "e5", "e6", "e7")
+    seqs = [tuple(encode_answer_ids(c)) for c in cands]
+    assert len(set(seqs)) == len(cands)
+    # First-byte alone would all be ord('e') — ensure multi-id sequences.
+    assert all(len(s) >= 2 for s in seqs)
+
+
+def test_score_probe_with_logits_multihop_not_first_byte_collapsed() -> None:
+    """With nll_fn, multihop closed rank must distinguish e0..e7, not shared first-byte."""
+    trials = generate_probe_trials("multihop_binding", n_trials=6)
+    # Prove candidate first-bytes collide under naive collapse.
+    for t in trials:
+        firsts = [tokenize_simple(c)[0] for c in t.candidates]
+        assert len(set(firsts)) < len(firsts)
+
+    # Score each trial with a gold-local NLL teacher so entities stay distinguished.
+    outcomes: list[bool] = []
+    methods: list[str] = []
+    for t in trials:
+        gold = t.gold
+
+        def nll_prefer_this_gold(
+            full: list[int] | tuple[int, ...],
+            *,
+            g: str = gold,
+        ) -> float:
+            chars = "".join(chr(i) for i in full if 1 <= i < 256)
+            return 0.1 if chars.endswith(g) else 3.0
+
+        sc = score_probe_with_logits(
+            [t],
+            logits_fn=lambda _ctx: [0.0] * 256,  # unused when multi-token NLL path
+            probe="multihop_binding",
+            nll_fn=nll_prefer_this_gold,
+            device="cpu",
+        )
+        assert sc.detail is not None
+        methods.append(str(sc.detail.get("closed_rank_method")))
+        outcomes.append(sc.accuracy == 1.0)
+
+    assert all(outcomes)
+    assert all(
+        m in {"forced_nll_rank", "forced_nll_rank_collapsed_fallback"} for m in methods
+    )
+    # Suite-level path also reports multi-token method and no first-byte collapse.
+    suite = score_probe_with_logits(
+        trials,
+        logits_fn=lambda _ctx: [0.0] * 256,
+        probe="multihop_binding",
+        nll_fn=lambda full: float(len(full)),  # uniform — only proves method selection
+        device="cpu",
+    )
+    assert suite.detail is not None
+    assert suite.detail.get("closed_rank_method") in {
+        "forced_nll_rank",
+        "forced_nll_rank_collapsed_fallback",
+    }
+    assert suite.chance == pytest.approx(0.125)
+
+
+def test_score_probe_with_logits_reverse_edit_multi_char() -> None:
+    """reverse_edit multi-char golds must score via multi-token rank (not first-byte)."""
+    trials = generate_probe_trials("reverse_edit", n_trials=4)
+    assert all(len(t.gold) > 1 for t in trials)
+
+    for t in trials:
+        gold = t.gold
+
+        def nll_prefer_this_gold(
+            full: list[int] | tuple[int, ...],
+            *,
+            g: str = gold,
+        ) -> float:
+            chars = "".join(chr(i) for i in full if 1 <= i < 256)
+            return 0.05 if chars.endswith(g) else 4.0
+
+        score = score_probe_with_logits(
+            [t],
+            logits_fn=lambda _ctx: [0.0] * 256,
+            probe="reverse_edit",
+            nll_fn=nll_prefer_this_gold,
+            device="cpu",
+        )
+        assert score.detail is not None
+        assert "forced_nll" in str(score.detail.get("closed_rank_method", ""))
+        assert score.accuracy == pytest.approx(1.0)
+
+
+def test_closed_choice_rank_preds_selects_lowest_nll() -> None:
+    trials = [gen_multihop_binding(0)]
+    gold = trials[0].gold
+
+    def nll_fn(full: list[int] | tuple[int, ...]) -> float:
+        chars = "".join(chr(i) for i in full if 1 <= i < 256)
+        return 0.0 if chars.endswith(gold) else 5.0
+
+    preds = closed_choice_rank_preds(trials, nll_fn=nll_fn)
+    assert preds == [gold]
+
+
+def test_gen_count_stream_gold_matches_true_count_domain() -> None:
+    """Gold domain always equals true stream count in 0..9 (no clamp mismatch)."""
+    for i in range(200):
+        t = gen_count_stream(i)
+        assert t.gold in t.candidates
+        assert t.gold == str(t.meta["count"])
+        assert 0 <= int(t.meta["count"]) <= 9
+        assert t.meta.get("clamped") is False
+        assert t.meta.get("gold_domain") == "0..9"
+        # Reconstruct count from prompt stream body.
+        # prompt form: count: stream=[...] ; target=X ; q=count → ?
+        body = t.prompt.split("stream=[", 1)[1].split("]", 1)[0]
+        tokens = body.split()
+        target = t.meta["target"]
+        observed = sum(1 for x in tokens if x == target)
+        assert observed == int(t.meta["count"])
+        assert observed == int(t.gold)
+        assert len(tokens) == int(t.meta["stream_len"])
+
+
+def test_sort_order_mode_chance_labels_consistent() -> None:
+    """is_sorted uses 0.5 in meta; table chance stays 0.25 on scores."""
+    trials = [gen_sort_order(i) for i in range(8)]
+    modes = {t.meta["mode"] for t in trials}
+    assert "is_sorted" in modes
+    for t in trials:
+        assert "chance" in t.meta
+        assert "protocol_chance" in t.meta
+        assert t.meta["protocol_chance"] == pytest.approx(0.25)
+        if t.meta["mode"] == "is_sorted":
+            assert t.meta["chance"] == pytest.approx(0.5)
+            assert t.candidates == ("yes", "no")
+        else:
+            assert t.meta["chance"] == pytest.approx(1.0 / len(t.candidates))
+    # Protocol score chance remains table 0.25; detail carries mode mean.
+    preds = oracle_predictions(trials)
+    sc = score_logic_from_predictions(trials, preds, probe="sort_order")
+    assert sc.chance == pytest.approx(0.25)
+    assert sc.detail is not None
+    assert sc.detail.get("chance_source") == "protocol_table"
+    assert "mode_chance_mean" in sc.detail
+    assert sc.detail["mode_chance_mean"] > 0.25  # mix pulls mean above pure 0.25

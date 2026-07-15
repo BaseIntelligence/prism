@@ -1420,6 +1420,14 @@ def validate_complete_view_document(document: Mapping[str, Any]) -> list[str]:
             errors.append("emission_weight_crown must be false")
         if non_claims.get("real_provider_tee_pass") is not False:
             errors.append("real_provider_tee_pass must be false")
+        # Structural honesty flags (VAL-REASON-012): seed-scale lab only, no AGI,
+        # no GSM8K/MMLU primary. Prefer hard presence over defaults-only.
+        if non_claims.get("human_agi_reasoning") is not False:
+            errors.append("human_agi_reasoning must be false")
+        if non_claims.get("gsm8k_mmlu_primary") is not False:
+            errors.append("gsm8k_mmlu_primary must be false")
+        if non_claims.get("seed_scale_logic_is_lab_only") is not True:
+            errors.append("seed_scale_logic_is_lab_only must be true")
 
     panels = document.get("panels")
     if not isinstance(panels, Mapping):
