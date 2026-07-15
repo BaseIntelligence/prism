@@ -701,7 +701,8 @@ class PrismRepository:
         """
         async with self.database.connect() as conn:
             curve_rows = await conn.execute_fetchall(
-                "SELECT online_loss, covered_bytes_cumulative, step0_loss, baseline_nats, compute "
+                "SELECT online_loss, covered_bytes_cumulative, step0_loss, baseline_nats, compute,"
+                " train_series "
                 "FROM submission_curves WHERE submission_id=?",
                 (submission_id,),
             )
@@ -716,6 +717,10 @@ class PrismRepository:
         compute = loads(curve["compute"])
         metrics = loads(list(score_rows)[0]["metrics"]) if score_rows else {}
         metrics = metrics if isinstance(metrics, dict) else {}
+        train_series_raw = curve["train_series"] if "train_series" in curve.keys() else None
+        train_series = loads(train_series_raw) if train_series_raw else None
+        if not isinstance(train_series, dict):
+            train_series = None
         return {
             "submission_id": submission_id,
             "online_loss": loads(curve["online_loss"]),
@@ -723,6 +728,7 @@ class PrismRepository:
             "step0_loss": curve["step0_loss"],
             "baseline_nats": curve["baseline_nats"],
             "compute": compute if isinstance(compute, dict) else {},
+            "train_series": train_series,
             "prequential_bpb": metrics.get("prequential_bpb"),
             "bits_per_byte": metrics.get("bits_per_byte"),
             "tokens_consumed": metrics.get("tokens_consumed"),

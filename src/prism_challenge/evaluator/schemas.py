@@ -14,6 +14,11 @@ RUN_MANIFEST_V2_FILENAME = "prism_run_manifest.v2.json"
 RUN_MANIFEST_V2_SCHEMA_VERSION = "prism_run_manifest.v2"
 # Typed, observability-only `compute` block recorded on the v2 run manifest.
 COMPUTE_BLOCK_SCHEMA = "prism_compute.v1"
+# Challenge-owned train time-series (telemetry-rt / VAL-TELE-*). Side-car artifact written by
+# the in-container runner alongside online_loss; miner-authored copies are ignored for grade.
+TRAIN_SERIES_V1_SCHEMA = "prism_train_series.v1"
+TRAIN_SERIES_V1_FILENAME = "prism_train_series.v1.json"
+TRAIN_SERIES_V1_JSONL_FILENAME = "prism_train_series.v1.jsonl"
 
 
 class SchemaModel(BaseModel):

@@ -517,6 +517,8 @@ class PrismWorker:
                 hotkey=hotkey,
                 fingerprints=component_review.fingerprints,
                 name=arch_name,
+                artifact_output_path=result.artifact_output_path,
+                run_manifest_path=result.run_manifest_path,
             )
             return submission_id
         except InfrastructureEvaluationError as exc:
@@ -924,6 +926,8 @@ class PrismWorker:
         name: str | None = None,
         skip_heldout: bool = False,
         tee_score_authorized: bool = False,
+        artifact_output_path: str | None = None,
+        run_manifest_path: str | None = None,
     ) -> None:
         """Finalize a container run using the CHALLENGE-OWNED prequential bits-per-byte score.
 
@@ -1019,7 +1023,12 @@ class PrismWorker:
                 now=now,
             )
             await self._persist_submission_curve(
-                conn, submission_id=submission_id, manifest=manifest, now=now
+                conn,
+                submission_id=submission_id,
+                manifest=manifest,
+                now=now,
+                artifact_output_path=artifact_output_path,
+                run_manifest_path=run_manifest_path,
             )
 
     async def _upsert_architecture_family(
@@ -1156,8 +1165,15 @@ class PrismWorker:
         submission_id: str,
         manifest: dict[str, Any],
         now: str,
+        artifact_output_path: str | None = None,
+        run_manifest_path: str | None = None,
     ) -> None:
-        """Persist the loss curve + reconciled compute block centrally (downsampled when served)."""
+        """Persist the loss curve + train series + reconciled compute block centrally.
+
+        ``online_loss`` remains the legacy CE series. ``train_series`` stores the full
+        challenge-owned ``prism_train_series.v1`` document (grad_norm / clip / wall) when the
+        runner authored it; miner self-reports never enter this column (VAL-TELE-002..006).
+        """
         metrics_block = manifest.get("metrics")
         metrics = metrics_block if isinstance(metrics_block, dict) else {}
         data_block = manifest.get("data")
@@ -1166,10 +1182,16 @@ class PrismWorker:
         compute = compute_block if isinstance(compute_block, dict) else {}
         online_loss = metrics.get("online_loss") or []
         covered_bytes_cumulative = data.get("covered_bytes_cumulative") or []
+        train_series_payload = self._load_train_series_for_persist(
+            manifest=manifest,
+            metrics=metrics,
+            artifact_output_path=artifact_output_path,
+            run_manifest_path=run_manifest_path,
+        )
         await conn.execute(
             "INSERT OR REPLACE INTO submission_curves("
             "submission_id, online_loss, covered_bytes_cumulative, step0_loss, baseline_nats,"
-            "compute, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            "compute, train_series, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 submission_id,
                 dumps(online_loss),
@@ -1177,6 +1199,68 @@ class PrismWorker:
                 _optional_real(metrics.get("step0_loss")),
                 _optional_real(metrics.get("random_init_baseline_nats")),
                 dumps(compute),
+                dumps(train_series_payload) if train_series_payload is not None else None,
                 now,
             ),
         )
+
+    def _load_train_series_for_persist(
+        self,
+        *,
+        manifest: dict[str, Any],
+        metrics: dict[str, Any],
+        artifact_output_path: str | None = None,
+        run_manifest_path: str | None = None,
+    ) -> dict[str, Any] | None:
+        """Load challenge-owned train series from the artifact pointer when present.
+
+        Prefer the on-disk side-car referenced by ``metrics.train_series_path`` and verified by
+        sha256. Inline ``metrics.train_series`` is accepted only when authority=challenge.
+        Miner-authored series files that fail hash verification are ignored (VAL-TELE-006).
+        """
+        import json
+
+        from .evaluator.train_series import (
+            load_challenge_series,
+            series_is_challenge_owned,
+            train_series_sha256,
+        )
+
+        inline = metrics.get("train_series")
+        if isinstance(inline, dict) and series_is_challenge_owned(inline):
+            return inline
+
+        artifacts = manifest.get("artifacts")
+        artifacts = artifacts if isinstance(artifacts, dict) else {}
+        path_name = metrics.get("train_series_path") or artifacts.get("train_series")
+        expected = metrics.get("train_series_sha256") or artifacts.get("train_series_sha256")
+
+        candidate_dirs: list[Path] = []
+        if isinstance(run_manifest_path, str) and run_manifest_path:
+            candidate_dirs.append(Path(run_manifest_path).parent)
+        if isinstance(artifact_output_path, str) and artifact_output_path:
+            candidate_dirs.append(Path(artifact_output_path))
+
+        for root in candidate_dirs:
+            if isinstance(path_name, str) and path_name:
+                series_path = root / path_name
+                if series_path.is_file():
+                    try:
+                        raw = series_path.read_bytes()
+                        payload = json.loads(raw.decode("utf-8"))
+                    except (OSError, UnicodeError, json.JSONDecodeError, ValueError, TypeError):
+                        payload = None
+                    if isinstance(payload, dict):
+                        if isinstance(expected, str) and expected:
+                            if train_series_sha256(raw) != expected:
+                                # Miner plant that does not match the challenge digest: ignore.
+                                payload = None
+                        if payload is not None and series_is_challenge_owned(payload):
+                            return payload
+            loaded = load_challenge_series(
+                root,
+                expected_sha256=expected if isinstance(expected, str) else None,
+            )
+            if loaded is not None:
+                return loaded
+        return None

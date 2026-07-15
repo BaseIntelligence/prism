@@ -946,6 +946,7 @@ fallback); any miner-written manifest is ignored and the challenge authors
 prism_run_manifest.v2.json itself.
 """
 import dataclasses
+import hashlib
 import importlib.util
 import json
 import math
@@ -1141,6 +1142,16 @@ def _scored_model_param_count(model):
     return total
 
 
+# Challenge-owned train series identity (mirrors evaluator.schemas constants; the runner is a
+# self-contained script string, so names are duplicated rather than imported).
+TRAIN_SERIES_V1_SCHEMA = "prism_train_series.v1"
+TRAIN_SERIES_V1_FILENAME = "prism_train_series.v1.json"
+# Observation threshold for clip_event telemetry. Seeds default to GRAD_CLIP_NORM=1.0; this does
+# NOT force the miner's clip — it records whether challenge-observed pre-clip grad_norm would
+# have fired a conventional torch.nn.utils.clip_grad_norm_ at this pin (VAL-TELE-005).
+TELEMETRY_CLIP_THRESHOLD = 1.0
+
+
 class _OnlineLossCapture:
     """Challenge-owned predict-then-train online-loss instrument (architecture.md 4.3, 5).
 
@@ -1149,6 +1160,10 @@ class _OnlineLossCapture:
     BEFORE the miner's optimizer updates on it. Because the data is single-pass, this online
     training loss IS the prequential code-length by construction. The challenge computes the loss
     itself (next-token cross-entropy over the model's logits); miner-reported numbers are ignored.
+
+    Also authors the challenge-owned ``prism_train_series.v1`` time series (VAL-TELE-002..005):
+    per-batch CE / running bpb, tokens_seen, wall_s, plus **grad_norm** and **clip_event** sampled
+    from param grad hooks around the miner optim step (not miner self-report).
     """
 
     def __init__(
@@ -1203,6 +1218,15 @@ class _OnlineLossCapture:
         # its weights so the HOST scorer can compute the held-out delta on the SECRET val split
         # (never mounted into this network=none container). See architecture.md sections 5, 6.
         self.model = None
+        # Challenge-owned train series points (VAL-TELE-002..005). Authored in lockstep with
+        # online_loss; miner self-reports are never mixed in.
+        self.series_points = []
+        # Grad accumulation via torch param hooks that fire during the miner's backward, BEFORE
+        # clip_grad_norm_ mutates the tensors (challenge-owned grad instrumentation).
+        self._grad_sq_sum = 0.0
+        self._grad_hooks = []
+        self._hooks_registered = False
+        self.clip_threshold = TELEMETRY_CLIP_THRESHOLD
 
     def _encode(self, text, raw_bytes):
         tokenizer = self.tokenizer
@@ -1266,6 +1290,105 @@ class _OnlineLossCapture:
         loss = functional.cross_entropy(predictions, targets)
         return float(loss.detach().item())
 
+    def _register_grad_hooks(self, model):
+        """Attach param grad hooks so grad_norm is sampled during miner backward (VAL-TELE-004).
+
+        Hooks fire as the miner backprops (before typical clip_grad_norm_ mutates gra­ds). The
+        accumulation is reset every yield so each series point records the pre-clip L2 of that
+        step. Challenge-owned; miner JSON never supplies these values (VAL-TELE-006).
+        """
+        if self._hooks_registered:
+            return
+        try:
+            parameters = list(model.parameters())
+        except Exception:
+            return
+        capture = self
+
+        def _make_hook():
+            def _hook(grad):
+                try:
+                    if grad is None:
+                        return grad
+                    capture._grad_sq_sum += float(grad.detach().float().pow(2).sum().item())
+                except Exception:
+                    pass
+                return grad
+
+            return _hook
+
+        for param in parameters:
+            try:
+                handle = param.register_hook(_make_hook())
+                self._grad_hooks.append(handle)
+            except Exception:
+                continue
+        self._hooks_registered = True
+
+    def _pop_grad_telemetry(self):
+        """Return (grad_norm, clip_event) for the just-completed miner optim step, then reset."""
+        sq = self._grad_sq_sum
+        self._grad_sq_sum = 0.0
+        if sq <= 0.0 or not math.isfinite(sq):
+            # zero_grad / no backward since last yield → no grad observations
+            return None, None
+        try:
+            grad_norm = math.sqrt(sq)
+        except (ValueError, OverflowError):
+            return None, None
+        if not math.isfinite(grad_norm):
+            return None, None
+        clip_event = bool(grad_norm > self.clip_threshold)
+        return float(grad_norm), clip_event
+
+    def _append_series_point(self, *, loss_value, is_nan_inf):
+        """Append one challenge-owned train-series point at the current instrument state."""
+        wall_s = 0.0
+        if self.start_time is not None:
+            wall_s = max(0.0, time.monotonic() - self.start_time)
+        running_bpb = None
+        if self.covered_bytes > 0 and math.isfinite(self.sum_nll_nats):
+            running_bpb = (self.sum_nll_nats / math.log(2.0)) / self.covered_bytes
+        # Grad telemetry for the PREVIOUS step's miner backward is still on the tape; the current
+        # yield has not been trained on yet. Append the point with the last step's grad if any,
+        # else leave null until the loop finalizes (see finalize_series_grads).
+        grad_norm, clip_event = self._pop_grad_telemetry()
+        self.series_points.append(
+            {
+                "i": int(self.consumed_batches - 1),
+                "tokens_seen": int(self.predicted_tokens),
+                "covered_bytes": float(self.covered_bytes),
+                "train_ce_nats": float(loss_value),
+                "running_bpb": None if running_bpb is None else float(running_bpb),
+                "wall_s": float(wall_s),
+                "grad_norm": grad_norm,
+                "clip_event": clip_event,
+                "param_norm": None,
+                "lr": None,
+                "nan_inf": bool(is_nan_inf),
+            }
+        )
+
+    def finalize_series_grads(self):
+        """After miner_train returns, fold the last optim-step grad into the final series point.
+
+        Each `_emit` records CE **before** the miner's updates; the grad_norm for that batch
+        becomes available only after the miner harvests it and generates grads. So step i's CE is
+        written when the batch is yielded, while its grad lands on the following `_emit` or here.
+        """
+        if not self.series_points:
+            return
+        grad_norm, clip_event = self._pop_grad_telemetry()
+        if grad_norm is None and clip_event is None:
+            return
+        # Walk points from the end: assign the last sample to the newest point that still lacks a
+        # grad_norm (the last trained batch).
+        for point in reversed(self.series_points):
+            if point.get("grad_norm") is None:
+                point["grad_norm"] = grad_norm
+                point["clip_event"] = clip_event
+                break
+
     def _emit(self, model, chunk):
         import torch
 
@@ -1282,6 +1405,15 @@ class _OnlineLossCapture:
             model_device = torch.device(self.device)
         tokens = torch.tensor(ids, dtype=torch.long).remainder(self.vocab_size).view(rows, cols)
         tokens = tokens.to(model_device)
+        # Before scoring this NEW batch, harvest any grad_norm produced by the miner's previous
+        # optim step and fold it into the previous series point (if present).
+        if self.series_points:
+            prev_grad, prev_clip = self._pop_grad_telemetry()
+            if prev_grad is not None:
+                last = self.series_points[-1]
+                if last.get("grad_norm") is None:
+                    last["grad_norm"] = prev_grad
+                    last["clip_event"] = prev_clip
         loss_value = self._predict_loss(model, tokens)
         if not self._param_cap_rechecked:
             # The first forward realizes any lazy / first-forward / config-driven params, so the
@@ -1289,7 +1421,8 @@ class _OnlineLossCapture:
             # over-cap weights until forward is failed without ever contributing a ranking bpb.
             self._param_cap_rechecked = True
             self._check_param_cap(model)
-        if not math.isfinite(loss_value):
+        is_nan_inf = not math.isfinite(loss_value)
+        if is_nan_inf:
             self.nan_inf_batches += 1
             loss_value = self.worst_case_nats
         # ``loss_value`` is the MEAN next-token nats over the batch's predicted positions; the
@@ -1302,6 +1435,9 @@ class _OnlineLossCapture:
         self.covered_bytes += nbytes
         self.covered_bytes_cumulative.append(self.covered_bytes)
         self.consumed_batches += 1
+        self._append_series_point(loss_value=loss_value, is_nan_inf=is_nan_inf)
+        # Reset accumulation so only the miner's next backward fills _grad_sq_sum for this yield.
+        self._grad_sq_sum = 0.0
         return _PrismBatch(tokens=tokens)
 
     def _budget_reason(self):
@@ -1348,6 +1484,9 @@ class _OnlineLossCapture:
         self.started = True
         self.model = model
         self._check_param_cap(model)
+        # Challenge-owned grad / clip instrumentation around miner optim steps (VAL-TELE-004/005).
+        # Hooks are on the scored module parameters; miner-authored loggers are never trusted.
+        self._register_grad_hooks(model)
         self.start_time = time.monotonic()
         needed = self.seq_len * self.batch_size
         buffer = []
@@ -1719,6 +1858,9 @@ except Exception:
 
 # --- summarize the challenge-captured online-loss stream (NOT miner-reported numbers) ---
 capture = interface._ONLINE_CAPTURE
+if capture is not None and hasattr(capture, "finalize_series_grads"):
+    # Fold the last miner optim-step grad into the final series point (VAL-TELE-004/005).
+    capture.finalize_series_grads()
 consumed_batches = capture.consumed_batches if capture is not None else 0
 online_loss = list(capture.online_loss) if capture is not None else []
 covered_bytes_cumulative = list(capture.covered_bytes_cumulative) if capture is not None else []
@@ -1728,6 +1870,7 @@ predicted_tokens = capture.predicted_tokens if capture is not None else 0
 nan_inf_batches = capture.nan_inf_batches if capture is not None else 0
 consumed_documents = capture.consumed_documents if capture is not None else 0
 shard_offsets = capture.shard_offsets if capture is not None else []
+series_points = list(getattr(capture, "series_points", []) or []) if capture is not None else []
 # Which budget bound the single-pass run (token_budget | step_budget | wall_clock |
 # data_exhausted); ``None`` only when the miner never iterated the instrument (zero-forward).
 stopped_reason = capture.stopped_reason if capture is not None else None
@@ -1781,7 +1924,101 @@ trained_state_file = None
 scored_model_params = getattr(interface, "_SCORED_MODEL_PARAMS", None)
 
 
+def _author_train_series():
+    """Author challenge-owned prism_train_series.v1 side-car + digest (VAL-TELE-002..006).
+
+    Miner-planted series files are unlinked first so only the challenge content survives. The
+    digest is folded into the run manifest metrics so the series participates in the hashing /
+    proof path as challenge-owned data; grade consumers must ignore miner self-reports.
+    """
+    submission_id = str(payload.get("submission_id", "container"))
+    run_id = "prism-reexec-" + submission_id
+    series_path = Path(artifacts_dir) / TRAIN_SERIES_V1_FILENAME
+    # Unconditionally own the path: drop any miner-planted forged series before writing ours.
+    try:
+        series_path.unlink()
+    except FileNotFoundError:
+        pass
+    except OSError:
+        pass
+    # Also drop a miner-planted jsonl alias if present.
+    try:
+        (Path(artifacts_dir) / "prism_train_series.v1.jsonl").unlink()
+    except (FileNotFoundError, OSError):
+        pass
+    if not series_points:
+        return None, None, 0
+    clip_events = sum(1 for p in series_points if p.get("clip_event") is True)
+    series = {
+        "schema": TRAIN_SERIES_V1_SCHEMA,
+        "submission_id": submission_id,
+        "run_id": run_id,
+        "authority": "challenge",
+        "x_axis": "batch_index",
+        "token_budget": context_data.get("token_budget"),
+        "points": series_points,
+        "aggregates": {
+            "n_points": len(series_points),
+            "nan_inf_batches": int(nan_inf_batches),
+            "clip_events": int(clip_events),
+            "grad_spike_rate": 0.0,
+        },
+        "miner_reported_ignored": True,
+    }
+    # Compute a simple grad_spike_rate residual when finite norms exist.
+    grads = [
+        float(p["grad_norm"])
+        for p in series_points
+        if isinstance(p.get("grad_norm"), (int, float)) and math.isfinite(float(p["grad_norm"]))
+    ]
+    if grads:
+        ordered = sorted(grads)
+        med = ordered[len(ordered) // 2]
+        thr = max(med * 10.0, 1e-8)
+        series["aggregates"]["grad_spike_rate"] = sum(1 for g in grads if g > thr) / float(
+            len(grads)
+        )
+    text = json.dumps(series, sort_keys=True, indent=2)
+    series_path.write_text(text, encoding="utf-8")
+    digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
+    return TRAIN_SERIES_V1_FILENAME, digest, clip_events
+
+
 def _write_challenge_manifest():
+    series_filename, series_digest, clip_events_total = _author_train_series()
+    metrics_block = {
+        "online_loss": online_loss,
+        "step0_loss": step0_loss,
+        "random_init_baseline_nats": baseline_nats,
+        "consumed_batches": consumed_batches,
+        "covered_bytes": covered_bytes,
+        "predicted_tokens": predicted_tokens,
+        "tokens_seen": predicted_tokens,
+        "sum_neg_log_likelihood_nats": sum_nll_nats,
+        "sum_neg_log2_likelihood_bits": sum_neg_log2_likelihood_bits,
+        "cumulative_codelength_bits": sum_neg_log2_likelihood_bits,
+        "prequential_bpb": prequential_bpb,
+        "bits_per_byte": prequential_bpb,
+        "total_bytes_covered": covered_bytes,
+        "nan_inf_batches": nan_inf_batches,
+        "train_bpb_basis": train_bpb_basis,
+        "model_params": scored_model_params,
+    }
+    # Series pointer + digest participate in the hashed challenge manifest / proof path
+    # (VAL-TELE-006). Missing when the miner never iterated the instrument (zero-forward).
+    if series_filename is not None and series_digest is not None:
+        metrics_block["train_series_schema"] = TRAIN_SERIES_V1_SCHEMA
+        metrics_block["train_series_path"] = series_filename
+        metrics_block["train_series_sha256"] = series_digest
+        metrics_block["train_series_points"] = len(series_points)
+        metrics_block["clip_events"] = int(clip_events_total)
+    artifacts_block = {
+        # The held-out delta is computed HOST-SIDE from these weights on the SECRET val split.
+        "trained_state": trained_state_file,
+    }
+    if series_filename is not None:
+        artifacts_block["train_series"] = series_filename
+        artifacts_block["train_series_sha256"] = series_digest
     manifest = {
         "schema_version": "prism_run_manifest.v2",
         "submission_id": str(payload.get("submission_id", "container")),
@@ -1823,24 +2060,7 @@ def _write_challenge_manifest():
             "distinct_offsets": distinct_offsets,
             "stopped_reason": stopped_reason,
         },
-        "metrics": {
-            "online_loss": online_loss,
-            "step0_loss": step0_loss,
-            "random_init_baseline_nats": baseline_nats,
-            "consumed_batches": consumed_batches,
-            "covered_bytes": covered_bytes,
-            "predicted_tokens": predicted_tokens,
-            "tokens_seen": predicted_tokens,
-            "sum_neg_log_likelihood_nats": sum_nll_nats,
-            "sum_neg_log2_likelihood_bits": sum_neg_log2_likelihood_bits,
-            "cumulative_codelength_bits": sum_neg_log2_likelihood_bits,
-            "prequential_bpb": prequential_bpb,
-            "bits_per_byte": prequential_bpb,
-            "total_bytes_covered": covered_bytes,
-            "nan_inf_batches": nan_inf_batches,
-            "train_bpb_basis": train_bpb_basis,
-            "model_params": scored_model_params,
-        },
+        "metrics": metrics_block,
         "score": {
             "schema": "prism_score.v2",
             "primary_metric": "prequential_bpb",
@@ -1868,10 +2088,7 @@ def _write_challenge_manifest():
             "no_learning": no_learning,
             "zero_forward": zero_forward,
         },
-        "artifacts": {
-            # The held-out delta is computed HOST-SIDE from these weights on the SECRET val split.
-            "trained_state": trained_state_file,
-        },
+        "artifacts": artifacts_block,
         "miner_reported_ignored": True,
     }
     out = Path(artifacts_dir) / CHALLENGE_MANIFEST_NAME

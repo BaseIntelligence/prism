@@ -168,7 +168,7 @@ SCHEMA = (
     "CREATE TABLE IF NOT EXISTS submission_curves ("
     "submission_id TEXT PRIMARY KEY, online_loss TEXT NOT NULL,"
     "covered_bytes_cumulative TEXT NOT NULL, step0_loss REAL, baseline_nats REAL,"
-    "compute TEXT NOT NULL, created_at TEXT NOT NULL);"
+    "compute TEXT NOT NULL, train_series TEXT, created_at TEXT NOT NULL);"
     "CREATE TABLE IF NOT EXISTS architecture_reports ("
     "architecture_id TEXT PRIMARY KEY, content TEXT, model TEXT,"
     "source_submission_id TEXT, generated_at TEXT NOT NULL);"
@@ -438,7 +438,15 @@ async def _run_migrations(conn: aiosqlite.Connection) -> None:
         "CREATE TABLE IF NOT EXISTS submission_curves ("
         "submission_id TEXT PRIMARY KEY, online_loss TEXT NOT NULL,"
         "covered_bytes_cumulative TEXT NOT NULL, step0_loss REAL, baseline_nats REAL,"
-        "compute TEXT NOT NULL, created_at TEXT NOT NULL);"
+        "compute TEXT NOT NULL, train_series TEXT, created_at TEXT NOT NULL);"
+    )
+    await _ensure_columns(
+        conn,
+        "submission_curves",
+        {
+            # Challenge-owned prism_train_series.v1 document (JSON), nullable for legacy rows.
+            "train_series": "TEXT",
+        },
     )
     await conn.executescript(
         "CREATE TABLE IF NOT EXISTS architecture_reports ("
