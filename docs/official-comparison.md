@@ -669,4 +669,76 @@ See [Operators](operators.md) for offline harness and LAB-GPU host-rank commands
 
 ---
 
-*End of Prism Official Comparison Protocol v1 (+ multimetric scorecard annex v1.1).*
+## 15. Complete View v1.2 (MAX A→Z machine JSON)
+
+Complete View expands multimetric.v1.1 into a **maximum A→Z architecture comparison** dashboard while remaining protocol-honest.
+
+| Field | Value |
+| --- | --- |
+| Machine schema | **`complete_view.v1.2`** |
+| Scorecard identity | **`scorecard_id=multimetric.complete.v1.2`** |
+| Dashboard id | `scorecard_complete_view.v1.2` |
+| Protocol pin | still **`prism_official_compare.v1`** |
+| Historical annex | **`multimetric.v1.1`** remains valid (not rewritten / not emission-authoritative) |
+| Alias (consistent only) | `prism_complete_compare.v1.2` may appear as compare_id_alias |
+
+### 15.1 Ranking / multi-axis honesty
+
+- Output is a **multi-axis comparison object**: per-axis leads + disagreement matrix + metric vector.
+- **No opaque weighted sole crown.** There is no secret scalar that replaces the panel vector as the only scientific output.
+- Expand **TIE_POLAR** honesty across scientific axes (short-gen, long-ctx, sample-eff, length-extrap, …). When scientific axes conflict beyond ε, `tie_polar=true` and **`crown_allowed=false`**.
+- Efficiency / wall-clock / FLOPs remain diagnostic (never sole-rank; never override polar).
+- Default multimetric.v1.1 heldout-primary path remains when no scientific polar conflict fires.
+
+### 15.2 Metric matrix (must-have + nice-to-have)
+
+Must-have catalogue (from Complete A→Z gap research): absolute multi-seed `val_bpb_trained`, multi-T long-ctx suite, needle-by-depth + lost-in-middle, MQAR N×lag grid, unfused induction vs exact-copy, lag-NLL bins, length-extrapolation CE, denser sample-efficiency, train vs eval@T efficiency + state footprint, grad/nan stability, multi-order residual, derived quality_per_param / quality_per_gib, floor honesty. Nice-to-have (calibration/entropy, AR gen proxy, multi-budget scaling, …) must be present as values **or** explicit null + reason (no silent omission).
+
+Machine panel keys:
+
+`P0_rank_overlay`, `P1_short_gen`, `P2_sample_efficiency`, `P3_long_ctx`, `P4_length_extrap`, `P5_efficiency`, `P6_memory_state`, `P7_stability_robustness`, `P8_calibration_entropy_optional`, `P9_validity`.
+
+### 15.3 Document sketch
+
+```json
+{
+  "schema": "complete_view.v1.2",
+  "scorecard_id": "multimetric.complete.v1.2",
+  "historical_scorecard_id": "multimetric.v1.1",
+  "protocol_id": "prism_official_compare.v1",
+  "score_class": "LAB-GPU",
+  "real_provider_tee": "BLOCKED",
+  "panels": {"P0_rank_overlay": {}, "P1_short_gen": {}, "P9_validity": {}},
+  "comparison": {
+    "winner": "tie",
+    "reason": "tie_polar",
+    "tie_polar": true,
+    "crown_allowed": false,
+    "per_axis_leads": {"short_gen": "b", "long_ctx": "a"},
+    "disagreement_matrix": {"short_gen": {"long_ctx": true}},
+    "opaque_weighted_crown_forbidden": true,
+    "efficiency_sole_rank_forbidden": true
+  },
+  "non_claims": {
+    "real_provider_tee_pass": false,
+    "emission_weight_crown": false,
+    "opaque_weighted_sole_crown": false
+  }
+}
+```
+
+Preferred outside-repo evidence filename: `complete_view.v1.2.json`. Product module: `prism_challenge.evaluator.complete_view`.
+
+### 15.4 Non-claims (Complete View)
+
+1. **REAL-PROVIDER TEE PASS** remains **BLOCKED** (LAB-GPU / suite fill never unlocks REAL).
+2. Not the production emission weight crown (leaderboard stays bpb-primary).
+3. Not an opaque weighted sole arch crown.
+4. Historical multimetric.v1.1 annex is not erased; Complete View expands visibility only.
+5. Missing suites: null + reason, never invented non-null metrics.
+
+Operator pointer only — full suite runners and remesure belong to Complete View implementation features; ops entry: [Operators](operators.md) Complete View section.
+
+---
+
+*End of Prism Official Comparison Protocol v1 (+ multimetric scorecard annex v1.1 + Complete View v1.2).*

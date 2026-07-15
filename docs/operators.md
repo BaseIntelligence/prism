@@ -270,6 +270,23 @@ jq '{protocol_id, scorecard_id, scorecard, ranking, real_provider_tee, honesty_n
   dist/official-compare/prism_compare_report.v1.json
 ```
 
+### Complete View v1.2 (operators pointer)
+
+MAX A→Z machine dashboard on Protocol v1: **`schema=complete_view.v1.2`**, **`scorecard_id=multimetric.complete.v1.2`**. Historical multimetric.v1.1 annex stays valid. Full matrix, multi-axis comparison (per-axis leads, disagreement matrix, expanded **TIE_POLAR**, **no opaque weighted sole crown**), and non-claims: [Official Comparison §15](official-comparison.md).
+
+| Operator note | Detail |
+| --- | --- |
+| Document | Prefer single machine file `complete_view.v1.2.json` reconciling panels P0–P9 + `comparison` |
+| Rank | Multi-axis object only; scientific axis disagreements → `TIE_POLAR` / `crown_allowed=false` |
+| Suites not-run | null + reason; never invent metrics |
+| TEE / ops | REAL-PROVIDER TEE **BLOCKED**; no live Swarm mutate; no `set_weights`; always-terminate paid remesure pods |
+| Product module | `prism_challenge.evaluator.complete_view` |
+
+```bash
+jq '{schema, scorecard_id, historical_scorecard_id, comparison, real_provider_tee, non_claims}' \
+  complete_view.v1.2.json
+```
+
 ## Lab GPU short/long Official Comparison (host rank of remote CUDA)
 When real dual-family CUDA trains already completed on a remote GPU host (for example paid Lium under a matched Protocol v1 pin), **rank on any CPU mission host** from the challenge-owned `prism_run_manifest.v2.json` artifacts. This path does **not** require local NVIDIA and is **not** fixture-only synthetic ranking.
 

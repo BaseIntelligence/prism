@@ -203,6 +203,38 @@ def test_official_comparison_scorecard_v1_1_is_documented() -> None:
     assert "provisional" in scoring_lower
 
 
+def test_official_comparison_complete_view_v1_2_is_documented() -> None:
+    """Complete View v1.2 protocol + machine identity (VAL-COMPLETE-001)."""
+    protocol = read_doc("docs/official-comparison.md")
+    operators = read_doc("docs/operators.md")
+    lower = protocol.lower()
+    op_lower = operators.lower()
+
+    assert "complete view" in lower
+    assert "complete_view.v1.2" in protocol
+    assert "multimetric.complete.v1.2" in protocol
+    assert "scorecard_id" in lower
+    assert "multimetric.v1.1" in protocol  # historical relation
+    assert "multi-axis" in lower or "multi axis" in lower or "per-axis" in lower
+    assert "tie_polar" in lower
+    assert "crown_allowed" in lower
+    assert "opaque" in lower and ("weighted" in lower or "sole crown" in lower)
+    assert "real-provider" in lower
+    assert "blocked" in lower
+    # Must-have matrix anchors (docs catalogue, not suite fills).
+    assert "val_bpb" in lower or "val_bpb_trained" in protocol
+    assert "needle" in lower
+    assert "mqar" in lower
+    assert "length" in lower and "extrap" in lower
+    assert "disagreement" in lower or "per-axis" in lower
+
+    # Operators pointer only (not full suite cookbook).
+    assert "complete view" in op_lower or "complete_view.v1.2" in operators
+    assert "multimetric.complete.v1.2" in operators or "complete_view.v1.2" in operators
+    assert "tie_polar" in op_lower
+    assert "blocked" in op_lower
+
+
 def test_llm_hard_gate_is_documented() -> None:
     """Docs say the LLM hard gate/gateway are removed; admission is deterministic."""
     security = read_doc("docs/security.md")
