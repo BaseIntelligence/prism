@@ -1212,11 +1212,19 @@ class PrismWorker:
         artifact_output_path: str | None = None,
         run_manifest_path: str | None = None,
     ) -> dict[str, Any] | None:
-        """Load challenge-owned train series from the artifact pointer when present.
+        """Load challenge-owned train series for ``submission_curves.train_series``.
 
-        Prefer the on-disk side-car referenced by ``metrics.train_series_path`` and verified by
-        sha256. Inline ``metrics.train_series`` is accepted only when authority=challenge.
-        Miner-authored series files that fail hash verification are ignored (VAL-TELE-006).
+        Resolution order (worker-plane safe):
+
+        1. Inline ``metrics.train_series`` when ``authority=challenge`` and (if present)
+           ``metrics.train_series_sha256`` matches. Worker-plane finalize has no local
+           ``artifact_output_path`` / ``run_manifest_path``; the challenge container embeds
+           the series body in the forwarded ``prism_run_manifest.v2`` so this path is the
+           primary one for queue/worker persist (online_loss already travels the same way).
+        2. On-disk side-car referenced by ``metrics.train_series_path`` / artifacts, verified
+           by sha256 when a digest pointer exists (local/container re-exec path).
+
+        Miner-authored series that fail authority or digest checks are ignored (VAL-TELE-006).
         """
         import json
 
@@ -1226,14 +1234,21 @@ class PrismWorker:
             train_series_sha256,
         )
 
-        inline = metrics.get("train_series")
-        if isinstance(inline, dict) and series_is_challenge_owned(inline):
-            return inline
-
         artifacts = manifest.get("artifacts")
         artifacts = artifacts if isinstance(artifacts, dict) else {}
-        path_name = metrics.get("train_series_path") or artifacts.get("train_series")
         expected = metrics.get("train_series_sha256") or artifacts.get("train_series_sha256")
+
+        inline = metrics.get("train_series")
+        if isinstance(inline, dict) and series_is_challenge_owned(inline):
+            if isinstance(expected, str) and expected:
+                if train_series_sha256(inline) == expected:
+                    return inline
+                # Pointer disagrees with embedded body: defense-in-depth, try files next.
+            else:
+                # Challenge-owned embed without a digest pointer (older or test fixtures).
+                return inline
+
+        path_name = metrics.get("train_series_path") or artifacts.get("train_series")
 
         candidate_dirs: list[Path] = []
         if isinstance(run_manifest_path, str) and run_manifest_path:

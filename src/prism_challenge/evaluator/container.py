@@ -1947,7 +1947,7 @@ def _author_train_series():
     except (FileNotFoundError, OSError):
         pass
     if not series_points:
-        return None, None, 0
+        return None, None, 0, None
     clip_events = sum(1 for p in series_points if p.get("clip_event") is True)
     series = {
         "schema": TRAIN_SERIES_V1_SCHEMA,
@@ -1984,11 +1984,13 @@ def _author_train_series():
     text = json.dumps(series, sort_keys=True, separators=(",", ":"))
     series_path.write_text(text, encoding="utf-8")
     digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
-    return TRAIN_SERIES_V1_FILENAME, digest, clip_events
+    # Return the series document itself so the hashed run manifest can embed it for
+    # worker-plane finalization (hosts often lack the side-car artifact root).
+    return TRAIN_SERIES_V1_FILENAME, digest, clip_events, series
 
 
 def _write_challenge_manifest():
-    series_filename, series_digest, clip_events_total = _author_train_series()
+    series_filename, series_digest, clip_events_total, series_doc = _author_train_series()
     metrics_block = {
         "online_loss": online_loss,
         "step0_loss": step0_loss,
@@ -2008,13 +2010,18 @@ def _write_challenge_manifest():
         "model_params": scored_model_params,
     }
     # Series pointer + digest participate in the hashed challenge manifest / proof path
-    # (VAL-TELE-006). Missing when the miner never iterated the instrument (zero-forward).
+    # (VAL-TELE-006). Also embed the full challenge-owned series body under metrics.train_series
+    # so worker-plane finalize (which often has no local artifact_output_path) can persist
+    # submission_curves.train_series without the side-car on disk. Missing when the miner
+    # never iterated the instrument (zero-forward).
     if series_filename is not None and series_digest is not None:
         metrics_block["train_series_schema"] = TRAIN_SERIES_V1_SCHEMA
         metrics_block["train_series_path"] = series_filename
         metrics_block["train_series_sha256"] = series_digest
         metrics_block["train_series_points"] = len(series_points)
         metrics_block["clip_events"] = int(clip_events_total)
+        if isinstance(series_doc, dict):
+            metrics_block["train_series"] = series_doc
     artifacts_block = {
         # The held-out delta is computed HOST-SIDE from these weights on the SECRET val split.
         "trained_state": trained_state_file,

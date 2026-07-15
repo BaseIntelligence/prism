@@ -206,6 +206,12 @@ def test_miner_self_report_series_ignored(tmp_path) -> None:
     on_disk_digest = train_series_sha256((artifacts / TRAIN_SERIES_V1_FILENAME).read_bytes())
     assert metrics["train_series_sha256"] == on_disk_digest
     assert manifest["artifacts"]["train_series_sha256"] == on_disk_digest
+    # Worker-plane path embeds the full challenge series so finalize need not open artifacts.
+    embedded = metrics.get("train_series")
+    assert isinstance(embedded, dict)
+    assert series_is_challenge_owned(embedded)
+    assert train_series_sha256(embedded) == on_disk_digest
+    assert embedded["points"] == series["points"]
     assert manifest["score"]["miner_reported_ignored"] is True
     assert manifest["miner_reported_ignored"] is True
     # Miner dashboard remains on disk but can never authorize
