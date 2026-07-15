@@ -208,11 +208,60 @@ class CurveCompute(BaseModel):
     peak_rss_bytes: int | None
 
 
+class TrainSeriesPoint(BaseModel):
+    """One challenge-owned time-flow point for operator charts (chart-safe keys only)."""
+
+    model_config = ConfigDict(extra="forbid")
+    i: int | None = None
+    tokens_seen: int | None = None
+    covered_bytes: float | None = None
+    train_ce_nats: float | None = None
+    running_bpb: float | None = None
+    wall_s: float | None = None
+    grad_norm: float | None = None
+    clip_event: bool | None = None
+    param_norm: float | None = None
+    lr: float | None = None
+    nan_inf: bool | None = None
+
+
+class TrainSeriesAggregates(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    n_points: int | None = None
+    mean_step_ms: float | None = None
+    p99_step_ms: float | None = None
+    grad_spike_rate: float | None = None
+    nan_inf_batches: int | None = None
+    clip_events: int | None = None
+
+
+class TrainSeriesV1Response(BaseModel):
+    """Downsample-safe ``prism_train_series.v1`` payload for ``GET .../curve``.
+
+    Returned only for challenge-owned series. ``None`` when absent/legacy/corrupt.
+    Wire identity uses the JSON key ``schema`` (alias of ``schema_name``).
+    FastAPI response serialization uses ``by_alias=True`` by default.
+    """
+
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+    schema_name: str = Field(alias="schema")
+    submission_id: str
+    run_id: str
+    authority: str
+    x_axis: str | None = None
+    token_budget: int | float | None = None
+    points: list[TrainSeriesPoint]
+    aggregates: TrainSeriesAggregates = Field(default_factory=TrainSeriesAggregates)
+    miner_reported_ignored: bool = True
+    points_total: int
+    downsampled: bool
+
+
 class SubmissionCurveResponse(BaseModel):
     submission_id: str
     loss_curve: LossCurveSeries
     bpb: CurveBpb
     compute: CurveCompute
-
-
-
+    # Challenge-owned multi-channel series (loss/bpb + grad_norm + clip) for operator time-flow.
+    # Null for legacy rows without instrumented capture. Miner self-report is never served here.
+    train_series: TrainSeriesV1Response | None = None

@@ -143,11 +143,12 @@ async def _insert_curve(
     step0_loss: float | None,
     baseline_nats: float | None,
     compute: dict,
+    train_series: dict | None = None,
 ) -> None:
     await conn.execute(
         "INSERT INTO submission_curves("
         "submission_id, online_loss, covered_bytes_cumulative, step0_loss, baseline_nats, "
-        "compute, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        "compute, train_series, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
         (
             submission_id,
             json.dumps(online_loss),
@@ -155,6 +156,7 @@ async def _insert_curve(
             step0_loss,
             baseline_nats,
             json.dumps(compute),
+            json.dumps(train_series) if train_series is not None else None,
             NOW,
         ),
     )
@@ -648,6 +650,215 @@ def test_route_curve_uses_stored_estimates_when_present(client: TestClient) -> N
 
 def test_route_curve_404_when_absent(client: TestClient) -> None:
     assert client.get("/v1/submissions/nope/curve").status_code == 404
+
+
+def test_route_curve_null_train_series_when_absent(client: TestClient) -> None:
+    """Legacy curve rows without train_series still return loss_curve; train_series is null."""
+
+    async def seed(conn):
+        await _insert_score(conn, submission_id="sub1", final_score=0.8, metrics={})
+        await _insert_curve(
+            conn,
+            submission_id="sub1",
+            online_loss=[2.0, 1.5],
+            covered_bytes_cumulative=[10.0, 20.0],
+            step0_loss=2.0,
+            baseline_nats=None,
+            compute={},
+            train_series=None,
+        )
+
+    _seed(client, seed)
+    body = client.get("/v1/submissions/sub1/curve").json()
+    assert body["train_series"] is None
+    assert body["loss_curve"]["points"] == 2
+
+
+def _challenge_series(*, n: int = 3, extra_secret: bool = False) -> dict:
+    points = []
+    for i in range(n):
+        p: dict = {
+            "i": i,
+            "tokens_seen": (i + 1) * 10,
+            "covered_bytes": float((i + 1) * 40),
+            "train_ce_nats": 2.5 - i * 0.1,
+            "running_bpb": 3.6 - i * 0.1,
+            "wall_s": float(i) * 0.5,
+            "grad_norm": 1.0 + i * 0.1,
+            "clip_event": i % 2 == 0,
+            "nan_inf": False,
+        }
+        if extra_secret:
+            p["api_token"] = "secret-token-must-not-leak"
+            p["wallet_mnemonic"] = "abandon abandon abandon"
+        points.append(p)
+    series: dict = {
+        "schema": "prism_train_series.v1",
+        "submission_id": "sub1",
+        "run_id": "run1",
+        "authority": "challenge",
+        "x_axis": "batch_index",
+        "token_budget": 1000,
+        "points": points,
+        "aggregates": {
+            "n_points": n,
+            "mean_step_ms": 120.0,
+            "p99_step_ms": 200.0,
+            "grad_spike_rate": 0.0,
+            "nan_inf_batches": 0,
+            "clip_events": sum(1 for p in points if p["clip_event"]),
+        },
+        "miner_reported_ignored": True,
+    }
+    if extra_secret:
+        series["internal_proof_secret"] = "do-not-leak"
+        series["provider_api_key"] = "sk-test-should-not-appear"
+    return series
+
+
+def test_route_curve_exposes_train_series_grad_and_clip(client: TestClient) -> None:
+    """VAL-TELE-007: GET /curve returns prism_train_series.v1 with grad_norm + clip for charts."""
+
+    async def seed(conn):
+        await _insert_score(
+            conn,
+            submission_id="sub1",
+            final_score=0.8,
+            metrics={"prequential_bpb": 0.91, "bits_per_byte": 0.91},
+        )
+        await _insert_curve(
+            conn,
+            submission_id="sub1",
+            online_loss=[2.5, 2.4, 2.3],
+            covered_bytes_cumulative=[40.0, 80.0, 120.0],
+            step0_loss=2.5,
+            baseline_nats=5.0,
+            compute={"gpu_count": 1},
+            train_series=_challenge_series(n=3),
+        )
+
+    _seed(client, seed)
+    body = client.get("/v1/submissions/sub1/curve").json()
+    ts = body["train_series"]
+    assert ts is not None
+    assert ts["schema"] == "prism_train_series.v1"
+    assert ts["authority"] == "challenge"
+    assert ts["miner_reported_ignored"] is True
+    assert ts["downsampled"] is False
+    assert ts["points_total"] == 3
+    assert len(ts["points"]) == 3
+    assert ts["points"][0]["train_ce_nats"] == 2.5
+    assert ts["points"][0]["running_bpb"] == 3.6
+    assert ts["points"][0]["grad_norm"] == 1.0
+    assert ts["points"][0]["clip_event"] is True
+    assert ts["points"][0]["tokens_seen"] == 10
+    assert ts["points"][0]["wall_s"] == 0.0
+    assert ts["aggregates"]["clip_events"] == 2
+    # Time-flow axes present for UI: loss/bpb + grad_norm vs tokens/wall.
+    for p in ts["points"]:
+        assert "tokens_seen" in p
+        assert "wall_s" in p
+        assert "grad_norm" in p
+        assert "train_ce_nats" in p or "running_bpb" in p
+
+
+def test_route_curve_downsamples_train_series_preserve_ends(client: TestClient) -> None:
+    """Downsample-safe series: cap → 500 points, first/last preserved (chart-ready)."""
+
+    async def seed(conn):
+        await _insert_score(conn, submission_id="sub1", final_score=0.8, metrics={})
+        await _insert_curve(
+            conn,
+            submission_id="sub1",
+            online_loss=[1.0],
+            covered_bytes_cumulative=[1.0],
+            step0_loss=1.0,
+            baseline_nats=1.0,
+            compute={},
+            train_series=_challenge_series(n=1200),
+        )
+
+    _seed(client, seed)
+    ts = client.get("/v1/submissions/sub1/curve").json()["train_series"]
+    assert ts is not None
+    assert ts["downsampled"] is True
+    assert ts["points_total"] == 1200
+    assert len(ts["points"]) == 500
+    assert ts["points"][0]["i"] == 0
+    assert ts["points"][-1]["i"] == 1199
+    assert ts["points"][0]["grad_norm"] == 1.0
+    assert ts["points"][-1]["grad_norm"] == pytest.approx(1.0 + 1199 * 0.1)
+
+
+def test_route_curve_ignores_miner_authority_series(client: TestClient) -> None:
+    """Non-challenge authority never surfaces on the public curve (VAL-TELE-006 + API)."""
+
+    miner_series = _challenge_series(n=2)
+    miner_series["authority"] = "miner"
+    miner_series["miner_reported_ignored"] = False
+
+    async def seed(conn):
+        await _insert_score(conn, submission_id="sub1", final_score=0.8, metrics={})
+        await _insert_curve(
+            conn,
+            submission_id="sub1",
+            online_loss=[1.0],
+            covered_bytes_cumulative=[1.0],
+            step0_loss=1.0,
+            baseline_nats=1.0,
+            compute={},
+            train_series=miner_series,
+        )
+
+    _seed(client, seed)
+    body = client.get("/v1/submissions/sub1/curve").json()
+    assert body["train_series"] is None
+
+
+def test_route_curve_train_series_does_not_leak_secrets(client: TestClient) -> None:
+    """VAL-TELE-007 non-leak: unknown / secret-looking keys are stripped from the response."""
+
+    async def seed(conn):
+        await _insert_score(conn, submission_id="sub1", final_score=0.8, metrics={})
+        await _insert_curve(
+            conn,
+            submission_id="sub1",
+            online_loss=[1.0, 0.9],
+            covered_bytes_cumulative=[10.0, 20.0],
+            step0_loss=1.0,
+            baseline_nats=1.0,
+            compute={},
+            train_series=_challenge_series(n=2, extra_secret=True),
+        )
+
+    _seed(client, seed)
+    raw = client.get("/v1/submissions/sub1/curve").text
+    body = json.loads(raw)
+    ts = body["train_series"]
+    assert ts is not None
+    # Top-level and point secrets must not appear in the wire body.
+    assert "secret-token-must-not-leak" not in raw
+    assert "abandon abandon abandon" not in raw
+    assert "sk-test-should-not-appear" not in raw
+    assert "do-not-leak" not in raw
+    assert "api_token" not in raw
+    assert "internal_proof_secret" not in raw
+    assert "provider_api_key" not in raw
+    assert "wallet_mnemonic" not in raw
+    for p in ts["points"]:
+        assert set(p.keys()) <= {
+            "i",
+            "tokens_seen",
+            "covered_bytes",
+            "train_ce_nats",
+            "running_bpb",
+            "wall_s",
+            "grad_norm",
+            "clip_event",
+            "param_norm",
+            "lr",
+            "nan_inf",
+        }
 
 
 def test_architecture_report_routes_removed(client: TestClient) -> None:

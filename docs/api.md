@@ -16,8 +16,11 @@ use the Base SDK **v3.1.2** `ExternalResultEnvelope` only on the worker-plane in
   (best first); `404` if the architecture is absent, empty `variants` is valid.
 - `GET /v1/submissions/{submission_id}/curve` — the persisted loss curve (`online_loss` +
   `covered_bytes_cumulative`, downsampled to at most 500 points, first and last preserved), the
-  prequential bits-per-byte scalars, and the reconciled compute profile (`estimated_flops`,
-  `gpu_hours`, peak VRAM/RSS, wall-clock); `404` if none.
+  prequential bits-per-byte scalars, the reconciled compute profile (`estimated_flops`,
+  `gpu_hours`, peak VRAM/RSS, wall-clock), and when challenge capture produced a series,
+  a downsample-safe **`train_series`** payload with schema **`prism_train_series.v1`**
+  (train CE / running bpb, tokens_seen, wall_s, **grad_norm**, **clip_event** aggregates);
+  `train_series` is `null` for legacy rows without instrumented capture; `404` if no curve row.
 - `GET /v1/epochs/current` — current epoch id and length.
 - `GET /v1/epochs` — recent epochs.
 - `GET /v1/health/eval-jobs` — recent eval-job health entries (id, submission id, level, status, attempts).

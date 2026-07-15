@@ -253,3 +253,116 @@ def load_challenge_series(
     if not series_is_challenge_owned(payload):
         return None
     return payload
+
+
+# Allowed point keys for the public API time-flow (chart-safe; no secret material).
+_API_POINT_KEYS = (
+    "i",
+    "tokens_seen",
+    "covered_bytes",
+    "train_ce_nats",
+    "running_bpb",
+    "wall_s",
+    "grad_norm",
+    "clip_event",
+    "param_norm",
+    "lr",
+    "nan_inf",
+)
+
+# Allowed aggregate keys exposed on /curve (numerical residuals only).
+_API_AGGREGATE_KEYS = (
+    "n_points",
+    "mean_step_ms",
+    "p99_step_ms",
+    "grad_spike_rate",
+    "nan_inf_batches",
+    "clip_events",
+)
+
+
+def _downsample_indices(n: int, cap: int) -> list[int]:
+    """Even-stride indices that keep the first and last sample; identity when ``n <= cap``."""
+    if n <= 0:
+        return []
+    if n <= cap:
+        return list(range(n))
+    return [round(i * (n - 1) / (cap - 1)) for i in range(cap)]
+
+
+def sanitize_point_for_api(point: Mapping[str, Any]) -> dict[str, Any] | None:
+    """Project a series point onto chart-safe keys only (drops unknown/secret fields)."""
+    if not isinstance(point, Mapping):
+        return None
+    out: dict[str, Any] = {}
+    for key in _API_POINT_KEYS:
+        if key not in point:
+            continue
+        value = point[key]
+        # Drop non-finite floats so chart libraries never receive NaN/Inf JSON issues.
+        if isinstance(value, float) and not math.isfinite(value):
+            out[key] = None
+        else:
+            out[key] = value
+    # Required chart axes: index/tokens + train CE + wall.
+    if "i" not in out and "tokens_seen" not in out:
+        return None
+    if "train_ce_nats" not in out and "running_bpb" not in out:
+        return None
+    return out
+
+
+def downsample_train_series_for_api(
+    series: Mapping[str, Any] | None,
+    *,
+    max_points: int = 500,
+) -> dict[str, Any] | None:
+    """Return a downsample-safe, challenge-owned ``prism_train_series.v1`` for /curve charts.
+
+    * Non-challenge / empty / corrupt documents become ``None`` (callers omit or null the field).
+    * Points are stride-downsampled with first and last preserved (same policy as loss_curve).
+    * Only chart keys (loss/bpb, tokens, wall, grad_norm, clip_event, …) are projected — never
+      arbitrary miner/blob fields that might carry secrets.
+    * Adds ``downsampled`` and ``points_total`` for UI clarity; does **not** recompute aggregates
+      from the reduced set (clip_events / grad_spike_rate stay full-series truthful).
+    """
+    if not series_is_challenge_owned(series):
+        return None
+    assert series is not None
+    raw_points = series.get("points")
+    if not isinstance(raw_points, list) or not raw_points:
+        return None
+    cleaned: list[dict[str, Any]] = []
+    for raw in raw_points:
+        projected = sanitize_point_for_api(raw) if isinstance(raw, Mapping) else None
+        if projected is not None:
+            cleaned.append(projected)
+    if not cleaned:
+        return None
+    total = len(cleaned)
+    indices = _downsample_indices(total, max_points)
+    sampled = [cleaned[i] for i in indices]
+    aggregates_in = series.get("aggregates")
+    aggregates: dict[str, Any] = {}
+    if isinstance(aggregates_in, Mapping):
+        for key in _API_AGGREGATE_KEYS:
+            if key in aggregates_in:
+                aggregates[key] = aggregates_in[key]
+    # Keep n_points equal to pre-downsample truth when present; else use total.
+    aggregates.setdefault("n_points", total)
+    payload: dict[str, Any] = {
+        "schema": TRAIN_SERIES_V1_SCHEMA,
+        "submission_id": str(series.get("submission_id", "")),
+        "run_id": str(series.get("run_id", "")),
+        "authority": TRAIN_SERIES_AUTHORITY,
+        "x_axis": series.get("x_axis") if isinstance(series.get("x_axis"), str) else "batch_index",
+        "token_budget": series.get("token_budget")
+        if isinstance(series.get("token_budget"), int | float)
+        else None,
+        "points": sampled,
+        "aggregates": aggregates,
+        "miner_reported_ignored": True,
+        "points_total": total,
+        "downsampled": total > max_points,
+    }
+    return payload

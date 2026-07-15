@@ -17,6 +17,7 @@ from pydantic import ValidationError
 
 from .admission import enforce_admission
 from .auth import authenticate_miner
+from .evaluator.train_series import downsample_train_series_for_api
 from .models import (
     ArchitectureDetailResponse,
     ArchitectureListResponse,
@@ -35,6 +36,7 @@ from .models import (
     SubmissionResponse,
     SubmissionStatusResponse,
     TrainingVariantEntry,
+    TrainSeriesV1Response,
 )
 from .repository import PrismRepository, epoch_id_for
 
@@ -268,6 +270,12 @@ async def list_architecture_variants(
 async def submission_curve(
     submission_id: str, repository: PrismRepository = Depends(repo_from_request)
 ) -> SubmissionCurveResponse:
+    """Loss curve + optional challenge-owned ``prism_train_series.v1`` time-flow.
+
+    Auth: same public internal auth path as other challenge routes (miner headers / Base
+    proxy). Series is challenge-owned only; miner-planted payloads never appear here.
+    Response never includes secret tokens, wallets, or proof private material.
+    """
     curve = await repository.get_submission_curve(submission_id)
     if curve is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "submission curve not found")
@@ -288,6 +296,13 @@ async def submission_curve(
     gpu_hours = _opt_float(compute.get("gpu_hours"))
     if gpu_hours is None and gpu_count is not None and wall_clock is not None:
         gpu_hours = float(gpu_count) * wall_clock / 3600.0
+    train_series_payload = downsample_train_series_for_api(
+        curve.get("train_series") if isinstance(curve.get("train_series"), dict) else None,
+        max_points=CURVE_MAX_POINTS,
+    )
+    train_series: TrainSeriesV1Response | None = None
+    if train_series_payload is not None:
+        train_series = TrainSeriesV1Response.model_validate(train_series_payload)
     return SubmissionCurveResponse(
         submission_id=submission_id,
         loss_curve=LossCurveSeries(
@@ -314,6 +329,7 @@ async def submission_curve(
             peak_vram_bytes=_opt_int(compute.get("peak_vram_bytes")),
             peak_rss_bytes=_opt_int(compute.get("peak_rss_bytes")),
         ),
+        train_series=train_series,
     )
 
 

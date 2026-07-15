@@ -335,18 +335,29 @@ Machine identity: **`schema=prism_train_series.v1`**. Full protocol: [Official C
 | Emission leaderboard | Remains **bpb-primary** — series are **not** emission substitution |
 | Rank role of series | Visibility + densify **sample-eff / stability residual** only — **never sole primary rank** over held-out/bpb |
 | Fail-closed Official pin | If grading pin sets `require_train_series` and series is missing/empty/corrupt → Official scientific grade **fail-closes** (not silent PASS) |
-| APIs | Existing `GET .../submissions/{id}/curve` (loss vs bytes); product train-series path exposes `prism_train_series.v1` multi-channel including grad_norm/clip when instrumented under existing auth |
+| APIs | **`GET /v1/submissions/{id}/curve`** (public challenge routes under existing Base proxy / internal auth) returns legacy `loss_curve` **and** optional challenge-owned **`train_series`** (`prism_train_series.v1`) with downsample-safe multichannel points: train CE / running bpb, tokens_seen, wall_s, **grad_norm**, **clip_event**. Miner authority payloads are **never** returned. Chart-safe key projection strips unknown/secret fields. Frontend Architecture Lab already plots loss vs covered bytes from this route; operators may also plot cosine-style time-flow via CLI `jq` on `train_series.points` until UI surfaces `grad_norm` series natively. |
 | TEE / ops | Series realize lab observability only; REAL-PROVIDER TEE **BLOCKED**; no live Swarm mutate; no `set_weights` from telemetry |
 
 ```bash
-# Legacy curve (online_loss vs covered_bytes)
-curl -H "Authorization: Bearer $TOKEN" -H "X-Base-Challenge-Slug: prism" \
-  "http://localhost:8000/internal/v1/submissions/${SUBMISSION_ID}/curve"
+# Operator time-flow: loss + grad_norm vs tokens / wall (same auth as other curve reads)
+curl -sS -H "Authorization: Bearer $TOKEN" -H "X-Base-Challenge-Slug: prism" \
+  "http://localhost:8000/internal/v1/submissions/${SUBMISSION_ID}/curve" \
+  | jq '{
+      loss_points: .loss_curve.points,
+      schema: .train_series.schema,
+      authority: .train_series.authority,
+      downsampled: .train_series.downsampled,
+      n_total: .train_series.points_total,
+      sample: [.train_series.points[] | {i, tokens_seen, wall_s, train_ce_nats, running_bpb, grad_norm, clip_event}][0:8],
+      clip_events: .train_series.aggregates.clip_events
+    }'
 
-# Train series schema identity (when product route lands) — challenge-owned points only
+# Artifact side-car (challenge-owned only; miner dashboards non-authoritative)
 jq '{schema, authority, miner_reported_ignored, n: (.points|length), grads: [.points[].grad_norm][0:5]}' \
   prism_train_series.v1.json
 ```
+
+**UI note (VAL-TELE-008):** the public Architecture Lab already wires `GET .../curve` into the loss/bpb chart (`getSubmissionCurve` → loss vs covered bytes). The API now also returns `train_series` for grad_norm / clip time-flow under the same trust path. Operators verify multichannel series via the curl/jq path above when frontend render of grad has not yet recaptured the optional field; **do not** invent a parallel miner-trust chart.
 
 Do not rank packages solely on prettier grad_norm aesthetics. Use multi-axis Official / Complete View for scientific claims; keep emission on the bpb leaderboard path.
 
