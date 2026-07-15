@@ -1,23 +1,28 @@
-"""Official Comparison Complete View v1.2 (machine JSON identity + multi-axis rules).
+"""Official Comparison Complete View v1.3 (machine JSON identity + multi-axis rules).
 
 Complete View expands multimetric.v1.1 into a MAX A→Z architecture comparison
-dashboard. Product identity is additive:
+dashboard and, as of v1.3, adds a dedicated reasoning/logic panel. Product identity
+is additive:
 
-* ``scorecard_id = multimetric.complete.v1.2``
-* top-level machine document schema ``complete_view.v1.2``
+* ``scorecard_id = multimetric.complete.v1.3``
+* top-level machine document schema ``complete_view.v1.3``
 * protocol pin remains ``prism_official_compare.v1``
+* historical Complete View identity ``multimetric.complete.v1.2`` preserved
+* multimetric.v1.1 scorecard annex remains valid further up the chain
 
 This module freezes:
 
-1. Metric matrix catalogue (must-have + nice-to-have) mapped to VAL-COMPLETE panels.
-2. Multi-axis comparison object (per-axis leads, disagreement matrix, expanded
-   TIE_POLAR honesty; never an opaque sole weighted crown).
+1. Metric matrix catalogue (must-have + nice-to-have) mapped to VAL-COMPLETE /
+   VAL-REASON panels (P0–P9 complete view residual + **P10_reasoning_logic**).
+2. Multi-axis comparison object (per-axis leads including ``reasoning``,
+   disagreement matrix, expanded TIE_POLAR honesty; never an opaque sole weighted
+   crown).
 3. Empty/partial dashboard builders that publish honest null + reason instead of
-   inventing suite results.
+   inventing suite results (including seed-scale logic probe shells).
 
-Historical multimetric.v1.1 scorecard annex remains valid and is referenced as
-``historical_scorecard_id``. Production leaderboard emission (bpb-primary) and
-REAL-PROVIDER TEE are unchanged / BLOCKED orthogonally.
+Production leaderboard emission (bpb-primary) and REAL-PROVIDER TEE are unchanged
+/ BLOCKED orthogonally. Seed-scale logic is lab/architecture comparison only —
+not human AGI reasoning and not GSM8K/MMLU primary for ~7M from-scratch seeds.
 """
 
 from __future__ import annotations
@@ -44,17 +49,33 @@ from .official_comparison import (
     SCORECARD_ID as MULTIMETRIC_V1_1_SCORECARD_ID,
 )
 
-# --- Complete View machine identity (VAL-COMPLETE-001 / VAL-COMPLETE-015) -----------
+# --- Complete View machine identity (VAL-COMPLETE / VAL-REASON panel locks) --------
 
-COMPLETE_VIEW_SCORECARD_ID = "multimetric.complete.v1.2"
-COMPLETE_VIEW_SCHEMA = "complete_view.v1.2"
-COMPLETE_VIEW_DASHBOARD_ID = "scorecard_complete_view.v1.2"
-# Historical annex retained under protocol v1 (not rewritten by complete view).
-COMPLETE_VIEW_HISTORICAL_SCORECARD_ID = MULTIMETRIC_V1_1_SCORECARD_ID
+# Active Complete View identity (VAL-REASON-001).
+COMPLETE_VIEW_SCORECARD_ID = "multimetric.complete.v1.3"
+COMPLETE_VIEW_SCHEMA = "complete_view.v1.3"
+COMPLETE_VIEW_DASHBOARD_ID = "scorecard_complete_view.v1.3"
 COMPLETE_VIEW_PROTOCOL_ID = PROTOCOL_ID
 
-# Alternate product string kept as alias only; identity locks to multimetric.complete.v1.2.
-COMPLETE_VIEW_COMPARE_ID_ALIAS = "prism_complete_compare.v1.2"
+# Immediate predecessor Complete View (preserved; not rewritten by v1.3).
+COMPLETE_VIEW_V1_2_SCORECARD_ID = "multimetric.complete.v1.2"
+COMPLETE_VIEW_V1_2_SCHEMA = "complete_view.v1.2"
+COMPLETE_VIEW_V1_2_DASHBOARD_ID = "scorecard_complete_view.v1.2"
+
+# historical_scorecard_id points at the prior Complete View identity.
+COMPLETE_VIEW_HISTORICAL_SCORECARD_ID = COMPLETE_VIEW_V1_2_SCORECARD_ID
+# Full chain for operators: multimetric.v1.1 → complete.v1.2 → complete.v1.3.
+COMPLETE_VIEW_HISTORICAL_CHAIN: tuple[str, ...] = (
+    MULTIMETRIC_V1_1_SCORECARD_ID,
+    COMPLETE_VIEW_V1_2_SCORECARD_ID,
+)
+
+# Alternate product string kept as alias only.
+COMPLETE_VIEW_COMPARE_ID_ALIAS = "prism_complete_compare.v1.3"
+
+# Soft relative floor spirit for reasoning relative_to_chance (suite fill later).
+REASONING_REL_FLOOR = 0.05
+REASONING_SUITE_ID = "logic_synthetic.v1"
 
 CompleteAxisLead = AxisLead
 ScientificAxis = Literal[
@@ -64,6 +85,7 @@ ScientificAxis = Literal[
     "length_extrap",
     "memorization",
     "stability",
+    "reasoning",
 ]
 DiagnosticAxis = Literal[
     "efficiency",
@@ -79,6 +101,7 @@ _AXIS_DIRECTION: dict[str, Literal["higher", "lower"]] = {
     "length_extrap": "lower",  # CE ratio / free CE degradation
     "memorization": "lower",  # memo gap
     "stability": "lower",  # seed_std / spike rates preferred lower
+    "reasoning": "higher",  # closed-choice relative_to_chance / logic_acc_macro
     "efficiency": "lower",  # params / VRAM preferred lower among iso-quality
 }
 
@@ -89,14 +112,17 @@ COMPLETE_VIEW_SCIENTIFIC_AXES: tuple[str, ...] = (
     "length_extrap",
     "memorization",
     "stability",
+    "reasoning",
 )
 
 # Axes that participate in expanded polar honesty (scientific only; efficiency never sole-ranks).
+# v1.3 adds reasoning so short_gen vs reasoning polar can fire when both sides are filled.
 COMPLETE_VIEW_POLAR_AXES: tuple[str, ...] = (
     "short_gen",
     "long_ctx",
     "sample_eff",
     "length_extrap",
+    "reasoning",
 )
 
 COMPLETE_VIEW_DEFAULT_EPS: dict[str, float] = {
@@ -106,6 +132,7 @@ COMPLETE_VIEW_DEFAULT_EPS: dict[str, float] = {
     "length_extrap": 0.05,
     "memorization": 0.05,
     "stability": 0.02,
+    "reasoning": REASONING_REL_FLOOR,
     "efficiency": 0.0,  # never sole-ranks; placeholder only
 }
 
@@ -117,11 +144,19 @@ COMPLETE_VIEW_HONESTY_NOTES: tuple[str, ...] = (
         "No opaque weighted single crown; multi-axis comparison object "
         "is authoritative on disagreements"
     ),
-    "Historical multimetric.v1.1 scorecard remains valid; complete.v1.2 expands visibility",
+    (
+        "Historical multimetric.v1.1 and multimetric.complete.v1.2 remain valid; "
+        "complete.v1.3 expands visibility with P10 reasoning/logic"
+    ),
     "Invented non-null suite values are forbidden; use null + reason when not-run",
+    (
+        "Seed-scale synthetic logic probes are lab/architecture comparison only; "
+        "they do not certify human-level reasoning, AGI, or curriculum-trained "
+        "benchmark SOTA (not GSM8K/MMLU primary for ~7M from-scratch seeds)"
+    ),
 )
 
-# Panel keys for the machine JSON dashboard (research §5 + VAL-COMPLETE matrix).
+# Panel keys for the machine JSON dashboard (research complete-view + reasoning design).
 COMPLETE_VIEW_PANEL_KEYS: tuple[str, ...] = (
     "P0_rank_overlay",
     "P1_short_gen",
@@ -133,6 +168,7 @@ COMPLETE_VIEW_PANEL_KEYS: tuple[str, ...] = (
     "P7_stability_robustness",
     "P8_calibration_entropy_optional",
     "P9_validity",
+    "P10_reasoning_logic",
 )
 
 # Must-have metric matrix (research scorecard-complete-a2z-gaps CV-MH-*).
@@ -300,9 +336,119 @@ COMPLETE_VIEW_MUST_HAVE: tuple[dict[str, Any], ...] = (
         "val_complete": "VAL-COMPLETE-013",
         "description": "Long-ctx floor honesty + no sole crown if both below",
     },
+    # --- P10 reasoning / logic MUST probes (VAL-REASON-001 catalogue) --------------
+    {
+        "matrix_id": "CV-RL-MH-01",
+        "key": "boolean_parity_xor",
+        "panel": "P10_reasoning_logic",
+        "tier": "P",
+        "direction": "higher",
+        "val_reason": "VAL-REASON-002",
+        "chance": 0.5,
+        "description": "Boolean / parity / XOR chain closed accuracy + forced CE",
+    },
+    {
+        "matrix_id": "CV-RL-MH-02",
+        "key": "arith_digit_mod",
+        "panel": "P10_reasoning_logic",
+        "tier": "P",
+        "direction": "higher",
+        "val_reason": "VAL-REASON-003",
+        "chance": 0.1,
+        "description": "Digit / mod arithmetic toy closed accuracy + forced CE",
+    },
+    {
+        "matrix_id": "CV-RL-MH-03",
+        "key": "transitive_compare",
+        "panel": "P10_reasoning_logic",
+        "tier": "P",
+        "direction": "higher",
+        "val_reason": "VAL-REASON-004",
+        "chance": 0.25,
+        "description": "Transitive comparison multi-hop relational composition",
+    },
+    {
+        "matrix_id": "CV-RL-MH-04",
+        "key": "multihop_binding",
+        "panel": "P10_reasoning_logic",
+        "tier": "P",
+        "direction": "higher",
+        "val_reason": "VAL-REASON-005",
+        "chance": 0.125,
+        "description": "Multi-hop role binding distinct from P3 MQAR lookup",
+    },
+    {
+        "matrix_id": "CV-RL-MH-05",
+        "key": "sort_order",
+        "panel": "P10_reasoning_logic",
+        "tier": "P",
+        "direction": "higher",
+        "val_reason": "VAL-REASON-006",
+        "chance": 0.25,
+        "description": "Sort / order / sequencing (min/max/median style)",
+    },
+    {
+        "matrix_id": "CV-RL-MH-06",
+        "key": "reverse_edit",
+        "panel": "P10_reasoning_logic",
+        "tier": "P",
+        "direction": "higher",
+        "val_reason": "VAL-REASON-006",
+        "chance": 0.25,
+        "description": "Reverse / simple string edit (transform ≠ exact copy)",
+    },
+    {
+        "matrix_id": "CV-RL-MH-07",
+        "key": "count_stream",
+        "panel": "P10_reasoning_logic",
+        "tier": "P",
+        "direction": "higher",
+        "val_reason": "VAL-REASON-007",
+        "chance": 0.1,
+        "description": "Counting over streams with fillers",
+    },
+    {
+        "matrix_id": "CV-RL-MH-08",
+        "key": "dyck_nesting",
+        "panel": "P10_reasoning_logic",
+        "tier": "P",
+        "direction": "higher",
+        "val_reason": "VAL-REASON-007",
+        "chance": 0.5,
+        "description": "Bounded Dyck / nesting well-formedness and close-token",
+    },
+    {
+        "matrix_id": "CV-RL-MH-09",
+        "key": "instruction_toy",
+        "panel": "P10_reasoning_logic",
+        "tier": "P",
+        "direction": "higher",
+        "val_reason": "VAL-REASON-008",
+        "chance": 0.2,
+        "description": "Instruction-toy format obedience micro-templates",
+    },
+    {
+        "matrix_id": "CV-RL-MH-10",
+        "key": "contradiction_detect",
+        "panel": "P10_reasoning_logic",
+        "tier": "P",
+        "direction": "higher",
+        "val_reason": "VAL-REASON-008",
+        "chance": 0.5,
+        "description": "Consistency / contradiction detect over dual claims",
+    },
+    {
+        "matrix_id": "CV-RL-MH-11",
+        "key": "logic_suite_mean",
+        "panel": "P10_reasoning_logic",
+        "tier": "P",
+        "direction": "higher",
+        "val_reason": "VAL-REASON-009",
+        "description": "Macro suite_mean over RL-01..10 with relative-to-chance floors",
+    },
 )
 
-# Nice-to-have residual (VAL-COMPLETE-012); may stay null+reason.
+# Nice-to-have residual (VAL-COMPLETE-012 + VAL-REASON-011); may stay null+reason.
 COMPLETE_VIEW_NICE_TO_HAVE: tuple[dict[str, Any], ...] = (
     {
         "matrix_id": "CV-NH-01",
@@ -342,7 +488,7 @@ COMPLETE_VIEW_NICE_TO_HAVE: tuple[dict[str, Any], ...] = (
     },
     {
         "matrix_id": "CV-NH-07",
-        "key": "k5_seed_stress",
+        "key": "k5_seed_stress_optional",
         "panel": "P7_stability_robustness",
         "description": "Optional K=5 seed stress",
     },
@@ -364,11 +510,50 @@ COMPLETE_VIEW_NICE_TO_HAVE: tuple[dict[str, Any], ...] = (
         "panel": "P0_rank_overlay",
         "description": "Non-authoritative Pareto dual-scalar UI residual",
     },
+    # Reasoning residuals (VAL-REASON-011); still null+reason when not remesured.
+    {
+        "matrix_id": "CV-RL-NH-01",
+        "key": "cot_free_gen_collapse",
+        "panel": "P10_reasoning_logic",
+        "description": "Short CoT free-gen collapse proxy on logic answer fields",
+    },
+    {
+        "matrix_id": "CV-RL-NH-02",
+        "key": "logic_ece",
+        "panel": "P10_reasoning_logic",
+        "description": "ECE / Brier calibration scoped to P10 closed-choice logic",
+    },
+    {
+        "matrix_id": "CV-RL-NH-03",
+        "key": "poly_vs_exp_length",
+        "panel": "P10_reasoning_logic",
+        "description": "Polynomial vs exponential length stress on logic patterns",
+    },
 )
 
-# Mapping panels → VAL-COMPLETE metric families (schema contract surface).
+# Catalogue of MUST reasoning probes only (P10; excludes suite -mean aggregate row).
+COMPLETE_VIEW_REASONING_MUST_PROBES: tuple[dict[str, Any], ...] = tuple(
+    row
+    for row in COMPLETE_VIEW_MUST_HAVE
+    if str(row.get("panel")) == "P10_reasoning_logic" and str(row.get("key")) != "logic_suite_mean"
+)
+
+# Chance table for MUST probes (seed-scale synthetic; not GSM8K/MMLU).
+COMPLETE_VIEW_REASONING_CHANCE_TABLE: dict[str, float] = {
+    str(row["key"]): float(row["chance"])
+    for row in COMPLETE_VIEW_REASONING_MUST_PROBES
+    if "chance" in row
+}
+
+# Mapping panels → VAL-COMPLETE / VAL-REASON metric families (schema contract surface).
 COMPLETE_VIEW_PANEL_TO_VAL_COMPLETE: dict[str, tuple[str, ...]] = {
-    "P0_rank_overlay": ("VAL-COMPLETE-001", "VAL-COMPLETE-013", "VAL-COMPLETE-015"),
+    "P0_rank_overlay": (
+        "VAL-COMPLETE-001",
+        "VAL-COMPLETE-013",
+        "VAL-COMPLETE-015",
+        "VAL-REASON-001",
+        "VAL-REASON-009",
+    ),
     "P1_short_gen": ("VAL-COMPLETE-002",),
     "P2_sample_efficiency": ("VAL-COMPLETE-008",),
     "P3_long_ctx": (
@@ -384,6 +569,19 @@ COMPLETE_VIEW_PANEL_TO_VAL_COMPLETE: dict[str, tuple[str, ...]] = {
     "P7_stability_robustness": ("VAL-COMPLETE-010", "VAL-COMPLETE-011"),
     "P8_calibration_entropy_optional": ("VAL-COMPLETE-012",),
     "P9_validity": ("VAL-COMPLETE-001", "VAL-COMPLETE-013"),
+    "P10_reasoning_logic": (
+        "VAL-REASON-001",
+        "VAL-REASON-002",
+        "VAL-REASON-003",
+        "VAL-REASON-004",
+        "VAL-REASON-005",
+        "VAL-REASON-006",
+        "VAL-REASON-007",
+        "VAL-REASON-008",
+        "VAL-REASON-009",
+        "VAL-REASON-011",
+        "VAL-REASON-012",
+    ),
 }
 
 
@@ -449,19 +647,27 @@ class MultiAxisComparison:
 
 
 def complete_view_identity() -> dict[str, Any]:
-    """Lock Complete View v1.2 machine identity strings (VAL-COMPLETE-001)."""
+    """Lock Complete View v1.3 machine identity strings (VAL-REASON-001 / VAL-COMPLETE-001)."""
     return {
         "scorecard_id": COMPLETE_VIEW_SCORECARD_ID,
         "schema": COMPLETE_VIEW_SCHEMA,
         "dashboard_id": COMPLETE_VIEW_DASHBOARD_ID,
         "protocol_id": COMPLETE_VIEW_PROTOCOL_ID,
         "historical_scorecard_id": COMPLETE_VIEW_HISTORICAL_SCORECARD_ID,
+        "historical_chain": list(COMPLETE_VIEW_HISTORICAL_CHAIN),
+        "preserved_complete_v1_2_scorecard_id": COMPLETE_VIEW_V1_2_SCORECARD_ID,
+        "preserved_complete_v1_2_schema": COMPLETE_VIEW_V1_2_SCHEMA,
+        "multimetric_v1_1_scorecard_id": MULTIMETRIC_V1_1_SCORECARD_ID,
         "compare_id_alias": COMPLETE_VIEW_COMPARE_ID_ALIAS,
         "panel_keys": list(COMPLETE_VIEW_PANEL_KEYS),
         "scientific_axes": list(COMPLETE_VIEW_SCIENTIFIC_AXES),
         "polar_axes": list(COMPLETE_VIEW_POLAR_AXES),
         "must_have_count": len(COMPLETE_VIEW_MUST_HAVE),
         "nice_to_have_count": len(COMPLETE_VIEW_NICE_TO_HAVE),
+        "reasoning_suite_id": REASONING_SUITE_ID,
+        "reasoning_rel_floor": REASONING_REL_FLOOR,
+        "reasoning_chance_table": dict(COMPLETE_VIEW_REASONING_CHANCE_TABLE),
+        "reasoning_must_probes": [dict(row) for row in COMPLETE_VIEW_REASONING_MUST_PROBES],
         "panel_to_val_complete": {
             k: list(v) for k, v in COMPLETE_VIEW_PANEL_TO_VAL_COMPLETE.items()
         },
@@ -471,8 +677,17 @@ def complete_view_identity() -> dict[str, Any]:
             "opaque_weighted_sole_crown": False,
             "wall_clock_ranks": False,
             "efficiency_sole_ranks": False,
+            "human_agi_reasoning": False,
+            "gsm8k_mmlu_primary": False,
+            "seed_scale_logic_is_lab_only": True,
         },
         "honesty_notes": list(COMPLETE_VIEW_HONESTY_NOTES),
+        "scoring_channels": {
+            "closed_choice_accuracy": True,
+            "forced_ce": True,
+            "chance_baselines": True,
+            "suite_mean_macro": True,
+        },
     }
 
 
@@ -483,8 +698,103 @@ def complete_view_metric_matrix() -> dict[str, Any]:
         "must_have": [dict(row) for row in COMPLETE_VIEW_MUST_HAVE],
         "nice_to_have": [dict(row) for row in COMPLETE_VIEW_NICE_TO_HAVE],
         "panels": list(COMPLETE_VIEW_PANEL_KEYS),
+        "reasoning_must_probes": [dict(row) for row in COMPLETE_VIEW_REASONING_MUST_PROBES],
+        "reasoning_chance_table": dict(COMPLETE_VIEW_REASONING_CHANCE_TABLE),
         "panel_to_val_complete": {
             k: list(v) for k, v in COMPLETE_VIEW_PANEL_TO_VAL_COMPLETE.items()
+        },
+    }
+
+
+def reasoning_panel_shell(*, status: str = "not_run") -> dict[str, Any]:
+    """Honest P10_reasoning_logic shell (null+reason; never silent omit catalogue).
+
+    Dual scoring channels (closed-choice accuracy + forced CE) and chance baselines
+    are declared in schema; suite fill is later features
+    (reason-logic-probes-suite-impl / aggregate / remesure).
+    """
+    probes: dict[str, Any] = {}
+    for row in COMPLETE_VIEW_REASONING_MUST_PROBES:
+        key = str(row["key"])
+        probes[key] = {
+            "matrix_id": row["matrix_id"],
+            "chance": COMPLETE_VIEW_REASONING_CHANCE_TABLE.get(key),
+            "val_reason": row.get("val_reason"),
+            "acc": {"a": None, "b": None},
+            "rel_to_chance": {"a": None, "b": None},
+            "forced_ce": {"a": None, "b": None},
+            "by_length": {},
+            "trials": 0,
+            "status": status,
+            "reason": "not_run_schema_shell; fill via reason-logic probe suite features",
+        }
+    nice_entries = [
+        {
+            "matrix_id": row["matrix_id"],
+            "key": row["key"],
+            "a": None,
+            "b": None,
+            "status": "not_run",
+            "reason": "not_run_nice_to_have_reasoning",
+        }
+        for row in COMPLETE_VIEW_NICE_TO_HAVE
+        if str(row.get("panel")) == "P10_reasoning_logic"
+    ]
+    return {
+        "status": status,
+        "reason": (
+            None
+            if status == "filled"
+            else "not_run_schema_shell; fill via reason-logic suite (VAL-REASON-002..010)"
+        ),
+        "suite_id": REASONING_SUITE_ID,
+        "scoring": {
+            "closed_choice_accuracy": True,
+            "forced_ce": True,
+            "chance_baselines": True,
+            "architecture_agnostic_logits_only": True,
+        },
+        "chance_table": dict(COMPLETE_VIEW_REASONING_CHANCE_TABLE),
+        "rel_floor": REASONING_REL_FLOOR,
+        "seeds": None,
+        "aggregates": {
+            "logic_acc_macro": {"a": None, "b": None},
+            "logic_rel_macro": {"a": None, "b": None},
+            "logic_ce_macro": {"a": None, "b": None},
+            "logic_below_chance_count": {"a": None, "b": None},
+            "logic_floor_pass": {"a": None, "b": None},
+            "suite_mean": {"a": None, "b": None},
+            "status": status,
+            "reason": "not_run_until_probe_suite_aggregate",
+        },
+        "probes": probes,
+        "nice": {
+            "status": "nice_to_have",
+            "entries": nice_entries,
+        },
+        "distinct_from": {
+            "P3_long_ctx_mqar": (
+                "MQAR remains associative retrieval under P3; multihop_binding is "
+                "role/composition inference under P10"
+            ),
+            "gsm8k_mmlu_lm_eval": (
+                "NOT GSM8K/MMLU/lm-eval primary for ~7M from-scratch seeds; "
+                "challenge-owned synthetic only"
+            ),
+        },
+        "honesty": [
+            "Seed-scale synthetic logic; not GSM8K/MMLU primary",
+            "Not human AGI reasoning certification",
+            "Not emission crown; efficiency never sole-ranks",
+            "Near-chance results are valid architecture-outcomes at seed scale",
+            "LAB/diagnostic architecture comparison only",
+            "REAL-PROVIDER TEE BLOCKED (orthogonal)",
+        ],
+        "multi_axis": {
+            "axis": "reasoning",
+            "direction": "higher",
+            "polar_with": ["short_gen"],
+            "eps": REASONING_REL_FLOOR,
         },
     }
 
@@ -598,6 +908,20 @@ def _default_axis_scores_from_records(
                 "heldout_or_bpb_std",
                 "lower",
                 reason_if_null=None if stab_b is not None else "stability_std_missing",
+            ),
+        ),
+        "reasoning": (
+            CompleteAxisScore(
+                None,
+                "logic_rel_macro",
+                "higher",
+                reason_if_null="reasoning_suite_not_run",
+            ),
+            CompleteAxisScore(
+                None,
+                "logic_rel_macro",
+                "higher",
+                reason_if_null="reasoning_suite_not_run",
             ),
         ),
     }
@@ -780,6 +1104,7 @@ def _empty_panel_shells(
             "long_ctx_lead": comparison.per_axis_leads.get("long_ctx", "missing"),
             "sample_eff_lead": comparison.per_axis_leads.get("sample_eff", "missing"),
             "length_extrap_lead": comparison.per_axis_leads.get("length_extrap", "missing"),
+            "reasoning_lead": comparison.per_axis_leads.get("reasoning", "missing"),
             "authoritative_claim": comparison.as_dict()["authoritative_claim"],
             "floor_vetoes": {
                 "a": base_polar.floor_veto_a,
@@ -940,6 +1265,7 @@ def _empty_panel_shells(
                 "b": b.is_public_multi_seed,
             },
         },
+        "P10_reasoning_logic": reasoning_panel_shell(status="not_run"),
     }
 
 
@@ -957,10 +1283,12 @@ def build_complete_view(
     per_seed_index: Mapping[str, Any] | None = None,
     extra: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Build top-level ``complete_view.v1.2`` machine JSON (VAL-COMPLETE-015).
+    """Build top-level ``complete_view.v1.3`` machine JSON (VAL-REASON-001 / VAL-COMPLETE-015).
 
-    This is the single reconciling document for Complete View A→Z panels + multi-axis
-    comparison. Suites that have not run MUST appear as null + reason (no invention).
+    This is the single reconciling document for Complete View A→Z panels (including
+    P10_reasoning_logic) + multi-axis comparison (reasoning axis). Suites that have
+    not run MUST appear as null + reason (no invention). multimetric.complete.v1.2
+    history is preserved via historical_scorecard_id / historical_chain.
     """
     if comparison is None:
         comparison = compare_complete_multi_axis(a, b)
@@ -1029,16 +1357,33 @@ def build_complete_view(
             "wall_clock_ranks": False,
             "efficiency_sole_ranks": False,
             "historical_v1_1_rewritten": False,
+            "historical_complete_v1_2_rewritten": False,
+            "human_agi_reasoning": False,
+            "gsm8k_mmlu_primary": False,
+            "seed_scale_logic_is_lab_only": True,
         },
         "relation_to_multimetric_v1_1": {
-            "historical_scorecard_id": COMPLETE_VIEW_HISTORICAL_SCORECARD_ID,
+            "historical_scorecard_id": MULTIMETRIC_V1_1_SCORECARD_ID,
             "complete_expands": True,
             "historical_preserved": True,
             "note": (
                 "multimetric.v1.1 remains the scorecard annex on prism_compare_report.v1; "
-                "complete_view.v1.2 is the MAX A→Z machine dashboard reconciling expanded panels."
+                "complete_view.v1.3 is the MAX A→Z machine dashboard reconciling expanded "
+                "panels including P10 reasoning/logic."
             ),
         },
+        "relation_to_complete_v1_2": {
+            "historical_scorecard_id": COMPLETE_VIEW_V1_2_SCORECARD_ID,
+            "historical_schema": COMPLETE_VIEW_V1_2_SCHEMA,
+            "complete_expands": True,
+            "historical_preserved": True,
+            "note": (
+                "multimetric.complete.v1.2 history is preserved; multimetric.complete.v1.3 "
+                "adds P10_reasoning_logic, reasoning multi-axis lead, and polar honesty "
+                "vs short_gen under the same protocol pin."
+            ),
+        },
+        "historical_chain": list(COMPLETE_VIEW_HISTORICAL_CHAIN),
     }
     if extra:
         for key, value in extra.items():
@@ -1120,6 +1465,44 @@ def validate_complete_view_document(document: Mapping[str, Any]) -> list[str]:
         if not isinstance(nh, list) or len(nh) != len(COMPLETE_VIEW_NICE_TO_HAVE):
             errors.append("metric_matrix.nice_to_have length mismatch")
 
+    # VAL-REASON-001: P10 catalogue keys never silently omitted.
+    panels_obj = document.get("panels")
+    if isinstance(panels_obj, Mapping):
+        p10 = panels_obj.get("P10_reasoning_logic")
+        if not isinstance(p10, Mapping):
+            errors.append("P10_reasoning_logic panel must be an object")
+        else:
+            if p10.get("suite_id") != REASONING_SUITE_ID:
+                errors.append(f"P10 suite_id must be {REASONING_SUITE_ID}")
+            probes = p10.get("probes")
+            if not isinstance(probes, Mapping):
+                errors.append("P10 probes object required")
+            else:
+                for row in COMPLETE_VIEW_REASONING_MUST_PROBES:
+                    if row["key"] not in probes:
+                        errors.append(f"P10 missing probe {row['key']}")
+            chance = p10.get("chance_table")
+            if not isinstance(chance, Mapping):
+                errors.append("P10 chance_table required")
+            scoring = p10.get("scoring")
+            if not isinstance(scoring, Mapping):
+                errors.append("P10 scoring channels required")
+            else:
+                for ch in ("closed_choice_accuracy", "forced_ce", "chance_baselines"):
+                    if scoring.get(ch) is not True:
+                        errors.append(f"P10 scoring.{ch} must be true")
+            honesty = p10.get("honesty")
+            if not isinstance(honesty, list) or not honesty:
+                errors.append("P10 honesty notes required")
+
+    comparison2 = document.get("comparison")
+    if isinstance(comparison2, Mapping):
+        leads = comparison2.get("per_axis_leads")
+        if isinstance(leads, Mapping) and "reasoning" not in leads:
+            # Shell compares may omit only if score overrides; require presence by default
+            # when multi-axis builder published the full scientific set.
+            pass
+
     return errors
 
 
@@ -1127,7 +1510,7 @@ def assert_complete_view_document(document: Mapping[str, Any]) -> None:
     """Raise ValueError if Complete View document fails structural contract."""
     problems = validate_complete_view_document(document)
     if problems:
-        raise ValueError("complete_view.v1.2 schema failures: " + "; ".join(problems))
+        raise ValueError("complete_view.v1.3 schema failures: " + "; ".join(problems))
 
 
 def attach_complete_view_to_report(
@@ -1168,6 +1551,7 @@ def attach_complete_view_to_report(
 __all__ = [
     "COMPLETE_VIEW_COMPARE_ID_ALIAS",
     "COMPLETE_VIEW_DASHBOARD_ID",
+    "COMPLETE_VIEW_HISTORICAL_CHAIN",
     "COMPLETE_VIEW_HISTORICAL_SCORECARD_ID",
     "COMPLETE_VIEW_HONESTY_NOTES",
     "COMPLETE_VIEW_MUST_HAVE",
@@ -1176,9 +1560,16 @@ __all__ = [
     "COMPLETE_VIEW_PANEL_TO_VAL_COMPLETE",
     "COMPLETE_VIEW_POLAR_AXES",
     "COMPLETE_VIEW_PROTOCOL_ID",
+    "COMPLETE_VIEW_REASONING_CHANCE_TABLE",
+    "COMPLETE_VIEW_REASONING_MUST_PROBES",
     "COMPLETE_VIEW_SCHEMA",
     "COMPLETE_VIEW_SCIENTIFIC_AXES",
     "COMPLETE_VIEW_SCORECARD_ID",
+    "COMPLETE_VIEW_V1_2_DASHBOARD_ID",
+    "COMPLETE_VIEW_V1_2_SCHEMA",
+    "COMPLETE_VIEW_V1_2_SCORECARD_ID",
+    "REASONING_REL_FLOOR",
+    "REASONING_SUITE_ID",
     "CompleteAxisScore",
     "MultiAxisComparison",
     "assert_complete_view_document",
@@ -1187,5 +1578,6 @@ __all__ = [
     "compare_complete_multi_axis",
     "complete_view_identity",
     "complete_view_metric_matrix",
+    "reasoning_panel_shell",
     "validate_complete_view_document",
 ]

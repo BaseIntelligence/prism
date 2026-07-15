@@ -204,7 +204,7 @@ def test_official_comparison_scorecard_v1_1_is_documented() -> None:
 
 
 def test_official_comparison_complete_view_v1_2_is_documented() -> None:
-    """Complete View v1.2 protocol + machine identity (VAL-COMPLETE-001)."""
+    """Complete View v1.2 protocol history still documented (VAL-COMPLETE-001)."""
     protocol = read_doc("docs/official-comparison.md")
     operators = read_doc("docs/operators.md")
     lower = protocol.lower()
@@ -228,10 +228,42 @@ def test_official_comparison_complete_view_v1_2_is_documented() -> None:
     assert "length" in lower and "extrap" in lower
     assert "disagreement" in lower or "per-axis" in lower
 
-    # Operators pointer only (not full suite cookbook).
-    assert "complete view" in op_lower or "complete_view.v1.2" in operators
-    assert "multimetric.complete.v1.2" in operators or "complete_view.v1.2" in operators
+    # Operators pointer covers Complete View (v1.3 primary, v1.2 history ok).
+    assert "complete view" in op_lower or "complete_view" in op_lower
+    assert (
+        "multimetric.complete.v1.2" in operators
+        or "complete_view.v1.2" in operators
+        or "multimetric.complete.v1.3" in operators
+        or "complete_view.v1.3" in operators
+    )
     assert "tie_polar" in op_lower
+    assert "blocked" in op_lower
+
+
+def test_official_comparison_complete_view_v1_3_reasoning_is_documented() -> None:
+    """Complete View v1.3 P10 reasoning/logic identity + honesty (VAL-REASON-001/012)."""
+    protocol = read_doc("docs/official-comparison.md")
+    operators = read_doc("docs/operators.md")
+    lower = protocol.lower()
+    op_lower = operators.lower()
+
+    assert "complete_view.v1.3" in protocol
+    assert "multimetric.complete.v1.3" in protocol
+    assert "p10_reasoning_logic" in lower
+    assert "multimetric.complete.v1.2" in protocol  # history preserved
+    assert "logic_synthetic" in lower or "synthetic" in lower
+    assert "closed" in lower and ("forced" in lower or "ce" in lower)
+    assert "chance" in lower
+    assert "reasoning" in lower
+    # Honesty non-claims for seed-scale logic (VAL-REASON-012).
+    assert "gsm8k" in lower or "mmlu" in lower
+    assert "human" in lower or "agi" in lower
+    assert "lab" in lower or "diagnostic" in lower
+    assert "seed-scale" in lower or "seed scale" in lower or "~7m" in lower
+    assert "real-provider" in lower and "blocked" in lower
+
+    assert "complete_view.v1.3" in operators or "multimetric.complete.v1.3" in operators
+    assert "reasoning" in op_lower or "p10" in op_lower
     assert "blocked" in op_lower
 
 

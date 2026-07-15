@@ -1,4 +1,4 @@
-"""Complete View v1.2 schema + multi-axis comparison contract tests.
+"""Complete View v1.3 schema + multi-axis comparison contract tests.
 
 Covers VAL-COMPLETE-001 (identity + matrix), VAL-COMPLETE-013 (multi-axis,
 TIE_POLAR honesty, no opaque crown), and VAL-COMPLETE-015 (single reconciling
@@ -110,20 +110,32 @@ def _rec(
 
 def test_val_complete_001_identity_strings_locked() -> None:
     identity = complete_view_identity()
-    assert identity["scorecard_id"] == "multimetric.complete.v1.2"
-    assert identity["schema"] == "complete_view.v1.2"
+    assert identity["scorecard_id"] == "multimetric.complete.v1.3"
+    assert identity["schema"] == "complete_view.v1.3"
     assert identity["scorecard_id"] == COMPLETE_VIEW_SCORECARD_ID
     assert identity["schema"] == COMPLETE_VIEW_SCHEMA
     assert identity["protocol_id"] == COMPLETE_VIEW_PROTOCOL_ID
     assert identity["protocol_id"] == "prism_official_compare.v1"
-    assert identity["historical_scorecard_id"] == MULTIMETRIC_V1_1
+    # Immediate historical is complete.v1.2; multimetric.v1.1 remains in the chain.
     assert identity["historical_scorecard_id"] == COMPLETE_VIEW_HISTORICAL_SCORECARD_ID
-    assert identity["historical_scorecard_id"] == "multimetric.v1.1"
-    assert identity["dashboard_id"] == "scorecard_complete_view.v1.2"
+    assert identity["historical_scorecard_id"] == "multimetric.complete.v1.2"
+    assert identity["multimetric_v1_1_scorecard_id"] == MULTIMETRIC_V1_1
+    assert identity["multimetric_v1_1_scorecard_id"] == "multimetric.v1.1"
+    assert identity["historical_chain"] == [
+        "multimetric.v1.1",
+        "multimetric.complete.v1.2",
+    ]
+    assert identity["dashboard_id"] == "scorecard_complete_view.v1.3"
     assert identity["non_claims"]["real_provider_tee"] == "BLOCKED"
     assert identity["non_claims"]["opaque_weighted_sole_crown"] is False
     assert identity["non_claims"]["emission_crown"] is False
-    assert "complete_view.v1.2" in COMPLETE_VIEW_SCHEMA
+    assert identity["non_claims"]["human_agi_reasoning"] is False
+    assert identity["non_claims"]["gsm8k_mmlu_primary"] is False
+    assert identity["non_claims"]["seed_scale_logic_is_lab_only"] is True
+    assert "complete_view.v1.3" in COMPLETE_VIEW_SCHEMA
+    assert "P10_reasoning_logic" in identity["panel_keys"]
+    assert "reasoning" in identity["scientific_axes"]
+    assert "reasoning" in identity["polar_axes"]
     assert set(COMPLETE_VIEW_PANEL_KEYS) == set(identity["panel_keys"])
 
 
@@ -152,9 +164,12 @@ def test_val_complete_001_metric_matrix_must_have_and_nice_to_have() -> None:
         "quality_per_param_gib",
     ):
         assert key in must_keys
-    # Every must-have maps to a VAL-COMPLETE family id stored on the row.
+    # Every must-have maps to a VAL-COMPLETE or VAL-REASON family id on the row.
     for row in matrix["must_have"]:
-        assert str(row["val_complete"]).startswith("VAL-COMPLETE-")
+        if "val_complete" in row:
+            assert str(row["val_complete"]).startswith("VAL-COMPLETE-")
+        else:
+            assert str(row["val_reason"]).startswith("VAL-REASON-")
         assert row["panel"] in COMPLETE_VIEW_PANEL_KEYS
     # Panel → VAL-COMPLETE mapping is complete for all panels.
     for panel in COMPLETE_VIEW_PANEL_KEYS:
@@ -178,9 +193,11 @@ def test_val_complete_001_document_schema_validates_shell() -> None:
     assert nice["status"] == "nice_to_have"
     assert len(nice["entries"]) == len(COMPLETE_VIEW_NICE_TO_HAVE)
     assert all(e.get("reason") for e in nice["entries"])
-    # Relation to historical multimetric.v1.1 preserved.
-    assert doc["historical_scorecard_id"] == "multimetric.v1.1"
+    # Relation to historical complete.v1.2 + multimetric.v1.1 preserved.
+    assert doc["historical_scorecard_id"] == "multimetric.complete.v1.2"
+    assert doc["relation_to_complete_v1_2"]["historical_preserved"] is True
     assert doc["relation_to_multimetric_v1_1"]["historical_preserved"] is True
+    assert "P10_reasoning_logic" in doc["panels"]
     assert doc["real_provider_tee"] == "BLOCKED"
     assert doc["non_claims"]["opaque_weighted_sole_crown"] is False
     assert doc["non_claims"]["emission_weight_crown"] is False
@@ -217,7 +234,12 @@ def test_val_complete_013_no_opaque_crown_and_multi_axis_keys() -> None:
     # No sole weighted scalar crown key is authoritative output.
     assert "weighted_sole_score" not in payload
     assert "opaque_crown" not in payload
-    assert set(payload["per_axis_leads"]) >= {"short_gen", "long_ctx", "sample_eff"}
+    assert set(payload["per_axis_leads"]) >= {
+        "short_gen",
+        "long_ctx",
+        "sample_eff",
+        "reasoning",
+    }
 
 
 def test_val_complete_013_tie_polar_when_short_and_long_axes_conflict() -> None:
@@ -370,12 +392,13 @@ def test_val_complete_015_single_document_reconciles_panels_and_comparison(
     assert set(doc["panels"]) == set(COMPLETE_VIEW_PANEL_KEYS)
     assert "comparison" in doc
     assert doc["comparison"]["opaque_weighted_crown_forbidden"] is True
-    # Machine-only write path: serialize as complete_view.v1.2.json
-    out = tmp_path / "complete_view.v1.2.json"
+    # Machine-only write path: serialize as complete_view.v1.3.json
+    out = tmp_path / "complete_view.v1.3.json"
     out.write_text(json.dumps(doc, indent=2, sort_keys=True), encoding="utf-8")
     reloaded = json.loads(out.read_text(encoding="utf-8"))
-    assert reloaded["schema"] == "complete_view.v1.2"
-    assert reloaded["scorecard_id"] == "multimetric.complete.v1.2"
+    assert reloaded["schema"] == "complete_view.v1.3"
+    assert reloaded["scorecard_id"] == "multimetric.complete.v1.3"
+    assert reloaded["historical_scorecard_id"] == "multimetric.complete.v1.2"
     assert validate_complete_view_document(reloaded) == []
     # Expected polar from known A long better / B short better pattern.
     assert reloaded["comparison"]["tie_polar"] is True

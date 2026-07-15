@@ -741,4 +741,117 @@ Operator pointer only — full suite runners and remesure belong to Complete Vie
 
 ---
 
-*End of Prism Official Comparison Protocol v1 (+ multimetric scorecard annex v1.1 + Complete View v1.2).*
+## 16. Complete View v1.3 (reasoning / logic panel P10)
+
+Complete View v1.3 expands v1.2 with a dedicated **reasoning and logic** panel while preserving the complete.v1.2 history and the multimetric.v1.1 annex.
+
+| Field | Value |
+| --- | --- |
+| Machine schema | **`complete_view.v1.3`** |
+| Scorecard identity | **`scorecard_id=multimetric.complete.v1.3`** |
+| Dashboard id | `scorecard_complete_view.v1.3` |
+| Protocol pin | still **`prism_official_compare.v1`** |
+| Historical Complete View | **`multimetric.complete.v1.2`** / `complete_view.v1.2` **preserved** (not rewritten) |
+| Historical scorecard annex | **`multimetric.v1.1`** remains valid further up the chain |
+| New panel | **`P10_reasoning_logic`** |
+| Alias | `prism_complete_compare.v1.3` |
+
+### 16.1 Why synthetic challenge-owned probes only
+
+These scores are for **~7M from-scratch single-pass** lab seeds (realized counts under gpt2 vocab; example labels may say tiny-1m). They are **LAB / diagnostic architecture comparison only**.
+
+**Explicit non-claims (VAL-REASON-001 / VAL-REASON-012):**
+
+1. Seed-scale synthetic logic probes **do not certify human-level reasoning**, AGI, IQ, or curriculum-trained benchmark SOTA.
+2. **NOT GSM8K / MMLU / lm-eval** as primary fair signals for these ArchCompare seeds (external knowledge + instruction formats the pin never taught).
+3. Not the production **emission weight crown** (leaderboard stays bpb-primary).
+4. **REAL-PROVIDER TEE PASS** remains **BLOCKED** (orthogonal; suite fill never unlocks REAL).
+5. Efficiency / wall-clock never sole-rank; no opaque weighted sole crown.
+6. Near-chance us both-sides outcomes are **valid science** at seed scale, not a product failure.
+
+### 16.2 Probe catalogue (must-have, challenge-owned)
+
+Must-have synthetic probes (suite_id `logic_synthetic.v1`):
+
+| Probe key | Cognitive target | Default chance |
+| --- | --- | ---: |
+| `boolean_parity_xor` | Boolean / parity / XOR chains | 0.5 |
+| `arith_digit_mod` | Digit / mod arithmetic toys | 0.1 |
+| `transitive_compare` | Transitive multi-hop comparison | 0.25 |
+| `multihop_binding` | Role/composition multi-hop (**distinct from P3 MQAR**) | 0.125 |
+| `sort_order` | Sort / order / sequencing | 0.25 |
+| `reverse_edit` | Reverse / simple string edits (≠ exact copy) | 0.25 |
+| `count_stream` | Counting over streams | 0.1 |
+| `dyck_nesting` | Bounded Dyck / nesting | 0.5 |
+| `instruction_toy` | Instruction-toy format templates | 0.2 |
+| `contradiction_detect` | Consistency / contradiction detect | 0.5 |
+
+Plus aggregate **`logic_suite_mean`** (macro mean of RL-01..10 with relative-to-chance floors; soft `REASONING_REL_FLOOR=0.05`).
+
+Nice-to-have residuals under P10 (filled **or** explicit null+reason): `cot_free_gen_collapse`, `logic_ece`, `poly_vs_exp_length`.
+
+### 16.3 Scoring channels
+
+Every must-have probe declares **dual channels**:
+
+1. **Closed-choice accuracy** (primary absolute + `relative_to_chance`)
+2. **Forced CE** on the gold answer span (continuous surrogate near chance)
+
+Chance baselines are published in the machine `chance_table`. Architecture-agnostic logits only (no attention/SSM state kits). Prefer host densify on existing K=3 `trained_state` before any retrain.
+
+### 16.4 Multi-axis expansion (reasoning + polar honesty)
+
+- Scientific / polar axes now include **`reasoning`** (higher = `logic_rel_macro` / suite_mean relative quality).
+- When `short_gen` and `reasoning` (or other polar axes) disagree beyond ε, publish **`TIE_POLAR`** with `crown_allowed=false`.
+- `P0_rank_overlay.reasoning_lead` surfaces the multi-axis lead.
+- Disagreement matrix can pair reasoning vs short_gen / long_ctx.
+- If both sides fail disclosed logic floors, leads may stay floor-vetoed / tie; no sole supremacy marketing language.
+
+### 16.5 Document sketch
+
+```json
+{
+  "schema": "complete_view.v1.3",
+  "scorecard_id": "multimetric.complete.v1.3",
+  "historical_scorecard_id": "multimetric.complete.v1.2",
+  "protocol_id": "prism_official_compare.v1",
+  "score_class": "LAB-GPU",
+  "real_provider_tee": "BLOCKED",
+  "panels": {
+    "P0_rank_overlay": {"reasoning_lead": "missing"},
+    "P10_reasoning_logic": {
+      "suite_id": "logic_synthetic.v1",
+      "scoring": {
+        "closed_choice_accuracy": true,
+        "forced_ce": true,
+        "chance_baselines": true
+      },
+      "chance_table": {"boolean_parity_xor": 0.5, "arith_digit_mod": 0.1},
+      "aggregates": {"suite_mean": {"a": null, "b": null}},
+      "probes": {"boolean_parity_xor": {"status": "not_run"}}
+    }
+  },
+  "comparison": {
+    "per_axis_leads": {"short_gen": "b", "reasoning": "missing"},
+    "opaque_weighted_crown_forbidden": true,
+    "efficiency_sole_rank_forbidden": true
+  },
+  "non_claims": {
+    "real_provider_tee_pass": false,
+    "human_agi_reasoning": false,
+    "gsm8k_mmlu_primary": false,
+    "seed_scale_logic_is_lab_only": true,
+    "emission_weight_crown": false
+  }
+}
+```
+
+Preferred evidence filename: `complete_view.v1.3.json` under mission `evidence/official-comparison/complete-view-v1-3/`. Product module: `prism_challenge.evaluator.complete_view` (panel builders for filled probes land in later reason-logic features).
+
+### 16.6 Relation to §15 Complete View v1.2
+
+Section 15 remains the complete.v1.2 identity and A→Z residual matrix description. v1.3 **adds** P10 and the reasoning multi-axis without erasing v1.2 machine identity strings as history. Operators and remesure runners may still produce or read v1.2 JSON as historical inputs; new primary identity for reasoning expansion is **v1.3**.
+
+---
+
+*End of Prism Official Comparison Protocol v1 (+ multimetric scorecard annex v1.1 + Complete View v1.2 + Complete View v1.3 reasoning/logic).*

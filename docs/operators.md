@@ -270,21 +270,23 @@ jq '{protocol_id, scorecard_id, scorecard, ranking, real_provider_tee, honesty_n
   dist/official-compare/prism_compare_report.v1.json
 ```
 
-### Complete View v1.2 (operators pointer)
+### Complete View v1.3 (operators pointer)
 
-MAX A→Z machine dashboard on Protocol v1: **`schema=complete_view.v1.2`**, **`scorecard_id=multimetric.complete.v1.2`**. Historical multimetric.v1.1 annex stays valid. Full matrix, multi-axis comparison (per-axis leads, disagreement matrix, expanded **TIE_POLAR**, **no opaque weighted sole crown**), and non-claims: [Official Comparison §15](official-comparison.md).
+MAX A→Z machine dashboard on Protocol v1: **`schema=complete_view.v1.3`**, **`scorecard_id=multimetric.complete.v1.3`**. Historical **`multimetric.complete.v1.2`** and multimetric.v1.1 annex stay valid. Full matrix, multi-axis comparison (per-axis leads including **reasoning**, disagreement matrix, expanded **TIE_POLAR**, **no opaque weighted sole crown**), **P10_reasoning_logic** synthetic probes (not GSM8K/MMLU primary; seed-scale lab comparison only, not human AGI), and non-claims: [Official Comparison §16](official-comparison.md) (plus §15 for v1.2 history).
 
 | Operator note | Detail |
 | --- | --- |
-| Document | Prefer single machine file `complete_view.v1.2.json` reconciling panels P0–P9 + `comparison` |
-| Rank | Multi-axis object only; scientific axis disagreements → `TIE_POLAR` / `crown_allowed=false` |
+| Document | Prefer single machine file `complete_view.v1.3.json` reconciling panels P0–P10 + `comparison` |
+| Rank | Multi-axis object only; scientific axis disagreements (including short_gen vs reasoning) → `TIE_POLAR` / `crown_allowed=false` |
+| Reasoning panel | `P10_reasoning_logic` closed-acc + forced CE + chance baselines; suite_mean shell until probe suite fills |
+| Honesty | Seed-scale synthetic logic is **lab/architecture comparison only**; not human AGI; not emission crown |
 | Suites not-run | null + reason; never invent metrics |
 | TEE / ops | REAL-PROVIDER TEE **BLOCKED**; no live Swarm mutate; no `set_weights`; always-terminate paid remesure pods |
 | Product module | `prism_challenge.evaluator.complete_view` |
 
 ```bash
-jq '{schema, scorecard_id, historical_scorecard_id, comparison, real_provider_tee, non_claims}' \
-  complete_view.v1.2.json
+jq '{schema, scorecard_id, historical_scorecard_id, comparison, real_provider_tee, non_claims, p10: .panels.P10_reasoning_logic.status}' \
+  complete_view.v1.3.json
 ```
 
 ## Lab GPU short/long Official Comparison (host rank of remote CUDA)
