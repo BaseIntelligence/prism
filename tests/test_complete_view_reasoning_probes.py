@@ -490,9 +490,7 @@ def test_score_probe_with_logits_multihop_not_first_byte_collapsed() -> None:
         outcomes.append(sc.accuracy == 1.0)
 
     assert all(outcomes)
-    assert all(
-        m in {"forced_nll_rank", "forced_nll_rank_collapsed_fallback"} for m in methods
-    )
+    assert all(m in {"forced_nll_rank", "forced_nll_rank_collapsed_fallback"} for m in methods)
     # Suite-level path also reports multi-token method and no first-byte collapse.
     suite = score_probe_with_logits(
         trials,

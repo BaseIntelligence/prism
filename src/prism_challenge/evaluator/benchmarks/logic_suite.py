@@ -1086,9 +1086,7 @@ def score_probe_with_logits(
 
     multi_token_candidates = not _answers_are_single_token(trials, enc_seq)
     first_id_collision = _candidates_share_first_id(trials, enc_seq)
-    use_multitoken = nll_fn is not None and (
-        multi_token_candidates or first_id_collision
-    )
+    use_multitoken = nll_fn is not None and (multi_token_candidates or first_id_collision)
 
     ce_vals: list[float] | None = None
     detail_method: str
@@ -1117,9 +1115,7 @@ def score_probe_with_logits(
         if any(len(set(cs)) < len(cs) for cs in cand_sets):
             if nll_fn is None:
                 # Cannot rank freely; mark all wrong rather than invent perfect.
-                preds = [
-                    next((c for c in t.candidates if c != t.gold), "__x__") for t in trials
-                ]
+                preds = [next((c for c in t.candidates if c != t.gold), "__x__") for t in trials]
                 detail_method = "collapsed_ids_abstain"
             else:
                 preds = closed_choice_rank_preds(trials, nll_fn=nll_fn, encode=enc_seq)
