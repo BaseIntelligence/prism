@@ -531,7 +531,16 @@ class PrismSettings(ChallengeSettings):
     base_eval_gpu_server: str | None = None
     base_eval_gpu_device_ids: tuple[str, ...] = ()
     base_eval_task: str = "architecture"
-    base_eval_artifact_root: Path = Path("/tmp/prism-eval-artifacts")
+    # Default onto the persistent `/data` volume (same family as TMPDIR=/data/tmp in
+    # Compose). Hardcoding `/tmp/...` breaks on locked-down `/tmp` (uid 1000 cannot
+    # create `/tmp/prism-eval-artifacts` → admission/eval fails with EACCES).
+    base_eval_artifact_root: Path = Field(
+        default=Path("/data/tmp/prism-eval-artifacts"),
+        validation_alias=AliasChoices(
+            "PRISM_BASE_EVAL_ARTIFACT_ROOT",
+            "CHALLENGE_BASE_EVAL_ARTIFACT_ROOT",
+        ),
+    )
     # Persistent dir for the COMPLETE evaluated-agent (GPU training-run) stdout/stderr, written per
     # attempt so the full run stream survives the destroyed eval container (the broker returns up
     # to ~5MB per stream, which prism otherwise only parses for metrics / failure detail and then

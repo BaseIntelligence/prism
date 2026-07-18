@@ -85,6 +85,22 @@ def test_settings_still_accept_field_names() -> None:
     assert settings.docker_broker_url == "http://broker"
 
 
+def test_base_eval_artifact_root_defaults_to_data_tmp(monkeypatch) -> None:
+    """Compose locks down /tmp; default must land under writable /data/tmp."""
+    monkeypatch.delenv("PRISM_BASE_EVAL_ARTIFACT_ROOT", raising=False)
+    monkeypatch.delenv("CHALLENGE_BASE_EVAL_ARTIFACT_ROOT", raising=False)
+    settings = PrismSettings()
+    assert settings.base_eval_artifact_root == Path("/data/tmp/prism-eval-artifacts")
+    assert not str(settings.base_eval_artifact_root).startswith("/tmp/")
+
+
+def test_base_eval_artifact_root_env_override(monkeypatch, tmp_path: Path) -> None:
+    target = tmp_path / "custom-artifacts"
+    monkeypatch.setenv("PRISM_BASE_EVAL_ARTIFACT_ROOT", str(target))
+    settings = PrismSettings()
+    assert settings.base_eval_artifact_root == target
+
+
 def test_proof_runtime_environment_is_not_treated_as_settings(monkeypatch) -> None:
     for index, name in enumerate(PROVIDER_ENV_KEYS):
         monkeypatch.setenv(name, f"runtime-metadata-{index}")
