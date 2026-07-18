@@ -123,7 +123,8 @@ def test_prequential_bpb_scoring_is_documented() -> None:
 
 
 def test_official_comparison_protocol_v1_is_documented() -> None:
-    """Official Comparison Protocol v1: held-out primary, bpb secondary, honest hooks, GPU deferred."""
+    """Official Comparison Protocol v1: held-out primary, bpb secondary,
+    honest hooks, GPU deferred."""
     protocol = read_doc("docs/official-comparison.md")
     lower = protocol.lower()
 
@@ -139,7 +140,9 @@ def test_official_comparison_protocol_v1_is_documented() -> None:
     assert "train" in lower
     assert "iter_train_batches" in protocol
     assert "never authoritative" in lower or "non-authoritative" in lower
-    assert "miner" in lower and ("self-report" in lower or "self report" in lower or "reported" in lower)
+    assert "miner" in lower and (
+        "self-report" in lower or "self report" in lower or "reported" in lower
+    )
     assert "real-provider" in lower
     assert "orthogonal" in lower
     assert "deferred" in lower and ("nvidia" in lower or "gpu" in lower)
@@ -160,7 +163,11 @@ def test_official_comparison_scorecard_v1_1_is_documented() -> None:
     assert "multimetric.v1.1" in protocol
     assert "scorecard_id" in lower
     assert "prism_official_compare.v1" in lower
-    assert "multi-metric scorecard" in lower or "multimetric scorecard" in lower or "scorecard annex" in lower
+    assert (
+        "multi-metric scorecard" in lower
+        or "multimetric scorecard" in lower
+        or "scorecard annex" in lower
+    )
     assert "not a full v2" in lower or "sole weighted crown" in lower
     # Tiers V/P/S/R + A→Z metric catalogue anchors.
     assert "validity" in lower
@@ -309,7 +316,8 @@ def test_train_series_telemetry_protocol_is_documented() -> None:
 
 
 def test_train_series_scientific_vs_emission_grade_is_documented() -> None:
-    """Scientific multi-axis Official grade vs emission bpb + residual series (VAL-TELE-012, VAL-TELE-010)."""
+    """Scientific multi-axis Official grade vs emission bpb + residual series
+    (VAL-TELE-012, VAL-TELE-010)."""
     protocol = read_doc("docs/official-comparison.md")
     scoring = read_doc("docs/scoring.md")
     operators = read_doc("docs/operators.md")
@@ -319,7 +327,8 @@ def test_train_series_scientific_vs_emission_grade_is_documented() -> None:
     op_lower = operators.lower()
     sub_lower = submissions.lower()
 
-    # VAL-TELE-012: multi-axis Official/Complete View = scientific miner grade; emission bpb-primary.
+    # VAL-TELE-012: multi-axis Official/Complete View = scientific miner grade;
+    # emission bpb-primary.
     assert "scientific" in lower
     assert "official comparison" in lower or "complete view" in lower
     assert "multi-axis" in lower or "multi axis" in lower
@@ -342,7 +351,8 @@ def test_train_series_scientific_vs_emission_grade_is_documented() -> None:
     assert "emission" in sub_lower
     assert "bpb-primary" in sub_lower or ("bpb" in sub_lower and "primary" in sub_lower)
 
-    # VAL-TELE-010: series residual only — visibility + sample-eff/stability densify; never sole primary.
+    # VAL-TELE-010: series residual only — visibility + sample-eff/stability densify;
+    # never sole primary.
     assert "sample-eff" in lower or "sample efficiency" in lower or "sample_eff" in lower
     assert "stability" in lower
     assert "residual" in lower
@@ -350,7 +360,11 @@ def test_train_series_scientific_vs_emission_grade_is_documented() -> None:
     assert "not" in lower or "never" in lower
 
     assert "residual" in scoring_lower or "never sole" in scoring_lower
-    assert "sample-eff" in scoring_lower or "sample-efficiency" in scoring_lower or "stability" in scoring_lower
+    assert (
+        "sample-eff" in scoring_lower
+        or "sample-efficiency" in scoring_lower
+        or "stability" in scoring_lower
+    )
     assert "residual" in op_lower or "never sole" in op_lower
     assert "sample-eff" in op_lower or "sample-efficiency" in op_lower or "stability" in op_lower
     assert "residual" in sub_lower or "never sole" in sub_lower
