@@ -243,7 +243,16 @@ def resolve_crown_status_transition(
     - Confirmed crowns stay confirmed when a later eligible score arrives on the same pin;
       a failed promote on a confirmed/pinned tooth revokes.
     """
-    prev = str(previous_status or CROWN_STATUS_NONE).strip().lower() or CROWN_STATUS_NONE
+    prev_raw = str(previous_status or CROWN_STATUS_NONE).strip().lower() or CROWN_STATUS_NONE
+    valid_prev: set[str] = {
+        CROWN_STATUS_NONE,
+        CROWN_STATUS_PROVISIONAL,
+        CROWN_STATUS_CONFIRMED,
+        CROWN_STATUS_REVOKED,
+    }
+    prev: CrownStatus = (
+        prev_raw if prev_raw in valid_prev else CROWN_STATUS_NONE  # type: ignore[assignment]
+    )
     stage = normalize_param_ladder_stage(incoming_stage)
     pin = str(incoming_pin or "").strip()
     prev_pin = str(previous_pin or "").strip()
@@ -251,22 +260,24 @@ def resolve_crown_status_transition(
 
     if stage == STAGE_EXPLORE:
         if not score_valid:
-            if prev in {CROWN_STATUS_PROVISIONAL, CROWN_STATUS_CONFIRMED}:
-                return prev  # type: ignore[return-value]
+            if prev in (CROWN_STATUS_PROVISIONAL, CROWN_STATUS_CONFIRMED):
+                return prev
             return CROWN_STATUS_NONE
         return CROWN_STATUS_PROVISIONAL
 
     # promote stage
     if not score_valid:
-        if same_pin and prev in {
+        if same_pin and prev in (
             CROWN_STATUS_PROVISIONAL,
             CROWN_STATUS_CONFIRMED,
             CROWN_STATUS_NONE,
-        }:
+        ):
             return CROWN_STATUS_REVOKED
         if prev == CROWN_STATUS_CONFIRMED:
             return CROWN_STATUS_CONFIRMED
-        return CROWN_STATUS_REVOKED if same_pin else prev  # type: ignore[return-value]
+        if same_pin:
+            return CROWN_STATUS_REVOKED
+        return prev
 
     # valid promote
     if same_pin and prev == CROWN_STATUS_PROVISIONAL:
@@ -276,7 +287,9 @@ def resolve_crown_status_transition(
             promote_valid=True,
             promote_beats_provisional=score_beats_previous,
         )
-        return CROWN_STATUS_CONFIRMED if decision == "confirm" else CROWN_STATUS_REVOKED
+        if decision == "confirm":
+            return CROWN_STATUS_CONFIRMED
+        return CROWN_STATUS_REVOKED
     if same_pin and prev == CROWN_STATUS_CONFIRMED:
         # Later promote on same pin keeps confirmed when still competitive.
         if score_beats_previous is False:
