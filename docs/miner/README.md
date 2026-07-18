@@ -24,7 +24,10 @@ is described in [Scoring](../scoring.md).
 
 ## Miner Flow
 
-1. Build a two-script bundle that follows the PRISM contract (novel architectures welcome under AST + ladder).
+1. Build a two-script bundle that follows the PRISM contract. Novel `nn.Module` architectures
+   under AST + dual ladder are **expected**, not second-class (Transformer, pure-torch SSM,
+   LightDeepLoop-class looped depth when the forward contract holds, hybrids, …). Seeds
+   `tiny-1m` / `mamba-tiny` are starting shapes only.
 2. Sign and submit it with your miner hotkey.
 3. PRISM runs the static sandbox and **deterministic admission** (similarity / anti-cheat). There is no
    LLM hard gate.

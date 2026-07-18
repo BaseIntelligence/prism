@@ -56,6 +56,12 @@ primary_S = mean_k heldout_delta(S; seed_k)     # higher better
 anti-memorization and step-0 multipliers, so the leaderboard's descending order ranks better
 generalizing learners first.
 
+Emission scoring is **architecture-agnostic**: the same fold runs for every admitted
+`nn.Module` that clears AST + dual param ladder. There are **no family-specific emission
+shortcuts** (Transformer / pure-torch SSM / looped-depth / novel hybrids receive the same
+held-out primary + bpb secondary path). Lab seeds `tiny-1m` and `mamba-tiny` are default
+exploration shapes only — not privileged emission families.
+
 ## Emission Secondary: Prequential Bits-Per-Byte
 
 During the re-execution, the challenge feeds the model fresh, single-pass batches from the locked train

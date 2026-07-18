@@ -180,11 +180,7 @@ def test_emission_vs_research_multimetric_surfaces_are_honest() -> None:
     # Multimetric / Complete View = published scientific / research grade, not silent emission.
     assert "multimetric.v1.1" in combined or "multimetric" in lower
     assert "complete view" in lower or "complete_view" in lower
-    assert (
-        "research grade" in lower
-        or "scientific" in lower
-        or "published research" in lower
-    )
+    assert "research grade" in lower or "scientific" in lower or "published research" in lower
     assert (
         "silently replace" in lower
         or "do not silently" in lower
@@ -196,6 +192,37 @@ def test_emission_vs_research_multimetric_surfaces_are_honest() -> None:
     # Must not claim multimetric is the emission crown path via bpb-primary emission language.
     assert "bpb-primary" not in scoring.lower()
     assert "bpb-primary" not in overview.lower()
+
+
+def test_open_arch_norm_is_documented() -> None:
+    """VAL-RESLAB-010: novel nn.Module expected; seeds pack; no family emission shortcuts."""
+    readme = read_doc("README.md")
+    overview = read_doc("docs/overview.md")
+    submissions = read_doc("docs/submissions.md")
+    scoring = read_doc("docs/scoring.md")
+    miner = read_doc("docs/miner/README.md")
+    combined = f"{readme}\n{overview}\n{submissions}\n{scoring}\n{miner}"
+    lower = combined.lower()
+
+    # Open-arch expected, not second-class.
+    assert "nn.module" in lower or "torch.nn.module" in lower
+    assert (
+        "expected" in lower
+        or "first-class" in lower
+        or "welcome" in lower
+        or "not second-class" in lower
+    )
+    assert "new architecture" in lower or "new architectures" in lower or "novel" in lower
+    assert "deeploop" in lower or "looped" in lower
+    assert "ast" in lower
+    # Default seeds remain a first stop under explore 124M.
+    assert "tiny-1m" in lower or "transformer-tiny-1m" in lower
+    assert "mamba-tiny" in lower or "mamba-tiny-1m" in lower
+    # Architecture-agnostic emission path; no family-specific shortcuts.
+    assert "architecture-agnostic" in lower or "architecture agnostic" in lower
+    scoring_lower = scoring.lower()
+    assert "architecture-agnostic" in scoring_lower or "architecture agnostic" in scoring_lower
+    assert "family-specific" in scoring_lower or "no family" in scoring_lower
 
 
 def test_official_comparison_protocol_v1_is_documented() -> None:
