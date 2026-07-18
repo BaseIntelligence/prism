@@ -30,8 +30,8 @@ kendall_tau_min: 0.4
 arch_weight: 0.7
 recipe_weight: 0.3
 component_rewards_enabled: true
-architecture_reward_weight: 0.65
-training_reward_weight: 0.35
+architecture_reward_weight: 0.50
+training_reward_weight: 0.50
 architecture_improvement_min_delta_abs: 0.01
 architecture_improvement_min_delta_rel: 0.005
 architecture_transfer_min_delta_abs: 0.08

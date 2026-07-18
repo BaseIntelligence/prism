@@ -671,21 +671,39 @@ class PrismRepository:
         The crown is persistent and NOT epoch-scoped: ranking by ``q_arch_best DESC`` then
         earliest-created then id makes the all-time best hold the crown until a strictly higher
         score beats it (the tiebreak keeps the crown stable across epochs).
+
+        VAL-RESLAB-004/005: revoked provisional crowns are excluded from the emission map so a
+        dead promote failure cannot keep raw-weight share. ``crown_status`` of ``none`` (legacy)
+        remains eligible for compatibility with pre-ladder rows.
         """
         async with self.database.connect() as conn:
             rows = await conn.execute_fetchall(
-                "SELECT id, owner_hotkey, q_arch_best, family_hash FROM architecture_families "
+                "SELECT id, owner_hotkey, q_arch_best, family_hash, "
+                "COALESCE(crown_status, 'none') AS crown_status, "
+                "COALESCE(param_ladder_stage, 'explore') AS param_ladder_stage, "
+                "COALESCE(package_pin, '') AS package_pin "
+                "FROM architecture_families "
+                "WHERE COALESCE(crown_status, 'none') IN ('none', 'provisional', 'confirmed') "
                 "ORDER BY q_arch_best DESC, created_at ASC, id ASC LIMIT 1",
             )
         row_list = list(rows)
         return dict(row_list[0]) if row_list else None
 
     async def best_training_variant(self, architecture_id: str) -> dict[str, object] | None:
-        """Return the single best training variant for ``architecture_id``, or ``None`` if none."""
+        """Return the single best training variant for ``architecture_id``, or ``None`` if none.
+
+        Revoked crowns are excluded so dead provisional training winners do not keep training
+        share after a failed/lost promote (VAL-RESLAB-005).
+        """
         async with self.database.connect() as conn:
             rows = await conn.execute_fetchall(
-                "SELECT id, owner_hotkey, q_recipe, is_current_best FROM training_variants "
+                "SELECT id, owner_hotkey, q_recipe, is_current_best, "
+                "COALESCE(crown_status, 'none') AS crown_status, "
+                "COALESCE(param_ladder_stage, 'explore') AS param_ladder_stage, "
+                "COALESCE(package_pin, '') AS package_pin "
+                "FROM training_variants "
                 "WHERE architecture_id=? "
+                "AND COALESCE(crown_status, 'none') IN ('none', 'provisional', 'confirmed') "
                 "ORDER BY is_current_best DESC, q_recipe DESC, created_at ASC, id ASC LIMIT 1",
                 (architecture_id,),
             )

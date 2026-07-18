@@ -197,10 +197,12 @@ RUNTIME_CONFIG_KEYS = frozenset(RuntimePolicy.model_fields)
 
 
 def runtime_policy_defaults(settings: PrismSettings) -> dict[str, Any]:
+    # VAL-RESLAB-008: architecture/training emission pools default 0.50/0.50 consistently
+    # with get_weights + PrismSettings.architecture_reward_weight / training_reward_weight.
     return {
         "reward_pools": {
-            "architecture": 0.60,
-            "training": 0.40,
+            "architecture": 0.50,
+            "training": 0.50,
         },
         "score_weights": {
             "final_architecture_weight": settings.arch_weight,

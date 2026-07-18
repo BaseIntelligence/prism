@@ -119,8 +119,8 @@ async def test_get_weights_splits_between_distinct_owners(tmp_path: Path) -> Non
 
     weights = await get_weights(repository, EPOCH_SECONDS)
 
-    assert weights["arch-owner"] == pytest.approx(0.60)
-    assert weights["train-owner"] == pytest.approx(0.40)
+    assert weights["arch-owner"] == pytest.approx(0.50)
+    assert weights["train-owner"] == pytest.approx(0.50)
     assert sum(weights.values()) == pytest.approx(1.0)
     # Exactly one positive share per hotkey after renormalization.
     assert all(weight > 0.0 for weight in weights.values())
@@ -224,8 +224,8 @@ async def test_get_weights_crown_is_global_not_duplicate_owners(tmp_path: Path) 
     weights = await get_weights(repository, EPOCH_SECONDS)
 
     assert set(weights) == {"old-owner", "old-train"}
-    assert weights["old-owner"] == pytest.approx(0.60)
-    assert weights["old-train"] == pytest.approx(0.40)
+    assert weights["old-owner"] == pytest.approx(0.50)
+    assert weights["old-train"] == pytest.approx(0.50)
     assert "new-owner" not in weights
     assert "new-train" not in weights
 

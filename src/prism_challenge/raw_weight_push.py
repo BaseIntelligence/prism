@@ -548,8 +548,8 @@ def build_weights_loader(
     *,
     repository: Any,
     epoch_seconds: int,
-    architecture_weight: float = 0.60,
-    training_weight: float = 0.40,
+    architecture_weight: float = 0.50,
+    training_weight: float = 0.50,
 ) -> Callable[[], Any]:
     async def _load() -> dict[str, float]:
         return await get_weights(
@@ -626,8 +626,9 @@ def maybe_build_push_client_from_settings(
     if not token:
         return None
     epoch_seconds = int(getattr(settings, "epoch_seconds", 3600) or 3600)
-    arch = float(getattr(settings, "architecture_reward_weight", 0.60))
-    train = float(getattr(settings, "training_reward_weight", 0.40))
+    # VAL-RESLAB-008: raw_weight_push settings defaults match get_weights 0.50/0.50.
+    arch = float(getattr(settings, "architecture_reward_weight", 0.50))
+    train = float(getattr(settings, "training_reward_weight", 0.50))
     interval_hint = float(getattr(settings, "raw_weight_push_interval_seconds", 30.0))
 
     def _epoch() -> int:
@@ -667,4 +668,3 @@ __all__ = [
     "maybe_build_push_client_from_settings",
     "run_raw_weight_push_loop",
 ]
-

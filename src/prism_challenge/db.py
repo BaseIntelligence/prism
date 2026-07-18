@@ -97,7 +97,10 @@ SCHEMA = (
     "q_arch_best REAL NOT NULL, display_name TEXT, "
     "created_at TEXT NOT NULL, updated_at TEXT NOT NULL,"
     "canonical_graph_hash TEXT NOT NULL DEFAULT '', canonical_graph_path TEXT,"
-    "canonical_metadata_path TEXT, canonical_mermaid_path TEXT, canonical_version_id TEXT);"
+    "canonical_metadata_path TEXT, canonical_mermaid_path TEXT, canonical_version_id TEXT,"
+    "crown_status TEXT NOT NULL DEFAULT 'none',"
+    "param_ladder_stage TEXT NOT NULL DEFAULT 'explore',"
+    "package_pin TEXT NOT NULL DEFAULT '');"
     "CREATE INDEX IF NOT EXISTS idx_architecture_families_owner "
     "ON architecture_families(owner_hotkey);"
     "CREATE TABLE IF NOT EXISTS training_variants ("
@@ -105,7 +108,11 @@ SCHEMA = (
     "owner_hotkey TEXT NOT NULL, submission_id TEXT NOT NULL, q_recipe REAL NOT NULL,"
     "metric_mean REAL NOT NULL, metric_std REAL NOT NULL,"
     "is_current_best INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL,"
-    "updated_at TEXT NOT NULL, UNIQUE(architecture_id, training_hash));"
+    "updated_at TEXT NOT NULL,"
+    "crown_status TEXT NOT NULL DEFAULT 'none',"
+    "param_ladder_stage TEXT NOT NULL DEFAULT 'explore',"
+    "package_pin TEXT NOT NULL DEFAULT '',"
+    "UNIQUE(architecture_id, training_hash));"
     "CREATE INDEX IF NOT EXISTS idx_training_variants_arch "
     "ON training_variants(architecture_id, is_current_best);"
     "CREATE TABLE IF NOT EXISTS architecture_versions ("
@@ -218,7 +225,7 @@ REQUIRED_TABLES = frozenset(
 
 # Declared SQLite runtime policy used on every real connection
 # (VAL-WEIGHT-092 / VAL-GATE-043).
-PRISM_SCHEMA_REVISION = "prism-schema.v3"
+PRISM_SCHEMA_REVISION = "prism-schema.v4"
 TEE_NONCE_LEDGER_DDL = (
     "CREATE TABLE IF NOT EXISTS tee_nonce_ledger ("
     "nonce_digest TEXT PRIMARY KEY,"
@@ -379,6 +386,10 @@ async def _run_migrations(conn: aiosqlite.Connection) -> None:
             "canonical_metadata_path": "TEXT",
             "canonical_mermaid_path": "TEXT",
             "canonical_version_id": "TEXT",
+            # VAL-RESLAB-004/005: provisional/promote crown durability.
+            "crown_status": "TEXT NOT NULL DEFAULT 'none'",
+            "param_ladder_stage": "TEXT NOT NULL DEFAULT 'explore'",
+            "package_pin": "TEXT NOT NULL DEFAULT ''",
         },
     )
     await _ensure_columns(
@@ -389,6 +400,9 @@ async def _run_migrations(conn: aiosqlite.Connection) -> None:
             "training_graph_hash": "TEXT NOT NULL DEFAULT ''",
             "training_metadata_path": "TEXT",
             "official_run_manifest_path": "TEXT",
+            "crown_status": "TEXT NOT NULL DEFAULT 'none'",
+            "param_ladder_stage": "TEXT NOT NULL DEFAULT 'explore'",
+            "package_pin": "TEXT NOT NULL DEFAULT ''",
         },
     )
 

@@ -237,8 +237,8 @@ def test_maybe_build_push_client_requires_master_and_token(database: Database) -
         worker_plane = type("WP", (), {"master_base_url": None})()
         slug = SLUG
         epoch_seconds = 3600
-        architecture_reward_weight = 0.6
-        training_reward_weight = 0.4
+        architecture_reward_weight = 0.5
+        training_reward_weight = 0.5
         raw_weight_push_interval_seconds = 5.0
 
         def internal_token(self) -> str:
@@ -259,4 +259,3 @@ def test_maybe_build_push_client_requires_master_and_token(database: Database) -
     )
     assert client is not None
     assert client.master_base_url == "http://master.test"
-

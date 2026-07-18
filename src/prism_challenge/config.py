@@ -400,8 +400,9 @@ class PrismSettings(ChallengeSettings):
     arch_weight: float = Field(default=0.7, ge=0, le=1)
     recipe_weight: float = Field(default=0.3, ge=0, le=1)
     component_rewards_enabled: bool = True
-    architecture_reward_weight: float = Field(default=0.65, ge=0, le=1)
-    training_reward_weight: float = Field(default=0.35, ge=0, le=1)
+    # VAL-RESLAB-008: two-tier ownership defaults 0.50/0.50 (kill 0.65/0.35 drift).
+    architecture_reward_weight: float = Field(default=0.50, ge=0, le=1)
+    training_reward_weight: float = Field(default=0.50, ge=0, le=1)
     architecture_improvement_min_delta_abs: float = Field(default=0.01, ge=0)
     architecture_improvement_min_delta_rel: float = Field(default=0.005, ge=0)
     architecture_transfer_min_delta_abs: float = Field(default=0.08, ge=0)

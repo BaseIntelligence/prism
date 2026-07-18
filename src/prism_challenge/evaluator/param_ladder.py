@@ -174,8 +174,8 @@ def promote_path_decision(
     - ``revoke``: promote-stage invalid or loses fair compare vs provisional
     - ``ineligible``: stages are not the expected explore→promote pair
 
-    Weights feature may expand this into durable crown transitions; admission/types
-    tests lock the decision labels here.
+    Durable crown transitions use :func:`resolve_crown_status_transition` so weights /
+    ``get_weights`` never keep a revoked provisional winner.
     """
     provisional = normalize_param_ladder_stage(provisional_stage)
     promote = normalize_param_ladder_stage(promote_stage)
@@ -186,6 +186,110 @@ def promote_path_decision(
     if promote_beats_provisional is False:
         return "revoke"
     return "confirm"
+
+
+# Durable crown_status values stored on architecture_families / training_variants.
+CROWN_STATUS_NONE = "none"
+CROWN_STATUS_PROVISIONAL = "provisional"
+CROWN_STATUS_CONFIRMED = "confirmed"
+CROWN_STATUS_REVOKED = "revoked"
+
+CrownStatus = Literal["none", "provisional", "confirmed", "revoked"]
+
+
+def resolve_package_pin(
+    *,
+    family_hash: str,
+    package_pin: str | None = None,
+    architecture_source_hash: str | None = None,
+) -> str:
+    """Stable package/family pin used to bind explore provisional → promote confirm/revoke.
+
+    Prefer an explicit package pin (source/bundle digest). Fall back to family_hash so same
+    architecture family promotes under the locked pin rules even when a separate package
+    digest is unavailable.
+    """
+    for candidate in (package_pin, architecture_source_hash, family_hash):
+        if candidate is None:
+            continue
+        text = str(candidate).strip()
+        if text:
+            return text
+    return str(family_hash)
+
+
+def resolve_crown_status_transition(
+    *,
+    previous_status: str | None,
+    previous_stage: ParamLadderStage | str | None,
+    previous_pin: str | None,
+    incoming_stage: ParamLadderStage | str,
+    incoming_pin: str,
+    score_valid: bool,
+    score_beats_previous: bool | None = None,
+) -> CrownStatus:
+    """Durable crown_status transition for one family/variant row (VAL-RESLAB-004/005).
+
+    Rules:
+    - Ineligible / non-positive scores never install a crown (stay previous, or ``none``).
+    - Explore + valid → ``provisional`` (may populate weights map).
+    - Promote + valid + same package/family pin as a provisional crown:
+        - confirm when promote wins/ties fair compare (default when compare is None or True)
+        - revoke when promote loses fair compare
+    - Promote invalid (or crown-score 0) against matching provisional pin → ``revoked``.
+    - Promote with no prior provisional crown may still reverse a dead provisional via pin
+      match; without a matching pin, a valid promote installs ``confirmed`` for durable
+      promote-first packages (no dead provisional left behind).
+    - Confirmed crowns stay confirmed when a later eligible score arrives on the same pin;
+      a failed promote on a confirmed/pinned tooth revokes.
+    """
+    prev = str(previous_status or CROWN_STATUS_NONE).strip().lower() or CROWN_STATUS_NONE
+    stage = normalize_param_ladder_stage(incoming_stage)
+    pin = str(incoming_pin or "").strip()
+    prev_pin = str(previous_pin or "").strip()
+    same_pin = bool(pin) and bool(prev_pin) and pin == prev_pin
+
+    if stage == STAGE_EXPLORE:
+        if not score_valid:
+            if prev in {CROWN_STATUS_PROVISIONAL, CROWN_STATUS_CONFIRMED}:
+                return prev  # type: ignore[return-value]
+            return CROWN_STATUS_NONE
+        return CROWN_STATUS_PROVISIONAL
+
+    # promote stage
+    if not score_valid:
+        if same_pin and prev in {
+            CROWN_STATUS_PROVISIONAL,
+            CROWN_STATUS_CONFIRMED,
+            CROWN_STATUS_NONE,
+        }:
+            return CROWN_STATUS_REVOKED
+        if prev == CROWN_STATUS_CONFIRMED:
+            return CROWN_STATUS_CONFIRMED
+        return CROWN_STATUS_REVOKED if same_pin else prev  # type: ignore[return-value]
+
+    # valid promote
+    if same_pin and prev == CROWN_STATUS_PROVISIONAL:
+        decision = promote_path_decision(
+            provisional_stage=STAGE_EXPLORE,
+            promote_stage=STAGE_PROMOTE,
+            promote_valid=True,
+            promote_beats_provisional=score_beats_previous,
+        )
+        return CROWN_STATUS_CONFIRMED if decision == "confirm" else CROWN_STATUS_REVOKED
+    if same_pin and prev == CROWN_STATUS_CONFIRMED:
+        # Later promote on same pin keeps confirmed when still competitive.
+        if score_beats_previous is False:
+            return CROWN_STATUS_REVOKED
+        return CROWN_STATUS_CONFIRMED
+    # No prior provisional, or different pin: durable promote installs confirmed when valid.
+    return CROWN_STATUS_CONFIRMED
+
+
+def crown_status_is_weight_eligible(status: str | None) -> bool:
+    """True when crown_status may populate the emission weight map."""
+    key = str(status or CROWN_STATUS_NONE).strip().lower() or CROWN_STATUS_NONE
+    return key in {CROWN_STATUS_NONE, CROWN_STATUS_PROVISIONAL, CROWN_STATUS_CONFIRMED}
 
 
 def ladder_labels(

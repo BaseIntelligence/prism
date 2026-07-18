@@ -992,10 +992,12 @@ class PrismWorker:
             STAGE_EXPLORE,
             ladder_labels,
             normalize_param_ladder_stage,
+            resolve_package_pin,
         )
 
         stage_raw = None
         model_params_metric = None
+        package_pin_metric = None
         for block_key in ("compute", "metrics", "score"):
             block = manifest.get(block_key) if isinstance(manifest, dict) else None
             if not isinstance(block, dict):
@@ -1006,6 +1008,12 @@ class PrismWorker:
                 mp = block.get("model_params")
                 if isinstance(mp, int) and not isinstance(mp, bool) and mp >= 0:
                     model_params_metric = mp
+            if package_pin_metric is None:
+                for pin_key in ("package_pin", "architecture_source_hash", "source_hash"):
+                    pin_val = block.get(pin_key)
+                    if isinstance(pin_val, str) and pin_val.strip():
+                        package_pin_metric = pin_val.strip()
+                        break
         ctx_stage = getattr(self.ctx, "param_ladder_stage", None)
         stage = normalize_param_ladder_stage(stage_raw or ctx_stage or STAGE_EXPLORE)
         ctx_cap = getattr(self.ctx, "max_parameters", None)
@@ -1016,6 +1024,10 @@ class PrismWorker:
             score_valid=crown_eligible,
             max_parameters=stage_cap,
         )
+        package_pin = resolve_package_pin(
+            family_hash=arch_hash,
+            package_pin=package_pin_metric,
+        )
         metrics_payload.update(
             {
                 "param_ladder_stage": labels["param_ladder_stage"],
@@ -1023,6 +1035,7 @@ class PrismWorker:
                 "provisional_crown_eligible": bool(
                     labels["provisional_crown_eligible"] and crown_eligible
                 ),
+                "package_pin": package_pin,
             }
         )
         if model_params_metric is not None:
@@ -1068,6 +1081,9 @@ class PrismWorker:
                 final_score=crown_score_value,
                 display_name=name,
                 now=now,
+                param_ladder_stage=stage,
+                package_pin=package_pin,
+                crown_score_valid=crown_eligible,
             )
             await self._upsert_training_variant(
                 conn,
@@ -1077,6 +1093,9 @@ class PrismWorker:
                 submission_id=submission_id,
                 final_score=crown_score_value,
                 now=now,
+                param_ladder_stage=stage,
+                package_pin=package_pin,
+                crown_score_valid=crown_eligible,
             )
             await self._persist_submission_curve(
                 conn,
@@ -1099,38 +1118,101 @@ class PrismWorker:
         final_score: float,
         display_name: str | None,
         now: str,
+        param_ladder_stage: str = "explore",
+        package_pin: str = "",
+        crown_score_valid: bool = True,
     ) -> str:
         """Upsert the family keyed by ``family_hash``; returns the stable ``architecture_id``.
 
         Owner / owner_submission_id / display_name stay stable to the family-creating submission;
         the canonical (best) submission + ``q_arch_best`` advance only when a higher final_score
-        arrives.
+        arrives. Crown status follows the dual ladder
+        (explore provisional → promote confirm/revoke).
         """
+        from .evaluator.param_ladder import (
+            CROWN_STATUS_NONE,
+            resolve_crown_status_transition,
+            resolve_package_pin,
+        )
+
+        pin = resolve_package_pin(family_hash=family_hash, package_pin=package_pin or None)
         rows = await conn.execute_fetchall(
-            "SELECT id, q_arch_best FROM architecture_families WHERE family_hash=?",
+            "SELECT id, q_arch_best, "
+            "COALESCE(crown_status, 'none') AS crown_status, "
+            "COALESCE(param_ladder_stage, 'explore') AS param_ladder_stage, "
+            "COALESCE(package_pin, '') AS package_pin "
+            "FROM architecture_families WHERE family_hash=?",
             (family_hash,),
         )
         if rows:
             row = list(rows)[0]
             architecture_id = str(row[0])
-            if final_score > float(row[1]):
+            previous_score = float(row[1])
+            previous_status = str(row[2] or CROWN_STATUS_NONE)
+            previous_stage = str(row[3] or "explore")
+            previous_pin = str(row[4] or "") or None
+            score_beats = None
+            if crown_score_valid and previous_score > 0.0:
+                score_beats = final_score >= previous_score
+            elif crown_score_valid:
+                score_beats = True
+            else:
+                score_beats = False
+            new_status = resolve_crown_status_transition(
+                previous_status=previous_status,
+                previous_stage=previous_stage,
+                previous_pin=previous_pin,
+                incoming_stage=param_ladder_stage,
+                incoming_pin=pin,
+                score_valid=bool(crown_score_valid and final_score > 0.0),
+                score_beats_previous=score_beats,
+            )
+            if final_score > previous_score:
                 await conn.execute(
                     "UPDATE architecture_families SET canonical_submission_id=?, q_arch_best=?, "
+                    "crown_status=?, param_ladder_stage=?, package_pin=?, "
                     "updated_at=? WHERE id=?",
-                    (submission_id, final_score, now, architecture_id),
+                    (
+                        submission_id,
+                        final_score,
+                        new_status,
+                        param_ladder_stage,
+                        pin,
+                        now,
+                        architecture_id,
+                    ),
                 )
             else:
                 await conn.execute(
-                    "UPDATE architecture_families SET updated_at=? WHERE id=?",
-                    (now, architecture_id),
+                    "UPDATE architecture_families SET crown_status=?, param_ladder_stage=?, "
+                    "package_pin=CASE WHEN ? != '' THEN ? ELSE package_pin END, "
+                    "updated_at=? WHERE id=?",
+                    (
+                        new_status,
+                        param_ladder_stage,
+                        pin,
+                        pin,
+                        now,
+                        architecture_id,
+                    ),
                 )
             return architecture_id
         architecture_id = str(uuid4())
+        new_status = resolve_crown_status_transition(
+            previous_status=CROWN_STATUS_NONE,
+            previous_stage=None,
+            previous_pin=None,
+            incoming_stage=param_ladder_stage,
+            incoming_pin=pin,
+            score_valid=bool(crown_score_valid and final_score > 0.0),
+            score_beats_previous=True,
+        )
         await conn.execute(
             "INSERT INTO architecture_families("
             "id, family_hash, arch_fingerprint, behavior_fingerprint, owner_hotkey,"
             "owner_submission_id, canonical_submission_id, q_arch_best, display_name,"
-            "created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "created_at, updated_at, crown_status, param_ladder_stage, package_pin) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 architecture_id,
                 family_hash,
@@ -1143,6 +1225,9 @@ class PrismWorker:
                 display_name,
                 now,
                 now,
+                new_status,
+                param_ladder_stage,
+                pin,
             ),
         )
         return architecture_id
@@ -1157,38 +1242,107 @@ class PrismWorker:
         submission_id: str,
         final_score: float,
         now: str,
+        param_ladder_stage: str = "explore",
+        package_pin: str = "",
+        crown_score_valid: bool = True,
     ) -> None:
         """Upsert the variant keyed by ``(architecture_id, training_hash)``.
 
         The representative submission / owner / score advance only when a better final_score
         arrives, then ``is_current_best`` is recomputed across the architecture's variants
         (highest score wins, ties broken by earliest creation then id) so exactly one is flagged.
+        Crown status follows explore provisional / promote confirm-revoke (VAL-RESLAB-004/005).
         """
+        from .evaluator.param_ladder import (
+            CROWN_STATUS_NONE,
+            resolve_crown_status_transition,
+            resolve_package_pin,
+        )
+
+        pin = resolve_package_pin(
+            family_hash=f"{architecture_id}:{training_hash}",
+            package_pin=package_pin or None,
+        )
         rows = await conn.execute_fetchall(
-            "SELECT id, q_recipe FROM training_variants "
+            "SELECT id, q_recipe, "
+            "COALESCE(crown_status, 'none') AS crown_status, "
+            "COALESCE(param_ladder_stage, 'explore') AS param_ladder_stage, "
+            "COALESCE(package_pin, '') AS package_pin "
+            "FROM training_variants "
             "WHERE architecture_id=? AND training_hash=?",
             (architecture_id, training_hash),
         )
         if rows:
             row = list(rows)[0]
             variant_id = str(row[0])
-            if final_score > float(row[1]):
+            previous_score = float(row[1])
+            previous_status = str(row[2] or CROWN_STATUS_NONE)
+            previous_stage = str(row[3] or "explore")
+            previous_pin = str(row[4] or "") or None
+            score_beats = None
+            if crown_score_valid and previous_score > 0.0:
+                score_beats = final_score >= previous_score
+            elif crown_score_valid:
+                score_beats = True
+            else:
+                score_beats = False
+            new_status = resolve_crown_status_transition(
+                previous_status=previous_status,
+                previous_stage=previous_stage,
+                previous_pin=previous_pin,
+                incoming_stage=param_ladder_stage,
+                incoming_pin=pin,
+                score_valid=bool(crown_score_valid and final_score > 0.0),
+                score_beats_previous=score_beats,
+            )
+            if final_score > previous_score:
                 await conn.execute(
                     "UPDATE training_variants SET owner_hotkey=?, submission_id=?, q_recipe=?, "
-                    "metric_mean=?, metric_std=?, updated_at=? WHERE id=?",
-                    (owner_hotkey, submission_id, final_score, final_score, 0.0, now, variant_id),
+                    "metric_mean=?, metric_std=?, crown_status=?, param_ladder_stage=?, "
+                    "package_pin=?, updated_at=? WHERE id=?",
+                    (
+                        owner_hotkey,
+                        submission_id,
+                        final_score,
+                        final_score,
+                        0.0,
+                        new_status,
+                        param_ladder_stage,
+                        pin,
+                        now,
+                        variant_id,
+                    ),
                 )
             else:
                 await conn.execute(
-                    "UPDATE training_variants SET updated_at=? WHERE id=?",
-                    (now, variant_id),
+                    "UPDATE training_variants SET crown_status=?, param_ladder_stage=?, "
+                    "package_pin=CASE WHEN ? != '' THEN ? ELSE package_pin END, "
+                    "updated_at=? WHERE id=?",
+                    (
+                        new_status,
+                        param_ladder_stage,
+                        pin,
+                        pin,
+                        now,
+                        variant_id,
+                    ),
                 )
         else:
+            new_status = resolve_crown_status_transition(
+                previous_status=CROWN_STATUS_NONE,
+                previous_stage=None,
+                previous_pin=None,
+                incoming_stage=param_ladder_stage,
+                incoming_pin=pin,
+                score_valid=bool(crown_score_valid and final_score > 0.0),
+                score_beats_previous=True,
+            )
             await conn.execute(
                 "INSERT INTO training_variants("
                 "id, architecture_id, training_hash, owner_hotkey, submission_id, q_recipe,"
-                "metric_mean, metric_std, is_current_best, created_at, updated_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "metric_mean, metric_std, is_current_best, created_at, updated_at, "
+                "crown_status, param_ladder_stage, package_pin) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     str(uuid4()),
                     architecture_id,
@@ -1201,6 +1355,9 @@ class PrismWorker:
                     0,
                     now,
                     now,
+                    new_status,
+                    param_ladder_stage,
+                    pin,
                 ),
             )
         await conn.execute(
@@ -1210,6 +1367,7 @@ class PrismWorker:
         await conn.execute(
             "UPDATE training_variants SET is_current_best=1 WHERE id=("
             "SELECT id FROM training_variants WHERE architecture_id=? "
+            "AND COALESCE(crown_status, 'none') IN ('none', 'provisional', 'confirmed') "
             "ORDER BY q_recipe DESC, created_at ASC, id ASC LIMIT 1)",
             (architecture_id,),
         )
