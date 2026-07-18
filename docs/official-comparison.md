@@ -4,9 +4,13 @@
 **Document status:** Operator- and miner-facing protocol (docs + tests first)  
 **Audience:** Operators running offline A-vs-B architecture/training comparisons; miners building unknown architectures under fair matched budgets  
 
-This document defines **Prism Official Comparison Protocol v1**: an architecture-agnostic protocol for ranking any two qualifying training submissions (or seed packages) under matched data, tokens/bytes, seeds, and fairness constraints. It is the scientific lab/compare surface. It is **not** a rewrite of the live emission leaderboard and it never claims live **REAL-PROVIDER TEE PASS**.
+This document defines **Prism Official Comparison Protocol v1**: an architecture-agnostic protocol for ranking any two qualifying training submissions (or seed packages) under matched data, tokens/bytes, seeds, and fairness constraints. It is the **scientific lab/compare surface** (published research grade via multimetric / Complete View). It is **not** a silent replacement for the live emission scalar and it never claims live **REAL-PROVIDER TEE PASS**.
 
-For production subnet scoring (leaderboard `final_score`, raw-weight push), see [Scoring](scoring.md). That path still uses prequential bits-per-byte as the **leaderboard primary** with held-out as a **bounded near-tie**. **Official Comparison mode inverts the ranking axes** as specified below.
+For production subnet scoring (leaderboard emission rank, raw-weight push), see [Scoring](scoring.md).
+**Emission volume-1 is Official-like:** held-out / generalization **PRIMARY**, prequential bpb
+**SECONDARY**. Official Comparison keeps the same primary/secondary order for pair ranks and **adds**
+the multi-axis multimetric / Complete View scientific vector with polar honesty. Multimetric and
+Complete View remain **published research grade** and do **not** silently replace emission in v1.
 
 ---
 
@@ -18,15 +22,17 @@ Official Comparison answers:
 
 Goals:
 
-1. Fair compare of **unknown architectures** expressible under the AST sandbox and 150M param cap (Transformer, Mamba/SSM pure-torch, and any other `nn.Module` that meets the forward contract).
+1. Fair compare of **unknown architectures** expressible under the AST sandbox and dual param ladder (default explore **124M**; promote **350M**) — Transformer, Mamba/SSM pure-torch, looped depth, and any other `nn.Module` that meets the forward contract.
 2. Prefer **held-out generalization** as the ranking primary so train-only compression or memorization does not win headlines.
 3. Keep **prequential bpb** as a always-Prism-recomputed secondary signal.
 4. Keep wall-clock, miner self-reports, and REAL-PROVIDER TEE labels out of the ranking key.
 5. Document that real multi-step GPU pair trains are **deferred** on hosts without NVIDIA (this protocol still allows CPU/fixture unit compares).
+6. Publish multimetric / Complete View as **scientific research grade** without claiming they are the emission scalar.
 
 Non-goals in v1:
 
-- Replacing subnet emission two-tier ownership (architecture 0.60 / training 0.40).
+- Silently folding multimetric / Complete View axes into the emission crown (future phase only with explicit product bump).
+- Replacing subnet emission two-tier ownership (architecture **0.50** / training **0.50**).
 - Using lm-eval / GSM8K / MMLU as primary fair learning signals for from-scratch compare.
 - Inventing Lium/Targon trust roots or labeling Lium deploy smoke as REAL-PROVIDER PASS.
 
@@ -36,8 +42,9 @@ Non-goals in v1:
 
 | Term | Meaning |
 | --- | --- |
-| **Leaderboard scoring** | Production path: prequential bpb drives `final_score`; held-out is bounded near-tie; used for subnet ranking and raw weights. |
-| **Official Comparison mode** | Offline/lab pair ranking under this protocol: **held-out/generalization primary**, prequential bpb secondary. |
+| **Emission / leaderboard scoring** | Production path: **held-out/generalization primary**, prequential bpb secondary; drives emission rank / raw weights ([Scoring](scoring.md)). |
+| **Official Comparison mode** | Offline/lab pair ranking under this protocol: same **held-out/generalization primary**, prequential bpb secondary, plus multi-axis scientific annexes. |
+| **Multimetric / Complete View** | Published **scientific research grade** vector (`multimetric.v1.1`, `complete_view.v1.2` / `v1.3`); **not** the emission scalar in v1. |
 | **Protocol pin** | Frozen JSON-ish knobs (dataset pin, tokenizer, budgets, seeds, device class). Both sides must run under the same pin hash. |
 | **Unknown architecture** | Any `torch.nn.Module` built by `build_model(ctx)` under sandbox and param cap; no family-specific score path. |
 | **Miner self-report** | Any number, log line, or manifest the miner writes; **never authoritative**. |
@@ -66,7 +73,7 @@ Every Official Comparison pair member MUST satisfy:
 2. **Matched byte measure** — primary denominators remain UTF-8 **bytes** on the locked stream (tokenizer-agnostic compression measure). Protocol may additionally force a referee tokenizer so packing is comparable.
 3. **Forced random init** — challenge seed family applied before miner import; `ctx.seed` immutable; bootstrap / resume checkpoints forbidden for official inject.
 4. **Challenge-owned batches** — training sinks via `ctx.iter_train_batches(...)` (single-pass instrument; predict-then-train capture). Private re-loaders that bypass the instrument disqualify.
-5. **150M parameter cap** — `max_parameters = 150_000_000`; realized param count rechecked after first forward on the scored model.
+5. **Dual param ladder** — default explore `max_parameters = 124_000_000` (provisional); promote pin `350_000_000`. Realized param count rechecked after first forward on the scored model. Pin documents which stage applies.
 6. **Wall-clock never primary** — wall-clock is a safety watchdog only. It never enters the ranking key and must not silently become the effective sample-size limit for a fair pair.
 7. **Secret val/test** — never mounted into the train container; host-only held-out.
 8. **Miner self-report never authoritative** — miner-written manifests, self-reported bpb, wall-time claims, and free-form diagnostics cannot certify official rank.
@@ -161,17 +168,19 @@ K    = len(seeds)  # ≥ 1 for unit fixtures; ≥ 3 for official public claims
 
 Implementation helps land as a pure deterministic helper (fixture-tested) in the scoring track; this document is the normative order those helpers must implement.
 
-### 5.6 Explicit invert vs leaderboard narrative
+### 5.6 Emission vs scientific surfaces (aligned primary, distinct products)
 
-| Axis | Production leaderboard ([scoring.md](scoring.md)) | Official Comparison Protocol v1 (this document) |
+| Axis | Production emission ([scoring.md](scoring.md)) | Official Comparison Protocol v1 (this document) |
 | --- | --- | --- |
-| Rank key 1 | Prequential bpb → `final_score` | **Held-out generalization** |
-| Rank key 2 | Bounded held-out delta (near-tie only) | **Prequential bpb** (Prism-recomputed) |
+| Rank key 1 | **Held-out generalization** | **Held-out generalization** |
+| Rank key 2 | **Prequential bpb** (Prism-recomputed) | **Prequential bpb** (Prism-recomputed) |
+| Multi-axis vector | Not required inside emission scalar v1 | multimetric.v1.1 / Complete View scientific grade |
 | Anti-overfit / step-0 | Active | Active (unchanged semantics) |
 | Wall-clock | Not scored | Not ranked |
-| Emission weights | Derived from leaderboard path | **Not** driven by Official Comparison labeling |
+| Emission weights | Derived from emission leaderboard path | Multimetric / Complete View **do not** silently drive emission |
 
-Do not treat “bpb primary” language in production scoring docs as applying to Official Comparison headline ranking.
+Emission volume-1 is Official-like on primary/secondary axes. Multimetric and Complete View remain
+**published research grade** and must not be documented as the silent emission crown.
 
 ---
 
@@ -194,7 +203,8 @@ token_budget: 500000            # must bind both sides before wall_clock
 step_budget: null
 wall_clock_seconds: 1200        # safety only; fair-pair invalid if stop_reason is wall_clock alone
 seeds: [1337, 2027, 4242]       # K=3 minimum for public official claims
-param_cap: 150000000
+param_cap: 124000000            # explore default; promote pin may use 350000000
+ladder_stage: explore           # explore (124M provisional) | promote (350M confirm/revoke)
 scored_nproc: 1
 device: cuda                    # or cpu for fixture / short CPU seeds
 force_iter_train_batches: true
@@ -210,11 +220,11 @@ primary_form: heldout_delta     # or val_bpb_trained
 1. Manifest is challenge-authored; `miner_reported_ignored: true`.
 2. `stopped_reason` is `token_budget` (preferred) or both sides data-exhausted at equal covered_bytes under the same pin.
 3. Finite positive bpb in-band; no step-0 anomaly on included seeds.
-4. Realized `model_params ≤ param_cap`.
+4. Realized `model_params ≤ param_cap` for the pin stage (124M explore default; 350M promote).
 5. Seed list applied identically (matched residual).
 6. Held-out present for official master/host path; worker `skip_heldout` outputs are not official compare witnesses alone.
 
-Lab seeds that share zip packaging:
+**Default exploration shapes under 124M** (shared zip packaging):
 
 - Transformer: `examples/tiny-1m` (`transformer-tiny-1m`)
 - Mamba pure-torch: `examples/mamba-tiny` (`mamba-tiny-1m`)
@@ -231,7 +241,7 @@ Official Comparison reuses the two-script product contract ([Submissions](submis
 
 | Hook | Script | Contract |
 | --- | --- | --- |
-| `build_model(ctx) -> nn.Module` | `architecture.py` | Pure factory. No data reads, no network, no files. Param count ≤ 150M under forced seed. Logits contract: `forward(tokens) → logits[B,T,V]` (or `.logits` / first tuple). |
+| `build_model(ctx) -> nn.Module` | `architecture.py` | Pure factory. No data reads, no network, no files. Param count ≤ pin cap (124M explore / 350M promote) under forced seed. Logits contract: `forward(tokens) → logits[B,T,V]` (or `.logits` / first tuple). |
 | `train(ctx) -> None` | `training.py` | Owns optimizer, schedule, multi-GPU, loop. Builds via `build_model` / `ctx.build_model()`. **Consumes challenge batches only** through `ctx.iter_train_batches(...)`. Return values are ignored for score. |
 
 ### 7.2 Challenge fields miners must honor
@@ -385,7 +395,7 @@ Unit fixtures may fill synthetic metrics without multi-hour train. Live emission
 
 1. Choose mode (ArchCompare recommended).
 2. Freeze ProtocolPin; write pin hash into evidence.
-3. Package both sides under two-script zip contract and 150M/sandbox gates.
+3. Package both sides under two-script zip contract and dual-ladder/sandbox gates (124M explore default).
 4. Run matched seeds; require challenge-authored manifests.
 5. Verify validity (token_budget stop, no step0, held-out present for official claims).
 6. Aggregate multi-seed primary held-out and secondary bpb.
@@ -427,7 +437,7 @@ Report marks `score_class=LAB-GPU`, `gpu_verification.status=LAB-GPU`, `real_pro
 
 | Doc | Relationship |
 | --- | --- |
-| [Scoring](scoring.md) | Production leaderboard math (bpb primary); explicit Official Comparison invert callout |
+| [Scoring](scoring.md) | Production emission math (held-out primary + bpb secondary); multimetric not emission scalar |
 | [Submissions](submissions.md) | Two-script contract and `PrismContext` honest hooks |
 | [Operators](operators.md) | Offline dual-family Official Comparison harness (CPU/fixture) + LAB-GPU host rank of remote CUDA |
 | [Miner guide](miner/README.md) | Lab seed families and submission shape |
@@ -501,7 +511,7 @@ Direction: **↑** higher better, **↓** lower better. Floors and ε bands are 
 | M-V01 | `stop_token_budget` | Both sides stop on `token_budget` (or equal data_exhausted + equal covered_bytes) | bool |
 | M-V02 | `finite_bpb` | Prism-recomputed bpb finite, in-band, positive coverage | bool |
 | M-V03 | `step0_clean` | Step-0 anomaly absent (`step0_loss ≥ 0.5 · ln(V)`) | bool |
-| M-V04 | `param_cap` | Realized params ≤ 150M (rechecked after first scored forward) | bool |
+| M-V04 | `param_cap` | Realized params ≤ pin stage cap (124M explore / 350M promote; rechecked after first scored forward) | bool |
 | M-V05 | `matched_pin` | Protocol pin hash equality both sides | bool |
 | M-V06 | `multi_seed_K` | Public non-provisional requires clean K≥3; K=1 is provisional only | bool/label |
 | M-V07 | `challenge_authored` | Miner self-report ignored; challenge owns metrics | bool |
@@ -602,7 +612,7 @@ Full architecture claim language requires the multi-metric scorecard (this annex
 Scorecard v1.1 **does not**:
 
 1. Claim **REAL-PROVIDER TEE PASS** (remote CUDA / Lium rent / LAB-GPU scores never unlock REAL-PROVIDER).
-2. Rewrite production leaderboard emission (still bpb-primary on [Scoring](scoring.md)).
+2. Rewrite production emission crown alone without the multimetric scientific vector (emission stays held-out primary + bpb secondary on [Scoring](scoring.md); multimetric remains research grade).
 3. Define a secret sole weighted scalar that replaces the published vector as the only scientific output.
 4. Invent long-ctx / efficiency metrics when suites did not run (fail closed: mark BLOCKED / not-run).
 5. Treat wall-clock or miner self-report as rank authority.
@@ -732,7 +742,7 @@ Preferred outside-repo evidence filename: `complete_view.v1.2.json`. Product mod
 ### 15.4 Non-claims (Complete View)
 
 1. **REAL-PROVIDER TEE PASS** remains **BLOCKED** (LAB-GPU / suite fill never unlocks REAL).
-2. Not the production emission weight crown (leaderboard stays bpb-primary).
+2. Not the production emission weight crown (emission stays held-out primary + bpb secondary; multimetric/Complete View are research grade).
 3. Not an opaque weighted sole arch crown.
 4. Historical multimetric.v1.1 annex is not erased; Complete View expands visibility only.
 5. Missing suites: null + reason, never invented non-null metrics.
@@ -764,7 +774,7 @@ These scores are for **~7M from-scratch single-pass** lab seeds (realized counts
 
 1. Seed-scale synthetic logic probes **do not certify human-level reasoning**, AGI, IQ, or curriculum-trained benchmark SOTA.
 2. **NOT GSM8K / MMLU / lm-eval** as primary fair signals for these ArchCompare seeds (external knowledge + instruction formats the pin never taught).
-3. Not the production **emission weight crown** (leaderboard stays bpb-primary).
+3. Not the production **emission weight crown** (emission stays held-out primary + bpb secondary; this panel is research grade).
 4. **REAL-PROVIDER TEE PASS** remains **BLOCKED** (orthogonal; suite fill never unlocks REAL).
 5. Efficiency / wall-clock never sole-rank; no opaque weighted sole crown.
 6. Near-chance on both-sides outcomes are **valid science** at seed scale, not a product failure.
@@ -863,8 +873,8 @@ Official Comparison / Complete View rate **architecture packages** scientificall
 | Machine schema | **`prism_train_series.v1`** (identity-locked; product-equivalent names must keep this string) |
 | Authority | **Challenge-owned only** (same trust class as online_loss / `prism_run_manifest.v2`) |
 | Miner dashboards / self-logs | **Non-authoritative** — ignored for grade, residual, and Official validity |
-| Scientific grade surface | Multi-axis Official Comparison / Complete View (held-out primary + bpb secondary + polar axes) |
-| Emission leaderboard | Remains **bpb-primary** (`final_score` path) — series never substitute emissions |
+| Scientific grade surface | Multi-axis Official Comparison / Complete View (held-out primary + bpb secondary + polar axes); **not** emission scalar |
+| Emission leaderboard | Held-out primary + bpb secondary (`final_score` / emission rank path) — series never substitute emissions |
 | Rank role of series | **Visibility** + densify **sample-eff / stability residual only** — **never sole primary rank** over held-out/bpb Official axes |
 | Fail-closed pin | When Official / Complete View grading pin sets `require_train_series=true`, missing / empty / corrupt challenge series **fail-closes** Official grade (not silent PASS) |
 
@@ -872,8 +882,8 @@ Official Comparison / Complete View rate **architecture packages** scientificall
 
 | Surface | Primary signal | Series role |
 | --- | --- | --- |
-| **Scientific miner arch grade** | Multi-axis Official Comparison / Complete View: held-out / generalization primary, prequential bpb secondary, multi-axis vector (long-ctx, reasoning, sample-eff, …), `TIE_POLAR` honesty | Time-flow visibility; densify sample-eff marks & stability residual (`grad_norm` / clip / nan); **not** sole primary over heldout/bpb |
-| **Emission / subnet leaderboard** | Prequential bpb → `final_score` (held-out bounded near-tie) | Observability only; never emission substitution |
+| **Scientific miner arch grade** | Multi-axis Official Comparison / Complete View: held-out / generalization primary, prequential bpb secondary, multi-axis vector (long-ctx, reasoning, sample-eff, …), `TIE_POLAR` honesty; **published research grade, not emission scalar** | Time-flow visibility; densify sample-eff marks & stability residual (`grad_norm` / clip / nan); **not** sole primary over heldout/bpb |
+| **Emission / subnet leaderboard** | Held-out / generalization primary → prequential bpb secondary → `final_score` / emission rank | Observability only; never emission substitution |
 | **Miner dashboards** | Cosmetic | Always untrusted; cannot certify Official grade or unblock missing challenge series |
 
 ### 17.2 Schema identity and point fields
@@ -991,7 +1001,7 @@ Capture and wire implementations land in subsequent telemetry-rt product feature
 ### 17.7 Non-claims
 
 1. Train series are **not** REAL-PROVIDER TEE evidence.
-2. Train series are **not** emission leaderboard primary (bpb remains emission primary).
+2. Train series are **not** emission leaderboard primary (emission stays held-out primary + bpb secondary).
 3. Inspectable lamp charts do **not** override held-out / polar Official rules.
 4. Miner aesthetic grad/loss dashboards never certify scientific miner grade.
 

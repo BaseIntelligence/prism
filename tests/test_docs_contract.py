@@ -2,12 +2,15 @@
 
 This suite pins the public docs (README + ``docs/**``) to the ACTUAL v2 system: the two-script
 submission contract (``architecture.py``/``build_model`` + ``training.py``/``train``), the locked
-FineWeb-Edu data plane (read-only, no network), the forced random-init validator re-execution, the
-challenge-computed prequential bits-per-byte score with a held-out delta tie-breaker,
-**deterministic admission** (LLM hard gate and gateway removed), the single-node multi-GPU contract,
-and dry-run weights. It also asserts the docs no longer reference the decommissioned v1-NAS
-machinery (component-review holds, ownership events, the retired ``prism_run_manifest.v1.json``,
-or the removed ``local_cpu_smoke`` execution mode).
+FineWeb-Edu data plane (read-only, no network), the forced random-init validator re-execution,
+**research-lab identity** (norm = try new architectures; goal = more performant ones), the
+**dual param ladder** (124M explore provisional → 350M promote confirm/revoke), emission scoring
+that is **held-out / generalization primary** with prequential bits-per-byte **secondary**
+(Official-like), multimetric/Complete View as **published scientific research grade** (not the
+emission scalar), **deterministic admission** (LLM hard gate and gateway removed), the single-node
+multi-GPU contract, two-tier **0.50/0.50** ownership, and dry-run weights. It also asserts the docs
+no longer reference the decommissioned v1-NAS machinery (component-review holds, ownership events,
+the retired ``prism_run_manifest.v1.json``, or the removed ``local_cpu_smoke`` execution mode).
 
 Assertions are anchored on real code constants so the docs cannot drift from the implementation.
 """
@@ -105,21 +108,94 @@ def test_forced_init_re_execution_is_documented() -> None:
 
 def test_prequential_bpb_scoring_is_documented() -> None:
     scoring = read_doc("docs/scoring.md")
+    lower = scoring.lower()
 
-    assert "prequential" in scoring.lower()
-    assert "bits-per-byte" in scoring.lower()
-    assert "bpb" in scoring.lower()
-    assert "held-out delta" in scoring.lower()
-    assert "tie-break" in scoring.lower()
-    assert "memorization" in scoring.lower()
-    assert "tokenizer-agnostic" in scoring.lower()
+    assert "prequential" in lower
+    assert "bits-per-byte" in lower
+    assert "bpb" in lower
+    assert "held-out" in lower
+    assert "memorization" in lower
+    assert "tokenizer-agnostic" in lower
     # Compute-normalized, never wall-clock.
-    assert "compute-normalized" in scoring.lower()
-    assert "wall-clock" in scoring.lower()
-    assert "lower" in scoring.lower() and "better" in scoring.lower()
-    # Leaderboard remains bpb-primary, with an explicit invert for Official Comparison.
-    assert "official comparison" in scoring.lower()
-    assert "leaderboard" in scoring.lower()
+    assert "compute-normalized" in lower
+    assert "wall-clock" in lower
+    assert "lower" in lower and "better" in lower
+    # Emission is Official-like: held-out primary, bpb secondary (not bpb-primary emission).
+    assert "held-out" in lower and "primary" in lower
+    assert "secondary" in lower and "bpb" in lower
+    assert "official comparison" in lower
+    assert "leaderboard" in lower
+    assert "bpb-primary" not in lower
+    # Multimetric / Complete View is research grade, not silent emission replacement.
+    assert "multimetric" in lower or "complete view" in lower
+    assert "research grade" in lower or "scientific" in lower
+
+
+def test_research_lab_identity_and_ladder_are_documented() -> None:
+    """VAL-RESLAB-001: research-lab identity, norm/goal, small-first ladder 124M→350M."""
+    readme = read_doc("README.md")
+    overview = read_doc("docs/overview.md")
+    scoring = read_doc("docs/scoring.md")
+    submissions = read_doc("docs/submissions.md")
+    miner = read_doc("docs/miner/README.md")
+    combined = f"{readme}\n{overview}\n{scoring}\n{submissions}\n{miner}"
+    lower = combined.lower()
+
+    assert "research lab" in lower
+    assert "new architecture" in lower or "new architectures" in lower
+    assert "norm" in lower
+    assert "goal" in lower
+    assert "performant" in lower or "outperform" in lower or "more performant" in lower
+    # Dual ladder numbers locked.
+    assert "124" in combined and "350" in combined
+    assert "124m" in lower or "124_000_000" in combined or "124000000" in combined
+    assert "350m" in lower or "350_000_000" in combined or "350000000" in combined
+    assert "provisional" in lower
+    assert "promote" in lower
+    assert "confirm" in lower or "confirms" in lower
+    assert "revoke" in lower or "revokes" in lower
+    # Emission held-out primary language on miner-facing surfaces.
+    assert "held-out" in lower and "primary" in lower
+    assert "emission" in lower
+    # Default exploration seeds under 124M.
+    assert "tiny-1m" in lower or "transformer-tiny-1m" in lower
+    assert "mamba-tiny" in lower or "mamba-tiny-1m" in lower
+    # Two-tier ownership 0.50/0.50.
+    assert "0.50" in combined
+
+
+def test_emission_vs_research_multimetric_surfaces_are_honest() -> None:
+    """VAL-RESLAB-002: emission held-out primary; multimetric is research grade not emission scalar."""
+    scoring = read_doc("docs/scoring.md")
+    protocol = read_doc("docs/official-comparison.md")
+    overview = read_doc("docs/overview.md")
+    submissions = read_doc("docs/submissions.md")
+    combined = f"{scoring}\n{protocol}\n{overview}\n{submissions}"
+    lower = combined.lower()
+
+    # Emission crown locked.
+    assert "emission" in lower
+    assert "held-out" in lower and "primary" in lower
+    assert "secondary" in lower and "bpb" in lower
+    # Multimetric / Complete View = published scientific / research grade, not silent emission.
+    assert "multimetric.v1.1" in combined or "multimetric" in lower
+    assert "complete view" in lower or "complete_view" in lower
+    assert (
+        "research grade" in lower
+        or "scientific" in lower
+        or "published research" in lower
+    )
+    assert (
+        "silently replace" in lower
+        or "do not silently" in lower
+        or "does not silently" in lower
+        or "not the emission" in lower
+        or "emission scalar" in lower
+        or "not silent" in lower
+    )
+    # Must not claim multimetric is the emission crown path via bpb-primary emission language.
+    assert "bpb-primary" not in scoring.lower()
+    assert "bpb-primary" not in overview.lower()
 
 
 def test_official_comparison_protocol_v1_is_documented() -> None:
@@ -130,11 +206,12 @@ def test_official_comparison_protocol_v1_is_documented() -> None:
 
     assert "prism official comparison protocol v1" in lower
     assert "prism_official_compare.v1" in lower or "protocol v1" in lower
-    # Ranking invert: held-out/generalization PRIMARY, prequential bpb SECONDARY.
+    # Ranking: held-out/generalization PRIMARY, prequential bpb SECONDARY.
     assert "primary" in lower and "held-out" in lower
     assert "secondary" in lower and "bpb" in lower
     assert "wall-clock never" in lower or "wall-clock" in lower
-    assert "150" in protocol and ("param" in lower or "parameter" in lower)
+    # Dual ladder present on compare surface (124M explore default).
+    assert "124" in protocol and ("param" in lower or "parameter" in lower or "ladder" in lower)
     assert "matched" in lower and ("token" in lower or "budget" in lower)
     assert "build_model" in protocol
     assert "train" in lower
@@ -148,6 +225,9 @@ def test_official_comparison_protocol_v1_is_documented() -> None:
     assert "deferred" in lower and ("nvidia" in lower or "gpu" in lower)
     # Multi-seed residual rule present.
     assert "multi-seed" in lower or "multi seed" in lower or "seeds" in lower
+    # Scientific grade honesty: multimetric is not emission scalar.
+    assert "research grade" in lower or "scientific" in lower
+    assert "emission" in lower
 
 
 def test_official_comparison_scorecard_v1_1_is_documented() -> None:
@@ -316,8 +396,8 @@ def test_train_series_telemetry_protocol_is_documented() -> None:
 
 
 def test_train_series_scientific_vs_emission_grade_is_documented() -> None:
-    """Scientific multi-axis Official grade vs emission bpb + residual series
-    (VAL-TELE-012, VAL-TELE-010)."""
+    """Scientific multi-axis Official grade vs emission held-out primary + residual series
+    (VAL-TELE-012, VAL-TELE-010; research-lab emission invert)."""
     protocol = read_doc("docs/official-comparison.md")
     scoring = read_doc("docs/scoring.md")
     operators = read_doc("docs/operators.md")
@@ -327,29 +407,34 @@ def test_train_series_scientific_vs_emission_grade_is_documented() -> None:
     op_lower = operators.lower()
     sub_lower = submissions.lower()
 
-    # VAL-TELE-012: multi-axis Official/Complete View = scientific miner grade;
-    # emission bpb-primary.
+    # VAL-TELE-012: multi-axis Official/Complete View = scientific miner grade (research);
+    # emission is held-out primary + bpb secondary (not bpb-primary emission).
     assert "scientific" in lower
     assert "official comparison" in lower or "complete view" in lower
     assert "multi-axis" in lower or "multi axis" in lower
     assert "emission" in lower
-    assert "bpb-primary" in lower or ("bpb" in lower and "primary" in lower)
+    assert "held-out" in lower and "primary" in lower
+    assert "bpb" in lower and "secondary" in lower
     assert "leaderboard" in lower
+    # Legacy bpb-primary emission language must not remain as an emission claim.
+    assert "bpb-primary" not in lower
 
     assert "scientific" in scoring_lower
     assert "prism_train_series.v1" in scoring
-    assert "bpb-primary" in scoring_lower or (
-        "emission" in scoring_lower and "bpb" in scoring_lower and "primary" in scoring_lower
-    )
+    assert "held-out" in scoring_lower and "primary" in scoring_lower
+    assert "bpb" in scoring_lower and "secondary" in scoring_lower
     assert "leaderboard" in scoring_lower
+    assert "bpb-primary" not in scoring_lower
 
-    assert "scientific" in op_lower
+    assert "scientific" in op_lower or "research grade" in op_lower or "emission" in op_lower
     assert "emission" in op_lower
-    assert "bpb-primary" in op_lower or ("bpb" in op_lower and "primary" in op_lower)
+    assert "held-out" in op_lower or "heldout" in op_lower
+    assert "bpb-primary" not in op_lower
 
-    assert "scientific" in sub_lower
+    assert "scientific" in sub_lower or "research" in sub_lower
     assert "emission" in sub_lower
-    assert "bpb-primary" in sub_lower or ("bpb" in sub_lower and "primary" in sub_lower)
+    assert "held-out" in sub_lower and "primary" in sub_lower
+    assert "bpb-primary" not in sub_lower
 
     # VAL-TELE-010: series residual only — visibility + sample-eff/stability densify;
     # never sole primary.
@@ -463,16 +548,23 @@ def test_readme_describes_the_v2_product() -> None:
     readme_lower = readme.lower()
 
     for expected in (
-        "ability to learn",
+        "research lab",
+        "new architecture",
         "two-script",
         "FineWeb-Edu",
         "prequential",
         "bits-per-byte",
+        "held-out",
         "LLM gateway",
         "deterministic",
         "validator",
+        "124",
+        "350",
+        "0.50",
     ):
         assert expected.lower() in readme_lower, f"README missing v2 concept: {expected}"
+    assert "tiny-1m" in readme_lower or "transformer-tiny-1m" in readme_lower
+    assert "mamba-tiny" in readme_lower
 
 
 def test_api_doc_only_lists_live_internal_routes() -> None:

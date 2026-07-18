@@ -1,7 +1,8 @@
 # Tiny ~1M-Parameter Two-Script Example (Transformer family)
 
-A minimal, valid PRISM v2 submission: a weight-tied ~1.05M-parameter decoder transformer split into
-the two-script contract. Registered packaging family id: **`transformer-tiny-1m`**.
+A minimal, valid PRISM v2 submission and the **default Transformer exploration shape under the
+124M explore ladder**: a weight-tied ~1.05M-parameter decoder transformer split into the two-script
+contract. Registered packaging family id: **`transformer-tiny-1m`**.
 
 ## Layout
 
@@ -25,7 +26,7 @@ examples/tiny-1m/
 | --- | --- |
 | Architecture family | Decoder transformer (RMSNorm + causal MHA + SwiGLU), weight-tied emb/lm_head |
 | Parameter geometry | `dim=128`, `heads=4`, `layers=2`, `mlp_ratio=4`; count is **realized** `nn.Module` params under forced-seed `build_model` (weight tying avoids double-counting head/emb) |
-| Cap | Must stay ≤ **150_000_000** (family-agnostic static gate) |
+| Cap | Must stay ≤ explore **124_000_000** (default lab ladder; promote pin 350M is out of scope for this ~1M seed) |
 | Tokenizer | `prism.yaml` → `gpt2` (offline pre-staged; no network) |
 | Step throughput | `LOCAL_BATCH=4`, AdamW `lr=0.005`, grad clip `1.0`; ranking is compute-normalized (tokens), not wall-clock |
 | Multi-GPU | Single-node ≤8 GPUs: `init_process_group`, `set_device(local_rank)`, DDP wrap, `DistributedSampler` marker, rank-0 `torch.save`, `destroy_process_group`; also works at `world_size=1` (scored nproc=1) |
@@ -40,9 +41,10 @@ uv run python scripts/pack_seed_family.py --family transformer-tiny-1m --output-
 ## How It Is Scored
 
 The challenge re-executes `train(ctx)` under a forced random initialization on the locked FineWeb-Edu
-train split, captures the single-pass online (predict-then-train) loss itself, and computes the
-prequential bits-per-byte score with a held-out delta tie-breaker. Any value this submission reports
-and any manifest it writes are ignored; the challenge authors `prism_run_manifest.v2.json`.
+train split, captures the single-pass online (predict-then-train) loss itself, and ranks
+**emission** with held-out / generalization **primary** and prequential bits-per-byte **secondary**.
+Any value this submission reports and any manifest it writes are ignored; the challenge authors
+`prism_run_manifest.v2.json`.
 
 ## Submit
 

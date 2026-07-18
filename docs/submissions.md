@@ -1,19 +1,23 @@
 # Submission Format
 
-PRISM accepts a **two-script** bundle: a `.zip` archive (or directory snapshot) containing a model
-`architecture.py` and a training `training.py`. PRISM fixes the FineWeb-Edu dataset and the evaluation
-protocol, not the model search space beyond the Python contract, the AST sandbox, the 150M parameter
-cap, and the resource limits.
+PRISM is a **research lab**: the **norm** is to try **new architectures**; the **goal** is to find
+**more performant** ones under fair challenge-owned re-exec. PRISM accepts a **two-script** bundle: a
+`.zip` archive (or directory snapshot) containing a model `architecture.py` and a training
+`training.py`. PRISM fixes the FineWeb-Edu dataset and the evaluation protocol, not the model search
+space beyond the Python contract, the AST sandbox, the **dual param ladder** (124M explore /
+350M promote), and the resource limits.
 
 The miner owns the model and the training loop. The challenge owns the dataset and the scoring: it
 re-executes `training.py` under a forced random init and a fixed seed, records the online loss stream
 itself, authors the run manifest, and ignores any value the miner reports.
 A single combined module no longer satisfies the contract.
 See [Architecture](architecture.md) and [Scoring](scoring.md) for the re-execution and scoring detail.
-For the architecture-agnostic **Official Comparison Protocol v1** (held-out primary ranking, honest
-hooks table, GPU deferred without NVIDIA), multimetric scorecard annex **v1.1**
-(`scorecard_id=multimetric.v1.1`), Complete View, and challenge-owned train series
-**`prism_train_series.v1`**, see [Official Comparison](official-comparison.md).
+For the architecture-agnostic **Official Comparison Protocol v1** (scientific multi-axis grade —
+held-out primary ranking, honest hooks table, GPU deferred without NVIDIA), multimetric scorecard
+annex **v1.1** (`scorecard_id=multimetric.v1.1`), Complete View, and challenge-owned train series
+**`prism_train_series.v1`**, see [Official Comparison](official-comparison.md). Multimetric /
+Complete View are **published research grade** and do **not** silently replace the emission crown
+(held-out primary + bpb secondary).
 ## The Two-Script Contract
 
 A bundle must contain two **distinct** scripts.
@@ -25,8 +29,10 @@ def build_model(ctx):
     return MyModel(ctx.vocab_size)
 ```
 
-It may use any PyTorch structure inside the AST sandbox, the 150M parameter cap, and the resource
-limits. It must not read data, open files, touch the network, or reference the dataset.
+It may use any PyTorch structure inside the AST sandbox, the dual param ladder (default
+**explore ≤ 124M**; promote pin ≤ **350M**), and the resource limits. Novel architectures are
+**expected** (Transformer, looped depth, pure-torch SSM, LightDeepLoop-class modules, …). It must
+not read data, open files, touch the network, or reference the dataset.
 
 `training.py` exposes the miner-owned training loop:
 
@@ -46,7 +52,7 @@ challenge-provided logging handle, never as the basis of the score.
 
 | Hook | Required? | Authoritative for score? |
 | --- | --- | --- |
-| `build_model(ctx) → nn.Module` | Yes | Indirectly (must construct under forced seed / param cap) |
+| `build_model(ctx) → nn.Module` | Yes | Indirectly (must construct under forced seed / dual param ladder) |
 | `train(ctx)` consuming `ctx.iter_train_batches(...)` | Yes for honest online capture | Capture path is challenge-owned; return value ignored |
 | Challenge-owned **`prism_train_series.v1`** (online CE/bpb, tokens, wall, **grad_norm**, **clip_events**) | Required when Official pin sets `require_train_series` | **Yes for series residual / fail-closed Official pin** — challenge capture only |
 | Optional logs / free-form diagnostics under `artifacts_dir` | Optional | **No** — non-authoritative diagnostics only |
@@ -54,10 +60,11 @@ challenge-provided logging handle, never as the basis of the score.
 | Miner self-reported bpb / `final_score` / home-rolled manifest | Forbidden as trust root | **Never** — Prism recomputes official metrics |
 
 **Rating honesty (scientific vs emission):** multi-axis Official Comparison / Complete View is the
-**scientific miner architecture grade**; the emission leaderboard remains **bpb-primary**. Train
-series densify sample-eff / stability residual and operator time-flow visibility, and **never sole
-primary rank** over held-out or recomputed bpb. Official grade can **fail-closed** if the pin
-requires series and challenge capture is missing/empty/corrupt.
+**scientific miner architecture grade** (published research; multimetric does **not** silently replace
+emission). The **emission crown** is Official-like: **held-out / generalization primary**,
+prequential bpb **secondary**. Train series densify sample-eff / stability residual and operator
+time-flow visibility, and **never sole primary rank** over held-out or recomputed bpb. Official grade
+can **fail-closed** if the pin requires series and challenge capture is missing/empty/corrupt.
 
 Wall-clock and miner-timing claims never rank. Full Official Comparison honesty checklist:
 [Official Comparison Protocol v1](official-comparison.md#7-training-script-honest-hooks-contract)
@@ -85,7 +92,7 @@ Both scripts receive a `PrismContext`:
 | Field / method | Meaning |
 | --- | --- |
 | `vocab_size`, `max_seq_len` | Token-id geometry |
-| `max_params` | Hard parameter cap (150M) |
+| `max_params` | Hard parameter cap for the stage (**124M explore** provisional; **350M promote**) |
 | `seed` | The forced seed (challenge-controlled; the miner cannot change it) |
 | `data_dir` | Read-only path to the locked FineWeb-Edu **train** split |
 | `artifacts_dir` | The only writable path (rank-0 writes) |
@@ -132,7 +139,7 @@ prequential bits-per-byte score block, the held-out delta and anti-memorization 
 (leased `gpu_count`, world size, device, realized parameter count), the run provenance, and the byte
 coverage. Any miner-written manifest or reported metric is discarded.
 
-## Minimal Example
+## Minimal Example (default exploration under 124M)
 
 ```text
 project.zip
@@ -142,7 +149,8 @@ project.zip
 ```
 
 The container resolves `architecture.py::build_model` and `training.py::train`, forces the seed,
-launches torchrun, and captures the online loss itself. Complete, runnable lab seeds:
+launches torchrun, and captures the online loss itself. **Default exploration shapes under the
+124M explore cap** (start here before any 350M promote):
 
 - Transformer: [tiny ~1M-parameter example](../examples/tiny-1m/README.md) (family
   `transformer-tiny-1m`)
@@ -152,6 +160,7 @@ launches torchrun, and captures the online loss itself. Complete, runnable lab s
 Package either or both with `scripts/pack_seed_family.py` (shared outer two-script zip shape). Lab
 family knobs (param counting shape, batch/LR step flu, pure-torch SSM caveats, multi-GPU primitives)
 are documented on each seed README and in the [miner guide](miner/README.md#lab-seed-families).
+Novel architectures beyond these seeds are first-class under the AST + ladder caps.
 
 ## ZIP Safety Rules
 

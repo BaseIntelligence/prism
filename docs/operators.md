@@ -118,7 +118,7 @@ settings; residual keys fail closed at load:
 Pipeline order before GPU:
 
 1. AST sandbox hard-blocks over both scripts.
-2. Forced-seed parameter cap (150M).
+2. Forced-seed dual param ladder (124M explore / 350M promote).
 3. Multi-GPU static contract and single-node bound.
 4. Source similarity + duplicate policy (quarantine band → terminal **reject**, never held).
 
@@ -248,7 +248,7 @@ Report fields of interest:
 | `gpu_verification.status` | `DEFERRED` when nvidia-smi/`/dev/nvidia*`/nvidia runtime absent; never claimed PASS by the harness |
 | `tee_note` | Always orthogonal: REAL-PROVIDER PASS not claimed |
 
-Do not treat the offline fixture winner as an automatic emission weight crown unless production leaderboard scoring independently agrees (leaderboard stays bpb-primary; Official Comparison invert is the lab surface only).
+Do not treat the offline fixture winner as an automatic emission weight crown unless production emission scoring independently agrees (emission is held-out primary + bpb secondary; multimetric / Complete View remain published scientific research grade and do not silently replace emission).
 
 ### Multi-metric scorecard v1.1 (operators)
 
@@ -332,7 +332,7 @@ Machine identity: **`schema=prism_train_series.v1`**. Full protocol: [Official C
 | --- | --- |
 | Authority | **Challenge-owned** series only (online CE/bpb, tokens_seen, wall, **mandatory grad_norm + clip_events** under the telemetry pin). Miner dashboards / self-logs are **non-authoritative** and never certify grade |
 | Scientific miner grade | Multi-axis Official Comparison / Complete View (held-out primary + bpb secondary + polar honesty) |
-| Emission leaderboard | Remains **bpb-primary** — series are **not** emission substitution |
+| Emission leaderboard | Held-out primary + bpb secondary — series are **not** emission substitution |
 | Rank role of series | Visibility + densify **sample-eff / stability residual** only — **never sole primary rank** over held-out/bpb |
 | Fail-closed Official pin | If grading pin sets `require_train_series` and series is missing/empty/corrupt → Official scientific grade **fail-closes** (not silent PASS) |
 | APIs | **`GET /v1/submissions/{id}/curve`** (public challenge routes under existing Base proxy / internal auth) returns legacy `loss_curve` **and** optional challenge-owned **`train_series`** (`prism_train_series.v1`) with downsample-safe multichannel points: train CE / running bpb, tokens_seen, wall_s, **grad_norm**, **clip_event**. Miner authority payloads are **never** returned. Chart-safe key projection strips unknown/secret fields. Frontend Architecture Lab already plots loss vs covered bytes from this route; operators may also plot cosine-style time-flow via CLI `jq` on `train_series.points` until UI surfaces `grad_norm` series natively. |
@@ -380,4 +380,4 @@ Do not rank packages solely on prettier grad_norm aesthetics. Use multi-axis Off
 | Prior mamba short-ctx win treated as “Mamba better architecture” | K=1 short-ctx LAB-GPU is provisional; require multimetric.v1.1 scorecard + K≥3; TIE_POLAR if short vs long axes disagree |
 | Scorecard long-ctx / sample-eff fields missing | Suite not run yet — mark not-run/BLOCKED; do not invent metrics |
 | Official grade missing train series | Pin requires `prism_train_series.v1` and capture empty/miner-only — fail-closed Official grade; do not PASS on miner dashboard |
-| Ranking only on grad aesthetics / wall_s | Forbidden — series residual never sole-primary; emission stays bpb-primary; Official heldout/bpb multi-axis still rule |
+| Ranking only on grad aesthetics / wall_s | Forbidden — series residual never sole-primary; emission stays held-out primary + bpb secondary; Official multi-axis scientific grade still rule |

@@ -84,7 +84,7 @@ The pre-GPU static gates run in order; a rejection at any of them is terminal be
 admission and before any GPU work:
 
 1. AST sandbox hard-blocks over both scripts.
-2. Forced-seed `build_model` instantiation and the 150M parameter cap.
+2. Forced-seed `build_model` instantiation and the dual param ladder (124M explore / 350M promote).
 3. The multi-GPU static contract and single-node bound.
 4. Deterministic source similarity (exact duplicate and quarantine band → **rejected**, never held).
 

@@ -22,7 +22,7 @@ Before any GPU work, PRISM runs the static gates over both scripts, in order:
    `eval`/`exec`/`compile`, attribute escapes (`__globals__`, `__reduce__`, `__class__` walking), or
    filesystem writes outside `artifacts_dir`.
 2. **Forced-seed parameter cap**: `build_model(ctx)` is instantiated under the forced seed in a bounded
-   child process and rejected if it exceeds the 150M cap (realized first-forward shapes).
+   child process and rejected if it exceeds the stage param cap (124M explore / 350M promote; realized first-forward shapes).
 3. **Multi-GPU static contract**: the training script must use the distributed primitives and a rank-0
    write guard; a `gpu_count > 8` or multi-node request is rejected.
 

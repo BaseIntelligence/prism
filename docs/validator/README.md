@@ -22,7 +22,7 @@ let validators submit the master-aggregated vector with their own wallets.
 
 1. A miner submits a signed two-script bundle; PRISM validates the hotkey, timestamp, nonce, and size.
 2. The bundle is resolved into the two-script contract and inspected by the AST sandbox.
-3. The forced-seed `build_model` instantiation enforces the 150M parameter cap.
+3. The forced-seed `build_model` instantiation enforces the dual param ladder (124M explore / 350M promote).
 4. The multi-GPU static contract and single-node bound are checked.
 5. **Deterministic admission** runs (source similarity + anti-cheat). Exact duplicates and quarantine-band
    similarity **reject** terminally; there is no held-for-review path and no LLM hard gate.
@@ -76,7 +76,7 @@ has arrived.
 | `PRISM_SIGNATURE_TTL_SECONDS` | Replay-protection timestamp window. |
 | `PRISM_EPOCH_SECONDS` | Scoring epoch length. |
 | `PRISM_MAX_CODE_BYTES` | Maximum submission size. |
-| `PRISM_MAX_PARAMETERS` | Hard parameter cap (default 150M). |
+| `PRISM_MAX_PARAMETERS` | Explore-stage hard parameter cap (default 124M); promote pin uses 350M. |
 | `PRISM_BASE_EVAL_IMAGE` | Digest-pinned `prism-evaluator` image (sentencepiece + offline tiktoken). |
 | `PRISM_BASE_EVAL_DATA_DIR` | Read-only locked FineWeb-Edu **train** mount. |
 | `PRISM_BASE_EVAL_VAL_DATA_DIR` | Secret held-out **val** split (scorer-only; never mounted into eval). |

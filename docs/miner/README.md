@@ -2,37 +2,47 @@
 
 ## Purpose
 
-PRISM rewards miners whose models learn fast from scratch. You submit two scripts, a model
-`architecture.py` and a custom `training.py` loop; the challenge re-executes your loop under a forced
-random init on locked FineWeb-Edu data and scores it with a prequential bits-per-byte metric. You bring
-the model and the loop, not the data or the metric.
+PRISM is a **research lab**. The **norm** is to try **new architectures**. The **goal** is to find
+**more performant** ones for our LLM target under fair challenge-owned re-exec. You submit two
+scripts, a model `architecture.py` and a custom `training.py` loop; the challenge re-executes your
+loop under a forced random init on locked FineWeb-Edu data. **Emission** ranks **held-out /
+generalization primary** with prequential bits-per-byte **secondary**. You bring the model and the
+loop, not the data or the metric.
 
 For offline architecture-agnostic **Official Comparison Protocol v1** / multimetric scorecard
-`multimetric.v1.1` (held-out generalization primary, prequential bpb secondary, honest hooks,
-wall-clock never ranks; prior K=1 wins provisional only), see
-[Official Comparison](../official-comparison.md). The live leaderboard path remains described in
-[Scoring](../scoring.md).
+`multimetric.v1.1` (scientific multi-axis grade; held-out primary, prequential bpb secondary,
+honest hooks, wall-clock never ranks; prior K=1 wins provisional only; multimetric is **not**
+the emission scalar), see [Official Comparison](../official-comparison.md). The live emission path
+is described in [Scoring](../scoring.md).
+
+## Dual param ladder (start small)
+
+| Stage | Cap | Role |
+| --- | ---: | --- |
+| Explore / provisional | **124M** | Default continuous thrash; may provisional-crown emission |
+| Promote / final | **350M** | Confirm or revoke provisional crown on same package/family pin |
 
 ## Miner Flow
 
-1. Build a two-script bundle that follows the PRISM contract.
+1. Build a two-script bundle that follows the PRISM contract (novel architectures welcome under AST + ladder).
 2. Sign and submit it with your miner hotkey.
 3. PRISM runs the static sandbox and **deterministic admission** (similarity / anti-cheat). There is no
    LLM hard gate.
 4. The challenge re-executes your `training.py` under a forced random init on the locked train split.
-5. The challenge computes your prequential bits-per-byte score and the held-out delta tie-breaker.
-6. Better learners earn more weight after master aggregation of PRISM raw weights (validators submit
-   on-chain; the challenge does not).
+5. The challenge computes emission rank: **held-out primary**, prequential bits-per-byte **secondary**.
+6. Better generalizing learners earn more weight after master aggregation of PRISM raw weights
+   (architecture/training pools just **0.50 / 0.50**; validators submit on-chain; the challenge does not).
 
-## Lab seed families
+## Lab seed families (default exploration under 124M)
 
 Tracked lab seeds under `examples/` package with the same outer two-script zip contract via
-`scripts/pack_seed_family.py` / `prism_challenge.seed_packaging`:
+`scripts/pack_seed_family.py` / `prism_challenge.seed_packaging`. **Start here** under the explore cap
+before any 350M promote:
 
 | Family id | Path | Notes |
 | --- | --- | --- |
-| `transformer-tiny-1m` | `examples/tiny-1m` | Weight-tied ~1M decoder transformer; param count is forced-seed realized params; multi-GPU single-node ≤8 |
-| `mamba-tiny-1m` | `examples/mamba-tiny` | Pure-PyTorch selective SSM (Mamba-style); **no** `mamba_ssm` C++/CUDA dep for the static lab path; same 150M cap and multi-GPU contract |
+| `transformer-tiny-1m` | `examples/tiny-1m` | Weight-tied ~1M decoder transformer; default explore shape under 124M; multi-GPU single-node ≤8 |
+| `mamba-tiny-1m` | `examples/mamba-tiny` | Pure-PyTorch selective SSM (Mamba-style); **no** `mamba_ssm` C++/CUDA dep; same dual ladder + multi-GPU contract |
 
 Family knobs that matter for lab interpretation (not product baseline tables):
 
@@ -72,8 +82,9 @@ def train(ctx):
     ...
 ```
 
-`build_model(ctx)` returns any `torch.nn.Module` under the AST sandbox, the 150M parameter cap, and the
-resource limits; it must not read data, open files, touch the network, or reference the dataset.
+`build_model(ctx)` returns any `torch.nn.Module` under the AST sandbox, the dual param ladder
+(explore ≤ **124M**, promote ≤ **350M**), and the resource limits; it must not read data, open files,
+touch the network, or reference the dataset. Novel architectures are expected.
 `train(ctx)` owns the optimizer, schedule, dataloading, tokenization, multi-GPU strategy, and loop. The
 single-module re-export idiom no longer satisfies the contract: the two roles must be distinct files.
 
@@ -82,7 +93,7 @@ single-module re-export idiom no longer satisfies the contract: the two roles mu
 `ctx` is a `PrismContext` supplying the metadata and limits you need:
 
 - `vocab_size`, `max_seq_len` — token-id geometry;
-- `max_params` — the 150M cap;
+- `max_params` — stage cap (**124M explore** / **350M promote**);
 - `seed` — the forced seed you cannot change;
 - `data_dir` — read-only path to the locked FineWeb-Edu **train** split;
 - `artifacts_dir` — the only writable path;
@@ -113,9 +124,11 @@ It is checked with a static contract and a gloo multi-rank test. See [Scaling](.
 
 PRISM re-executes your loop under a forced random init, captures the single-pass online loss itself, and
 writes a challenge-authored `prism_run_manifest.v2.json`; any value or manifest you write is ignored.
-The score is the prequential bits-per-byte (area under the from-scratch loss curve, normalized by raw
-UTF-8 bytes) with a held-out delta-over-random-init tie-breaker. A smuggled pretrained model shows an
-anomalous step-0 loss and is zeroed; an excessive train-vs-held-out gap is penalized as memorization.
+**Emission** ranks **held-out / generalization primary** (preferred: held-out delta-over-random-init)
+with prequential bits-per-byte **secondary** (area under the from-scratch loss curve, normalized by
+raw UTF-8 bytes). Multimetric / Complete View publish scientific multi-axis research grade and do
+**not** silently replace emission. A smuggled pretrained model shows an anomalous step-0 loss and is
+zeroed; an excessive train-vs-held-out gap is penalized as memorization.
 
 ## Submitting Work
 
@@ -142,16 +155,18 @@ queue.
 
 ## What Improves Your Score
 
-- Drive the from-scratch loss down fast (lower bits-per-byte is better).
+- Grow generalization on the secret val split (**held-out primary** for emission).
+- Drive the from-scratch loss down fast (lower bits-per-byte is **secondary** emission signal).
 - Use the compute budget efficiently (scoring is compute-normalized, never wall-clock).
-- Grow the held-out delta-over-random-init on the secret val split (the near-tie tie-breaker).
 - Keep the train-vs-held-out gap small (a large gap is penalized as memorization).
 - Ship correct, DDP-safe, rank-aware distributed behavior.
+- Explore under **124M** first; promote to **350M** only to confirm durable claims.
 
 ## Miner Checklist
 
 - Ship two distinct scripts: `architecture.py` with `build_model(ctx)` and `training.py` with `train(ctx)`.
 - Keep `build_model` pure (no data, files, or network); read only `ctx.data_dir`, write only `ctx.artifacts_dir`.
-- Stay under the 150M parameter cap and inside the AST sandbox.
+- Stay under the stage param cap (**124M explore** / **350M promote**) and inside the AST sandbox.
+- Prefer starting from `examples/tiny-1m` or `examples/mamba-tiny` under 124M.
 - Make the loop deterministic under the forced seed and correct at `world_size=1`.
 - Remove secrets, private endpoints, generated caches, and unrelated files.

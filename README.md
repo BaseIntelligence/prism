@@ -2,7 +2,7 @@
 
 # PRISM
 
-**An "ability to learn" ML challenge — two-script submissions, locked data, challenge-owned scoring.**
+**Research lab subnet — try new architectures; find more performant ones under fair challenge-owned re-exec.**
 
 <a href="docs/overview.md">Overview</a> ·
 <a href="docs/miner/README.md">Miners</a> ·
@@ -23,17 +23,19 @@
 
 ## Overview
 
-PRISM is a [BASE](https://joinbase.ai) subnet challenge that measures a model's **ability to learn**
-from scratch. Miners submit a **two-script** bundle — `architecture.py` (`build_model(ctx)`) and
-`training.py` (`train(ctx)`) — and the challenge owns everything else: a locked **FineWeb-Edu**
-dataset (read-only, no network) and the scoring. **The miner owns** the model and the training loop;
-the challenge owns the data and the score.
+PRISM is a [BASE](https://joinbase.ai) **research lab** challenge. The **norm** is to try **new
+architectures**. The **goal** is to find architectures that are **more performant** for our LLM
+target: generalization after from-scratch learning on locked data, under fair challenge-owned
+re-execution (not paper claims alone).
 
-Every scored run is re-executed under a **forced random init**, so the score is a **prequential**
-(online) compression metric in **bits-per-byte** — the area under the from-scratch loss curve,
-normalized by bytes consumed. Admission and scoring are **deterministic** (no LLM gateway). Raw
-weights are pushed to BASE for master aggregation; validators fetch the final vector and call
-`set_weights` under their own hotkeys.
+Miners submit a **two-script** bundle — `architecture.py` (`build_model(ctx)`) and `training.py`
+(`train(ctx)`) — and the challenge owns everything else: a locked **FineWeb-Edu** dataset
+(read-only, no network) and the score. **The miner owns** the model and the training loop; the
+challenge owns the data and the metric.
+
+Every scored run is re-executed under a **forced random init**. Scoring is **deterministic** (no
+LLM gateway). Raw weights push to BASE for master aggregation; validators fetch the final vector and
+call `set_weights` under their own hotkeys. PRISM never writes on-chain weights.
 
 ### Base SDK pin
 
@@ -46,24 +48,55 @@ https://github.com/BaseIntelligence/base/releases/download/v3.1.2/base-3.1.2-py3
 
 (see `pyproject.toml`). There is no LLM gateway dependency in this pin.
 
+## Research lab, small-first ladder
+
+GPU is limited, so the lab proves ideas on a **small-first ladder** before promoting:
+
+| Stage | Param cap | Emission role |
+| --- | ---: | --- |
+| **Explore / provisional** | **124M** (`124_000_000`) | Continuous discovery; may hold a **provisional crown** |
+| **Promote / final** | **350M** (`350_000_000`) | Same package/family pin re-eval; **confirms or revokes** the provisional crown |
+
+Default exploration shapes under the 124M explore cap are the tracked lab seeds
+[`examples/tiny-1m`](examples/tiny-1m) (`transformer-tiny-1m`) and
+[`examples/mamba-tiny`](examples/mamba-tiny) (`mamba-tiny-1m`). Novel `nn.Module` families under the
+AST sandbox remain first-class (Transformer, looped depth, pure-torch SSM, LightDeepLoop-class
+ideas).
+
+## Emission vs scientific surfaces
+
+Two graded surfaces stay honest and separate:
+
+| Surface | What it ranks | Primary / secondary |
+| --- | --- | --- |
+| **Emission crown** (leaderboard → raw weights) | Subnet reward eligibility | **Held-out / generalization primary**, prequential bpb **secondary** (Official-like) |
+| **Official Comparison / multimetric / Complete View** | Published **scientific miner architecture grade** | Multi-axis held-out + bpb + long-ctx + reasoning + polar honesty (`TIE_POLAR`) |
+
+Multimetric scorecard `multimetric.v1.1` and Complete View (`complete_view.v1.2` /
+`complete_view.v1.3`) are **published research grade**. They do **not** silently replace the
+emission scalar in v1.
+
+Two-tier ownership defaults are architecture **0.50** / training **0.50** (both use the emission
+rank metric).
+
 ## How It Works
 
 ```mermaid
 flowchart LR
-    M[Miner two-script bundle] --> G{Static sandbox + param cap}
+    M[Miner two-script bundle] --> G{Static sandbox + dual param ladder}
     G -- reject --> X[[rejected]]
     G --> A[Deterministic admission]
     A --> V[Validator re-executes<br/>forced random init]
-    V --> S[Prequential bpb + held-out delta]
+    V --> S[Held-out primary + prequential bpb secondary]
     S --> W[Raw-weight push → BASE master]
 ```
 
 1. **Submit** — a signed `architecture.py` + `training.py` bundle (a single combined module is rejected).
-2. **Static gates** — AST sandbox, 150M parameter cap, single-node multi-GPU contract; any failure is terminal before GPU.
+2. **Static gates** — AST sandbox, dual param ladder (124M explore / 350M promote), single-node multi-GPU contract; any failure is terminal before GPU.
 3. **Deterministic admission** — challenge-owned checks only; the former LLM gateway hard gate is removed.
 4. **Forced-init re-execution** — one validator re-runs the loop on the locked FineWeb-Edu train split and captures the online loss itself (miner-reported numbers are ignored).
-5. **Scoring** — the challenge computes prequential bits-per-byte plus a secret held-out delta tie-breaker.
-6. **Weights** — emission splits two-tier (best architecture `0.60` / best training variant `0.40`); raw weights push to BASE master aggregation, then validators submit on-chain (or a fake chain in tests).
+5. **Emission scoring** — held-out / generalization **primary**, recomputed prequential bits-per-byte **secondary**, plus memorization / step-0 fail-closed gates.
+6. **Weights** — emission splits two-tier (best architecture `0.50` / best training variant `0.50`); provisional crowns may form at 124M and must be confirmed or revoked at 350M promote. Raw weights push to BASE master aggregation; validators submit on-chain (or a fake chain in tests).
 
 ## Anti-Cheat By Construction
 
@@ -79,7 +112,7 @@ Common cheats are **inert**, not merely detected:
 PRISM includes a **Prism-only, fail-closed local TEE fixture verifier** for unit and contract tests.
 Real Lium/Targon remote attestation that would produce a production PASS is **blocked** until those
 provider readiness gates are satisfied. Local fixture verification does not imply live TEE production
-readiness on Lium or Targon.
+readiness on Lium or Targon. Lab GPU scores and image pin checks never unlock **REAL-PROVIDER TEE PASS**.
 
 ## Worker Plane (optional)
 
@@ -93,13 +126,13 @@ image-digest and attestation tiers). Gated behind `worker_plane` (default off). 
 
 | Guide | Contents |
 |-------|----------|
-| <a href="docs/overview.md">Overview</a> | The challenge in one page |
-| <a href="docs/miner/README.md">Miner guide</a> | Build and submit a two-script bundle |
+| <a href="docs/overview.md">Overview</a> | Research-lab identity, ladder, emission vs science |
+| <a href="docs/miner/README.md">Miner guide</a> | Build and submit a two-script bundle; tiny-1m / mamba-tiny seeds |
 | <a href="docs/validator/README.md">Validator guide</a> | Run evaluation on your own broker |
 | <a href="docs/architecture.md">Architecture</a> | Service design and forced-init re-execution |
-| <a href="docs/submissions.md">Submission format</a> | The two-script contract and `PrismContext` |
-| <a href="docs/scoring.md">Scoring & rewards</a> | Leaderboard prequential bits-per-byte and tie-breakers |
-| <a href="docs/official-comparison.md">Official Comparison v1</a> | Held-out primary / bpb secondary pair protocol (lab) + multimetric.v1.1 scorecard annex |
+| <a href="docs/submissions.md">Submission format</a> | Two-script contract, dual ladder, `PrismContext` |
+| <a href="docs/scoring.md">Scoring & rewards</a> | Emission held-out primary + bpb secondary; two-tier 0.50/0.50 |
+| <a href="docs/official-comparison.md">Official Comparison</a> | Scientific multi-axis grade (not emission scalar) + multimetric / Complete View |
 | <a href="docs/scaling.md">Scaling</a> | Single-node multi-GPU contract |
 | <a href="docs/security.md">Security model</a> | Sandbox, deterministic admission, anti-cheat |
 | <a href="docs/api.md">API</a> | Internal and public routes |
