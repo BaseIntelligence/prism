@@ -94,6 +94,33 @@ def test_normalize_drops_volatile_compute_fields():
     assert manifest["compute"]["wall_clock_seconds"] == 12.5
 
 
+def test_normalize_zeros_train_series_wall_and_realigns_digest():
+    """Telemetry wall_s must not keep two honest replicas from sharing one hash."""
+    series = {
+        "schema_version": "prism_train_series.v1",
+        "points": [
+            {"i": 0, "wall_s": 0.0123, "train_ce_nats": 1.0, "tokens_seen": 8},
+            {"i": 1, "wall_s": 0.0456, "train_ce_nats": 0.9, "tokens_seen": 16},
+        ],
+    }
+    manifest = {
+        "metrics": {
+            "train_series": series,
+            "train_series_sha256": "deadbeef",
+        },
+        "artifacts": {"train_series_sha256": "deadbeef"},
+    }
+    normalized = normalize_manifest_for_replication(manifest)
+    points = normalized["metrics"]["train_series"]["points"]
+    assert all(point["wall_s"] == 0.0 for point in points)
+    assert points[0]["train_ce_nats"] == 1.0  # non-timing preserved
+    digest = normalized["metrics"]["train_series_sha256"]
+    assert digest != "deadbeef" and len(digest) == 64
+    assert normalized["artifacts"]["train_series_sha256"] == digest
+    # Input not mutated.
+    assert series["points"][0]["wall_s"] == 0.0123
+
+
 def test_two_replicas_of_same_submission_agree_on_hash(tmp_path):
     # Two independent worker hosts (distinct artifact roots) re-exec the SAME submission; the
     # normalized manifest hash MUST match so the base worker plane accepts (not disputes) them.

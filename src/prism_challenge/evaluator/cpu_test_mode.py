@@ -147,12 +147,16 @@ def configure_cpu_reexec_test_mode(settings: Any) -> Path:
 
 
 def normalize_manifest_for_replication(manifest: dict[str, Any]) -> dict[str, Any]:
-    """Return a deep copy with volatile ``compute`` timing/memory fields fixed to a constant.
+    """Return a deep copy with volatile host-timing fields fixed to a constant.
 
-    Two honest CPU re-execs of the SAME submission differ ONLY in these host-timing fields; fixing
-    them makes the canonical manifest bytes (and thus :func:`compute_manifest_sha256`) identical,
-    which is what lets two independent worker replicas agree and be accepted (rather than disputed).
+    Two honest CPU re-execs of the SAME submission differ in host timing: the
+    classical ``compute`` wall/RSS fields plus (after telemetry-rt) per-step
+    ``metrics.train_series.points[*].wall_s`` and the linked
+    ``train_series_sha256`` digests. Fix timing so canonical manifest bytes
+    (and thus :func:`compute_manifest_sha256`) match across replicas.
     """
+
+    from .train_series import train_series_sha256
 
     normalized = copy.deepcopy(manifest)
     compute = normalized.get("compute")
@@ -160,6 +164,27 @@ def normalize_manifest_for_replication(manifest: dict[str, Any]) -> dict[str, An
         for field in VOLATILE_COMPUTE_FIELDS:
             if field in compute:
                 compute[field] = 0
+
+    metrics = normalized.get("metrics")
+    series_digest: str | None = None
+    if isinstance(metrics, dict):
+        raw_series = metrics.get("train_series")
+        if isinstance(raw_series, dict):
+            points = raw_series.get("points")
+            if isinstance(points, list):
+                for point in points:
+                    if isinstance(point, dict) and "wall_s" in point:
+                        point["wall_s"] = 0.0
+            series_digest = train_series_sha256(raw_series)
+            if "train_series_sha256" in metrics:
+                metrics["train_series_sha256"] = series_digest
+            if "sha256" in raw_series:
+                raw_series["sha256"] = series_digest
+
+    artifacts = normalized.get("artifacts")
+    if isinstance(artifacts, dict) and "train_series_sha256" in artifacts:
+        artifacts["train_series_sha256"] = series_digest or ("0" * 64)
+
     return normalized
 
 
