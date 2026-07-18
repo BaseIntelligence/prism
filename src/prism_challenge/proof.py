@@ -30,7 +30,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal, Protocol, cast, runtime_checkable
@@ -112,15 +112,15 @@ def worker_signer_from_key(key: str) -> KeypairWorkerSigner:
     The key is the WORKER's OWN signing key (never a master secret); the worker agent injects it.
     """
 
-    import bittensor as bt
+    from .keypair import keypair_from_mnemonic, keypair_from_seed, keypair_from_uri
 
     value = key.strip()
     if value.startswith("//"):
-        keypair = bt.Keypair.create_from_uri(value)
+        keypair = keypair_from_uri(value)
     elif " " in value:
-        keypair = bt.Keypair.create_from_mnemonic(value)
+        keypair = keypair_from_mnemonic(value)
     else:
-        keypair = cast(Callable[[str], Any], bt.Keypair.create_from_seed)(value)
+        keypair = keypair_from_seed(value)
     return KeypairWorkerSigner(keypair)
 
 

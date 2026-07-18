@@ -24,7 +24,6 @@ import sys
 from pathlib import Path
 from typing import Any
 
-import bittensor as bt
 from base.validator.agent import AssignmentContext, BrokerConfig, ExecutionResult
 from base.validator.agent.signing import KeypairRequestSigner
 from base.worker.coordination_client import WorkerCoordinationClient
@@ -37,6 +36,7 @@ from prism_challenge.evaluator.cpu_test_mode import (
     configure_cpu_reexec_test_mode,
     evaluate_cpu_reexec,
 )
+from prism_challenge.keypair import keypair_from_uri
 from prism_challenge.proof import compute_manifest_sha256
 
 
@@ -125,8 +125,8 @@ async def _run(config: dict[str, Any]) -> None:
     settings = _worker_settings(prism)
     configure_cpu_reexec_test_mode(settings)
 
-    miner_kp = bt.Keypair.create_from_uri(config["miner_uri"])
-    worker_kp = bt.Keypair.create_from_uri(config["worker_uri"])
+    miner_kp = keypair_from_uri(config["miner_uri"])
+    worker_kp = keypair_from_uri(config["worker_uri"])
     worker_signer = KeypairRequestSigner(worker_kp)
     binding = build_signed_binding(
         worker_pubkey=worker_kp.ss58_address,

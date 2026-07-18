@@ -2,12 +2,54 @@ from __future__ import annotations
 
 import logging
 import os
+import tempfile
 from pathlib import Path
 from typing import Any, Literal
 
 from base.challenge_sdk.config import ChallengeSettings
 from pydantic import AliasChoices, BaseModel, Field
 from pydantic_settings import SettingsConfigDict
+
+_DATA_TMP_ARTIFACT_ROOT = Path("/data/tmp/prism-eval-artifacts")
+_TMP_ARTIFACT_ROOT = Path("/tmp/prism-eval-artifacts")
+
+
+def _path_parent_is_creatable(path: Path) -> bool:
+    """True when ``path`` can be mkdir'd without permission errors (probe, rollback)."""
+    try:
+        if path.exists():
+            return path.is_dir() and os.access(path, os.W_OK | os.X_OK)
+        # Find nearest existing ancestor that would host the remaining parents.
+        existing = path.parent
+        created: list[Path] = []
+        while not existing.exists() and existing != existing.parent:
+            created.append(existing)
+            existing = existing.parent
+        if not existing.exists() or not existing.is_dir():
+            return False
+        if not os.access(existing, os.W_OK | os.X_OK):
+            return False
+        # Real probe: mkdir intermediates + leaf, cleanup what we created.
+        path.mkdir(parents=True, exist_ok=True)
+        created.append(path)
+        for created_path in reversed(created):
+            try:
+                created_path.rmdir()
+            except OSError:
+                break
+        return True
+    except OSError:
+        return False
+
+
+def _default_base_eval_artifact_root() -> Path:
+    """Compose prefers ``/data/tmp``; CI/dev hosts without ``/data`` use temp/tmp."""
+    if _path_parent_is_creatable(_DATA_TMP_ARTIFACT_ROOT):
+        return _DATA_TMP_ARTIFACT_ROOT
+    if _path_parent_is_creatable(_TMP_ARTIFACT_ROOT):
+        return _TMP_ARTIFACT_ROOT
+    return Path(tempfile.gettempdir()) / "prism-eval-artifacts"
+
 
 _PROOF_RUNTIME_ENVIRONMENT_NAMES = frozenset(
     {
@@ -531,11 +573,12 @@ class PrismSettings(ChallengeSettings):
     base_eval_gpu_server: str | None = None
     base_eval_gpu_device_ids: tuple[str, ...] = ()
     base_eval_task: str = "architecture"
-    # Default onto the persistent `/data` volume (same family as TMPDIR=/data/tmp in
-    # Compose). Hardcoding `/tmp/...` breaks on locked-down `/tmp` (uid 1000 cannot
-    # create `/tmp/prism-eval-artifacts` → admission/eval fails with EACCES).
+    # Prefer the composepersistent `/data/tmp` volume when writable (locked-down
+    # container `/tmp` breaks hardcoding `/tmp/prism-eval-artifacts` as uid 1000).
+    # On bare hosts / CI without `/data`, fall back to the process temp dir so
+    # unit tests and local pytest never PermissionError on mkdir.
     base_eval_artifact_root: Path = Field(
-        default=Path("/data/tmp/prism-eval-artifacts"),
+        default_factory=lambda: _default_base_eval_artifact_root(),
         validation_alias=AliasChoices(
             "PRISM_BASE_EVAL_ARTIFACT_ROOT",
             "CHALLENGE_BASE_EVAL_ARTIFACT_ROOT",

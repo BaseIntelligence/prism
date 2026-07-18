@@ -85,13 +85,42 @@ def test_settings_still_accept_field_names() -> None:
     assert settings.docker_broker_url == "http://broker"
 
 
-def test_base_eval_artifact_root_defaults_to_data_tmp(monkeypatch) -> None:
-    """Compose locks down /tmp; default must land under writable /data/tmp."""
+def test_base_eval_artifact_root_prefers_data_tmp_when_writable(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """Compose path wins when /data/tmp is writable; otherwise temp/tmp fallback."""
+    from prism_challenge import config as config_mod
+
     monkeypatch.delenv("PRISM_BASE_EVAL_ARTIFACT_ROOT", raising=False)
     monkeypatch.delenv("CHALLENGE_BASE_EVAL_ARTIFACT_ROOT", raising=False)
+
+    # Simulate a writable compose volume under /data/tmp.
+    data_tmp = tmp_path / "data" / "tmp"
+    data_tmp.mkdir(parents=True)
+    fake_data_root = data_tmp / "prism-eval-artifacts"
+    monkeypatch.setattr(config_mod, "_DATA_TMP_ARTIFACT_ROOT", fake_data_root)
+
     settings = PrismSettings()
-    assert settings.base_eval_artifact_root == Path("/data/tmp/prism-eval-artifacts")
-    assert not str(settings.base_eval_artifact_root).startswith("/tmp/")
+    assert settings.base_eval_artifact_root == fake_data_root
+
+
+def test_base_eval_artifact_root_falls_back_when_data_unwritable(monkeypatch) -> None:
+    """CI hosts without /data must not PermissionError on the unwritable compose path."""
+    from prism_challenge import config as config_mod
+
+    monkeypatch.delenv("PRISM_BASE_EVAL_ARTIFACT_ROOT", raising=False)
+    monkeypatch.delenv("CHALLENGE_BASE_EVAL_ARTIFACT_ROOT", raising=False)
+    # Point preferred compose root at a path under / that is never creatable as non-root.
+    monkeypatch.setattr(
+        config_mod, "_DATA_TMP_ARTIFACT_ROOT", Path("/proc/prism-no-such-artifacts")
+    )
+    settings = PrismSettings()
+    root = settings.base_eval_artifact_root
+    assert root.name == "prism-eval-artifacts"
+    # Must be a creatable location (tmp or system temp), never the unwritable probe path.
+    assert root != Path("/proc/prism-no-such-artifacts")
+    root.mkdir(parents=True, exist_ok=True)
+    assert root.is_dir()
 
 
 def test_base_eval_artifact_root_env_override(monkeypatch, tmp_path: Path) -> None:

@@ -33,9 +33,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-import bittensor as bt
 import httpx
 from base.security.validator_auth import canonical_validator_request
+
+from prism_challenge.keypair import keypair_from_uri
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 BASE_SRC = REPO_ROOT / "base" / "src"
@@ -71,7 +72,7 @@ WORKER_URIS = {
 
 
 def ss58(uri: str) -> str:
-    return bt.Keypair.create_from_uri(uri).ss58_address
+    return keypair_from_uri(uri).ss58_address
 
 
 @dataclass
@@ -101,7 +102,7 @@ class Harness:
         from prism_challenge.evaluator.cpu_test_mode import stage_tiny_train_data
 
         stage_tiny_train_data(self.workdir)
-        self.validator_kp = bt.Keypair.create_from_uri(VALIDATOR_URI)
+        self.validator_kp = keypair_from_uri(VALIDATOR_URI)
 
     # -- process management ---------------------------------------------------
     def _env(self) -> dict[str, str]:

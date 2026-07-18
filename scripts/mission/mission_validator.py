@@ -21,7 +21,6 @@ import sys
 from pathlib import Path
 from typing import Any
 
-import bittensor as bt
 from base.validator.agent import (
     AssignmentContext,
     BrokerConfig,
@@ -36,6 +35,7 @@ from prism_challenge.evaluator.cpu_test_mode import (
     configure_cpu_reexec_test_mode,
     evaluate_cpu_reexec,
 )
+from prism_challenge.keypair import keypair_from_uri
 
 AUDIT_OF_PAYLOAD_KEY = "audit_of_work_unit_id"
 
@@ -110,7 +110,7 @@ async def _run(config: dict[str, Any]) -> None:
     settings = _validator_settings(prism)
     configure_cpu_reexec_test_mode(settings)
 
-    validator_kp = bt.Keypair.create_from_uri(config["validator_uri"])
+    validator_kp = keypair_from_uri(config["validator_uri"])
     client = CoordinationClient(config["master_url"], KeypairRequestSigner(validator_kp))
     agent = ValidatorAgent(
         client=client,

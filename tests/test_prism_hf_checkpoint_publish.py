@@ -233,8 +233,10 @@ def test_malformed_payload_rejected_400(tmp_path):
 
 
 def test_real_keypair_eligible_upload_accepted(tmp_path):
-    bt = pytest.importorskip("bittensor")
-    keypair = bt.Keypair.create_from_uri("//Alice")
+    pytest.importorskip("bittensor")
+    from prism_challenge.keypair import keypair_from_uri
+
+    keypair = keypair_from_uri("//Alice")
     hotkey = keypair.ss58_address
     mock = MockCheckpointPublisher()
     settings = _settings(tmp_path, validator_hotkeys=(hotkey,), allow_insecure=False)
@@ -262,9 +264,11 @@ def test_real_keypair_eligible_upload_accepted(tmp_path):
 
 
 def test_real_keypair_forged_upload_rejected(tmp_path):
-    bt = pytest.importorskip("bittensor")
-    alice = bt.Keypair.create_from_uri("//Alice")
-    bob = bt.Keypair.create_from_uri("//Bob")
+    pytest.importorskip("bittensor")
+    from prism_challenge.keypair import keypair_from_uri
+
+    alice = keypair_from_uri("//Alice")
+    bob = keypair_from_uri("//Bob")
     hotkey = alice.ss58_address
     mock = MockCheckpointPublisher()
     settings = _settings(tmp_path, validator_hotkeys=(hotkey,), allow_insecure=False)
@@ -292,8 +296,10 @@ def test_real_keypair_forged_upload_rejected(tmp_path):
 
 
 def test_real_keypair_unpermitted_upload_rejected_403(tmp_path):
-    bt = pytest.importorskip("bittensor")
-    keypair = bt.Keypair.create_from_uri("//Alice")
+    pytest.importorskip("bittensor")
+    from prism_challenge.keypair import keypair_from_uri
+
+    keypair = keypair_from_uri("//Alice")
     hotkey = keypair.ss58_address
     mock = MockCheckpointPublisher()
     # Correctly signed by Alice, but Alice holds no validator permit (empty permit set).

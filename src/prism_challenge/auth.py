@@ -38,9 +38,10 @@ def _decode_signature(signature: str) -> bytes | str:
 
 def verify_hotkey_signature(hotkey: str, message: bytes, signature: str) -> bool:
     try:
-        import bittensor as bt  # type: ignore
+        # bittensor v11 removed bt.Keypair; resolve via wallet/sp_core (see keypair.py).
+        from .keypair import keypair_from_ss58
 
-        keypair = bt.Keypair(ss58_address=hotkey)
+        keypair = keypair_from_ss58(hotkey)
         return bool(keypair.verify(message, _decode_signature(signature)))
     except Exception as exc:
         # Security: log only exception type + message, never the signature or message bytes.

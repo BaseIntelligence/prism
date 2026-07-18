@@ -77,8 +77,10 @@ def _submission_body(code: str = "print(1)") -> bytes:
 
 
 def test_live_signed_submission_authenticates(secure_client: TestClient) -> None:
-    bt = pytest.importorskip("bittensor")
-    keypair = bt.Keypair.create_from_uri("//Alice")
+    pytest.importorskip("bittensor")
+    from prism_challenge.keypair import keypair_from_uri
+
+    keypair = keypair_from_uri("//Alice")
     body = _submission_body()
     nonce = "live-accept-1"
     timestamp = str(int(time.time()))
@@ -101,9 +103,11 @@ def test_live_signed_submission_authenticates(secure_client: TestClient) -> None
 
 
 def test_live_forged_submission_rejected(secure_client: TestClient) -> None:
-    bt = pytest.importorskip("bittensor")
-    keypair = bt.Keypair.create_from_uri("//Alice")
-    attacker = bt.Keypair.create_from_uri("//Bob")
+    pytest.importorskip("bittensor")
+    from prism_challenge.keypair import keypair_from_uri
+
+    keypair = keypair_from_uri("//Alice")
+    attacker = keypair_from_uri("//Bob")
     body = _submission_body()
     nonce = "live-forge-1"
     timestamp = str(int(time.time()))
@@ -126,8 +130,10 @@ def test_live_forged_submission_rejected(secure_client: TestClient) -> None:
 
 
 def test_dev_hmac_submission_rejected_when_insecure_disabled(secure_client: TestClient) -> None:
-    bt = pytest.importorskip("bittensor")
-    keypair = bt.Keypair.create_from_uri("//Alice")
+    pytest.importorskip("bittensor")
+    from prism_challenge.keypair import keypair_from_uri
+
+    keypair = keypair_from_uri("//Alice")
     body = _submission_body()
     nonce = "live-hmac-1"
     timestamp = str(int(time.time()))

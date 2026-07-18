@@ -26,7 +26,6 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
-import bittensor as bt
 from base.validator.agent import BrokerConfig, CoordinationClient, ValidatorAgent
 from base.validator.agent.adapters.prism import PrismCycleExecutor
 from base.validator.agent.challenge_dispatch import ChallengeDispatchExecutor
@@ -34,6 +33,7 @@ from base.validator.agent.signing import KeypairRequestSigner
 
 from prism_challenge.config import PrismSettings
 from prism_challenge.evaluator.cpu_test_mode import configure_cpu_reexec_test_mode
+from prism_challenge.keypair import keypair_from_uri
 from prism_challenge.validator_dispatch import CHALLENGE_SLUG, dispatch_assignment
 
 # A no-op gateway token/URL: the primary dispatch path requires a scoped gateway config, but the
@@ -121,7 +121,7 @@ async def _run(config: dict[str, Any]) -> None:
     settings = _legacy_settings(prism)
     configure_cpu_reexec_test_mode(settings)
 
-    validator_kp = bt.Keypair.create_from_uri(config["validator_uri"])
+    validator_kp = keypair_from_uri(config["validator_uri"])
     client = CoordinationClient(config["master_url"], KeypairRequestSigner(validator_kp))
     executor = ChallengeDispatchExecutor(
         executors={CHALLENGE_SLUG: PrismCycleExecutor(dispatch=_build_dispatch(settings))}
