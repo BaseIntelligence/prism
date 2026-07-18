@@ -189,12 +189,11 @@ def promote_path_decision(
 
 
 # Durable crown_status values stored on architecture_families / training_variants.
-CROWN_STATUS_NONE = "none"
-CROWN_STATUS_PROVISIONAL = "provisional"
-CROWN_STATUS_CONFIRMED = "confirmed"
-CROWN_STATUS_REVOKED = "revoked"
-
 CrownStatus = Literal["none", "provisional", "confirmed", "revoked"]
+CROWN_STATUS_NONE: CrownStatus = "none"
+CROWN_STATUS_PROVISIONAL: CrownStatus = "provisional"
+CROWN_STATUS_CONFIRMED: CrownStatus = "confirmed"
+CROWN_STATUS_REVOKED: CrownStatus = "revoked"
 
 
 def resolve_package_pin(
@@ -244,15 +243,14 @@ def resolve_crown_status_transition(
       a failed promote on a confirmed/pinned tooth revokes.
     """
     prev_raw = str(previous_status or CROWN_STATUS_NONE).strip().lower() or CROWN_STATUS_NONE
-    valid_prev: set[str] = {
-        CROWN_STATUS_NONE,
-        CROWN_STATUS_PROVISIONAL,
-        CROWN_STATUS_CONFIRMED,
-        CROWN_STATUS_REVOKED,
-    }
-    prev: CrownStatus = (
-        prev_raw if prev_raw in valid_prev else CROWN_STATUS_NONE  # type: ignore[assignment]
-    )
+    if prev_raw == CROWN_STATUS_PROVISIONAL:
+        prev = CROWN_STATUS_PROVISIONAL
+    elif prev_raw == CROWN_STATUS_CONFIRMED:
+        prev = CROWN_STATUS_CONFIRMED
+    elif prev_raw == CROWN_STATUS_REVOKED:
+        prev = CROWN_STATUS_REVOKED
+    else:
+        prev = CROWN_STATUS_NONE
     stage = normalize_param_ladder_stage(incoming_stage)
     pin = str(incoming_pin or "").strip()
     prev_pin = str(previous_pin or "").strip()
