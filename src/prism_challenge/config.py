@@ -354,7 +354,14 @@ class PrismSettings(ChallengeSettings):
     signature_ttl_seconds: int = 300
     epoch_seconds: int = 21_600
     max_code_bytes: int = 7_500_000
-    max_parameters: int = 150_000_000
+    # Dual param ladder (VAL-RESLAB-003): explore/provisional default = 124M continuous admission.
+    # Promote-stage runs use ``promote_max_parameters`` (350M) with ``param_ladder_stage=promote``.
+    # Legacy single 150M emission default is gone from the dual-ladder path.
+    max_parameters: int = 124_000_000
+    explore_max_parameters: int = 124_000_000
+    promote_max_parameters: int = 350_000_000
+    # Default emission admission stage label (explore | promote). Promote path is opt-in.
+    param_ladder_stage: Literal["explore", "promote"] = "explore"
     max_layers: int = 96
     max_sequence_length: int = 512
     sequence_length: int = 128
@@ -704,6 +711,38 @@ class PrismSettings(ChallengeSettings):
             token = self.hf_token_file.read_text(encoding="utf-8").strip()
             return token or None
         return None
+
+    def max_parameters_for_ladder_stage(
+        self, stage: Literal["explore", "promote"] | str | None = None
+    ) -> int:
+        """Hard param cap for a dual-ladder stage (VAL-RESLAB-003).
+
+        Defaults to the configured ``param_ladder_stage``. Explore →
+        ``explore_max_parameters`` (124M); promote → ``promote_max_parameters`` (350M).
+        """
+        resolved = (stage or self.param_ladder_stage or "explore").strip().lower()
+        if resolved == "promote":
+            return int(self.promote_max_parameters)
+        if resolved == "explore":
+            return int(self.explore_max_parameters)
+        raise ValueError(f"unknown param ladder stage {stage!r}; expected 'explore' or 'promote'")
+
+    def resolve_admission_max_parameters(
+        self, stage: Literal["explore", "promote"] | str | None = None
+    ) -> tuple[str, int]:
+        """Return ``(stage, cap)`` for emission admission under the dual ladder.
+
+        When ``stage`` is omitted, uses settings ``param_ladder_stage`` and the
+        corresponding stage cap. An explicit numeric ``max_parameters`` override on
+        settings remains available for lab harnesses but is **not** the dual-ladder
+        default path (legacy 150M-only default is gone).
+        """
+        resolved = (stage or self.param_ladder_stage or "explore").strip().lower()
+        if resolved not in ("explore", "promote"):
+            raise ValueError(
+                f"unknown param ladder stage {stage!r}; expected 'explore' or 'promote'"
+            )
+        return resolved, self.max_parameters_for_ladder_stage(resolved)
 
 
 _settings: PrismSettings | None = None

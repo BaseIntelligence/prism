@@ -274,7 +274,11 @@ def test_official_step0_anomaly_disqualifies_despite_fabulous_metrics() -> None:
 def test_protocol_budget_constants_surface_matched_pin() -> None:
     constants = protocol_budget_constants()
     assert constants["protocol_id"] == PROTOCOL_ID
-    assert constants["param_cap"] == OFFICIAL_PARAM_CAP == 150_000_000
+    # Official default pin follows promote ceiling (350M); dual ladder visible.
+    assert constants["param_cap"] == OFFICIAL_PARAM_CAP == 350_000_000
+    assert constants["explore_max_parameters"] == 124_000_000
+    assert constants["promote_max_parameters"] == 350_000_000
+    assert constants["param_ladder_stage"] == "promote"
     assert constants["token_budget"] == OFFICIAL_DEFAULT_TOKEN_BUDGET
     assert constants["seeds"] == list(OFFICIAL_DEFAULT_SEEDS)
     assert len(constants["seeds"]) >= 3

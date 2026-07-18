@@ -2,7 +2,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Literal, Protocol
+
+from .param_ladder import (
+    EXPLORE_MAX_PARAMETERS,
+    STAGE_EXPLORE,
+    max_parameters_for_stage,
+    normalize_param_ladder_stage,
+)
 
 # Two-script submission contract (architecture.md section 2). A v2 bundle MUST contain TWO
 # distinct scripts: an architecture module exposing a `build_model(ctx)` factory and a training
@@ -23,7 +30,10 @@ class PrismContext:
     vocab_size: int = 4096
     sequence_length: int = 128
     max_layers: int = 96
-    max_parameters: int = 150_000_000
+    # Dual ladder default = explore (124M). Promote-stage runs set 350M + stage="promote".
+    max_parameters: int = EXPLORE_MAX_PARAMETERS
+    # Ladder stage label surfacing on scores/manifests (explore | promote).
+    param_ladder_stage: Literal["explore", "promote"] = STAGE_EXPLORE
     seed: int = 1337
     checkpoint_dir: Path | None = None
     resume_checkpoint_dir: Path | None = None
@@ -52,6 +62,16 @@ class PrismContext:
     @property
     def max_params(self) -> int:
         return self.max_parameters
+
+    @property
+    def ladder_stage(self) -> Literal["explore", "promote"]:
+        """Canonical dual-ladder stage for this evaluation context."""
+        return normalize_param_ladder_stage(self.param_ladder_stage)
+
+    @property
+    def ladder_stage_cap(self) -> int:
+        """Hard stage cap (ignores per-run numeric overrides on ``max_parameters``)."""
+        return max_parameters_for_stage(self.ladder_stage)
 
     def reference_tokenizer(self, name: str) -> Any:
         """Load a pre-staged reference tokenizer (offline, no network).

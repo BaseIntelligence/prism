@@ -54,7 +54,7 @@ SEED_FAMILIES: dict[str, SeedFamily] = {
         source_dir=EXAMPLES_ROOT / "tiny-1m",
         description=(
             "Weight-tied ~1M decoder transformer (dim=128, heads=4, 2 layers, SwiGLU) "
-            "under the two-script Prism contract and 150M param cap."
+            "under the two-script Prism contract and the 124M explore ladder cap."
         ),
         knobs={
             "param_counting": (
@@ -80,7 +80,7 @@ SEED_FAMILIES: dict[str, SeedFamily] = {
         description=(
             "Weight-tied ~1M pure-PyTorch selective SSM (Mamba-style) language model "
             "(dim=128, 2 layers, d_state=16) under the two-script Prism contract and "
-            "150M param cap. No blocked mamba_ssm C++/CUDA extension is required."
+            "124M explore ladder cap. No blocked mamba_ssm C++/CUDA extension is required."
         ),
         knobs={
             "param_counting": (

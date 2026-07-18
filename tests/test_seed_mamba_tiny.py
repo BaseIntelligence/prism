@@ -1,7 +1,7 @@
 """Mamba/SSM pure-torch seed package gates (VAL-SEED-004/005/006/007/008/009).
 
 Targeted lab-seed surface only: inventory + packaging harness symmetry with Transformer,
-AST sandbox (no blocked mamba_ssm), forced-seed param cap ≤150M, multi-GPU single-node
+AST sandbox (no blocked mamba_ssm), forced-seed param cap ≤124M explore, multi-GPU single-node
 static contract, dual-family zip outer shape, and documented family knobs.
 """
 
@@ -37,7 +37,8 @@ MAMBA_ROOT = REPO_ROOT / "examples" / "mamba-tiny"
 TINY_ROOT = REPO_ROOT / "examples" / "tiny-1m"
 FAMILY_ID = "mamba-tiny-1m"
 TRANSFORMER_FAMILY_ID = "transformer-tiny-1m"
-MAX_PARAMS = 150_000_000
+# Dual ladder explore default (VAL-RESLAB-003); seeds stay under 124M explore.
+MAX_PARAMS = 124_000_000
 # Static lab path must not import these blocked native / FFI / extension surfaces.
 _BLOCKED_IMPORT_ROOTS = frozenset(
     {
@@ -136,7 +137,7 @@ def test_mamba_seed_passes_ast_sandbox_without_native_mamba_ssm() -> None:
 
 @pytest.mark.parametrize("vocab_size", [4096, 50257])
 def test_mamba_seed_under_param_cap_forced_seed(vocab_size: int) -> None:
-    """VAL-SEED-006: forced-seed static instantiation reports ≤ 150M params."""
+    """VAL-SEED-006: forced-seed static instantiation reports ≤ 124M explore params."""
     arch, _train = _read_scripts()
     ctx = PrismContext(vocab_size=vocab_size, sequence_length=128, seed=1337)
     count = check_build_model_static(
@@ -213,7 +214,12 @@ def test_seed_family_differences_documented() -> None:
     mamba_readme = (MAMBA_ROOT / "README.md").read_text(encoding="utf-8")
     assert "mamba-tiny-1m" in mamba_readme
     assert "transformer-tiny-1m" in mamba_readme
-    assert "150_000_000" in mamba_readme or "150,000,000" in mamba_readme
+    assert (
+        "124_000_000" in mamba_readme
+        or "124,000,000" in mamba_readme
+        or "124M" in mamba_readme
+        or "124m" in mamba_readme.lower()
+    )
     assert "mamba_ssm" in mamba_readme  # pure-torch caveat vs blocked native dep
     for needle in ("Param", "throughput", "Multi-GPU", "Stability"):
         assert re.search(needle, mamba_readme, re.IGNORECASE)

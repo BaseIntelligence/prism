@@ -975,6 +975,44 @@ class PrismWorker:
         final_score_value = max(0.0, score.final_score * anti_multiplier)
         metrics_payload = score.metrics_payload()
         metrics_payload["arch_hash"] = arch_hash
+        # Dual ladder stage labels on the scores row (VAL-RESLAB-003); never enter final_score.
+        from .evaluator.param_ladder import (
+            STAGE_EXPLORE,
+            ladder_labels,
+            normalize_param_ladder_stage,
+        )
+
+        stage_raw = None
+        model_params_metric = None
+        for block_key in ("compute", "metrics", "score"):
+            block = manifest.get(block_key) if isinstance(manifest, dict) else None
+            if not isinstance(block, dict):
+                continue
+            if stage_raw is None and isinstance(block.get("param_ladder_stage"), str):
+                stage_raw = block.get("param_ladder_stage")
+            if model_params_metric is None:
+                mp = block.get("model_params")
+                if isinstance(mp, int) and not isinstance(mp, bool) and mp >= 0:
+                    model_params_metric = mp
+        ctx_stage = getattr(self.ctx, "param_ladder_stage", None)
+        stage = normalize_param_ladder_stage(stage_raw or ctx_stage or STAGE_EXPLORE)
+        ctx_cap = getattr(self.ctx, "max_parameters", None)
+        stage_cap = int(ctx_cap) if isinstance(ctx_cap, int) and ctx_cap > 0 else None
+        labels = ladder_labels(
+            stage,
+            param_count=model_params_metric,
+            score_valid=final_score_value > 0.0 and not bool(getattr(score, "anomaly", False)),
+            max_parameters=stage_cap,
+        )
+        metrics_payload.update(
+            {
+                "param_ladder_stage": labels["param_ladder_stage"],
+                "param_ladder_cap": labels["param_ladder_cap"],
+                "provisional_crown_eligible": labels["provisional_crown_eligible"],
+            }
+        )
+        if model_params_metric is not None:
+            metrics_payload.setdefault("model_params", model_params_metric)
         training_hash = fingerprints.training_hash if fingerprints else ""
         arch_fingerprint = (fingerprints.arch_fingerprint if fingerprints else "") or arch_hash
         behavior_fingerprint = (

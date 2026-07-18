@@ -499,6 +499,7 @@ class PrismContainerEvaluator:
                 "sequence_length": self.ctx.sequence_length,
                 "max_layers": self.ctx.max_layers,
                 "max_parameters": self.ctx.max_parameters,
+                "param_ladder_stage": getattr(self.ctx, "param_ladder_stage", "explore"),
                 "seed": self.ctx.seed,
                 "data_dir": self.settings.base_eval_data_dir,
                 "artifacts_dir": "/artifacts",
@@ -795,6 +796,21 @@ def _ensure_compute_block(
         if model_params is not None and tokens_consumed is not None
         else None
     )
+    # Preserve dual ladder stage labels through host compute reconciliation (VAL-RESLAB-003).
+    ladder_stage = _compute_block_value(manifest, "param_ladder_stage")
+    if not isinstance(ladder_stage, str) or not ladder_stage:
+        metrics_block = manifest.get("metrics")
+        if isinstance(metrics_block, dict) and isinstance(
+            metrics_block.get("param_ladder_stage"), str
+        ):
+            ladder_stage = metrics_block.get("param_ladder_stage")
+        else:
+            ladder_stage = None
+    ladder_cap = _coerce_opt_int(_compute_block_value(manifest, "param_ladder_cap"))
+    if ladder_cap is None:
+        metrics_block = manifest.get("metrics")
+        if isinstance(metrics_block, dict):
+            ladder_cap = _coerce_opt_int(metrics_block.get("param_ladder_cap"))
     manifest["compute"] = build_compute_block(
         gpu_count=gpu_count,
         world_size=world_size,
@@ -802,6 +818,8 @@ def _ensure_compute_block(
         device=device,
         max_gpu_count=max_gpu_count,
         model_params=model_params,
+        param_ladder_stage=ladder_stage if isinstance(ladder_stage, str) else None,
+        param_ladder_cap=ladder_cap,
         peak_vram_bytes=_coerce_opt_int(_compute_block_value(manifest, "peak_vram_bytes")),
         peak_rss_bytes=_coerce_opt_int(_compute_block_value(manifest, "peak_rss_bytes")),
         wall_clock_seconds=_coerce_opt_float(_compute_block_value(manifest, "wall_clock_seconds")),
@@ -1521,7 +1539,9 @@ class PrismContext:
     vocab_size: int = 50304
     sequence_length: int = 1024
     max_layers: int = 96
-    max_parameters: int = 150_000_000
+    # Dual ladder default = explore 124M (promote = 350M via host context).
+    max_parameters: int = 124_000_000
+    param_ladder_stage: str = "explore"
     seed: int = 1337
     data_dir: str | None = None
     artifacts_dir: str | None = None
@@ -1549,6 +1569,11 @@ class PrismContext:
     @property
     def max_params(self):
         return self.max_parameters
+
+    @property
+    def ladder_stage(self):
+        stage = str(self.param_ladder_stage or "explore").strip().lower()
+        return stage if stage in ("explore", "promote") else "explore"
 
     def build_model(self, *args, **kwargs):
         # Re-apply the forced init so the miner cannot override the random initialization.
@@ -1680,7 +1705,8 @@ ctx = PrismContext(
     vocab_size=int(context_data.get("vocab_size", 50304)),
     sequence_length=int(context_data.get("sequence_length", 1024)),
     max_layers=int(context_data.get("max_layers", 96) or 96),
-    max_parameters=int(context_data.get("max_parameters", 150_000_000)),
+    max_parameters=int(context_data.get("max_parameters", 124_000_000)),
+    param_ladder_stage=str(context_data.get("param_ladder_stage") or "explore"),
     seed=forced_seed,
     data_dir=str(data_dir),
     artifacts_dir=str(artifacts_dir),
@@ -1711,11 +1737,24 @@ def _compute_block(peak_vram_bytes=None, peak_rss_bytes=None, wall_clock_seconds
     # in here so the host reconciliation preserves it; the host derives the 6ND FLOPs estimate.
     from prism_challenge.evaluator.scoring import build_compute_block
 
+    ladder_stage = str(
+        getattr(ctx, "param_ladder_stage", None)
+        or context_data.get("param_ladder_stage")
+        or "explore"
+    )
+    ladder_cap = int(
+        context_data.get("max_parameters")
+        or getattr(ctx, "max_parameters", 124_000_000)
+        or 124_000_000
+    )
     return build_compute_block(
         gpu_count=world_size,
         world_size=world_size,
         nproc_per_node=world_size,
         device=str(device),
+        model_params=getattr(interface, "_SCORED_MODEL_PARAMS", None),
+        param_ladder_stage=ladder_stage,
+        param_ladder_cap=ladder_cap,
         peak_vram_bytes=peak_vram_bytes,
         peak_rss_bytes=peak_rss_bytes,
         wall_clock_seconds=wall_clock_seconds,
@@ -2008,6 +2047,17 @@ def _write_challenge_manifest():
         "nan_inf_batches": nan_inf_batches,
         "train_bpb_basis": train_bpb_basis,
         "model_params": scored_model_params,
+        # Dual ladder stage labels (VAL-RESLAB-003); observability-only.
+        "param_ladder_stage": str(
+            getattr(ctx, "param_ladder_stage", None)
+            or context_data.get("param_ladder_stage")
+            or "explore"
+        ),
+        "param_ladder_cap": int(
+            context_data.get("max_parameters")
+            or getattr(ctx, "max_parameters", 124_000_000)
+            or 124_000_000
+        ),
     }
     # Series pointer + digest participate in the hashed challenge manifest / proof path
     # (VAL-TELE-006). Also embed the full challenge-owned series body under metrics.train_series

@@ -120,36 +120,36 @@ PLAIN_TRAIN = (
 )
 
 
-# --- VAL-CONTRACT-019: model > 150M params rejected at the forced-seed static gate ---
+# --- VAL-CONTRACT-019 / VAL-RESLAB-003: model > explore 124M rejected at static gate ---
 
 
 def test_contract_param_cap_rejects_oversize_model() -> None:
-    # 50304 * 3000 = 150,912,000 > 150,000,000
+    # 50304 * 2500 = 125,760,000 > 124,000,000 explore ladder default
     arch = (
         "import torch\n"
         "from torch import nn\n\n"
         "def build_model(ctx):\n"
-        "    return nn.Embedding(50304, 3000)\n"
+        "    return nn.Embedding(50304, 2500)\n"
     )
     with pytest.raises(SandboxViolation) as raised:
         check_build_model_static({"architecture.py": arch}, "architecture.py", ctx=CTX)
     assert raised.value.evidence[0].rule_id == PARAM_CAP_RULE
-    assert "150,912,000" in str(raised.value) or "150912000" in str(raised.value)
+    assert "125,760,000" in str(raised.value) or "125760000" in str(raised.value)
 
 
-# --- VAL-CONTRACT-020: model just under 150M passes the param gate ---
+# --- VAL-CONTRACT-020 / VAL-RESLAB-003: model just under explore 124M passes ---
 
 
 def test_contract_param_cap_accepts_just_under_model() -> None:
-    # 50304 * 2980 = 149,905,920 < 150,000,000
+    # 50304 * 2460 = 123,747,840 < 124,000,000 explore ladder default
     arch = (
         "import torch\n"
         "from torch import nn\n\n"
         "def build_model(ctx):\n"
-        "    return nn.Embedding(50304, 2980)\n"
+        "    return nn.Embedding(50304, 2460)\n"
     )
     count = check_build_model_static({"architecture.py": arch}, "architecture.py", ctx=CTX)
-    assert count == 50304 * 2980
+    assert count == 50304 * 2460
     assert count <= CTX.max_params
 
 

@@ -20,6 +20,7 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from typing import Any, Literal, cast
 
+from . import param_ladder as _param_ladder
 from .scoring import (
     HELDOUT_DELTA_BPB_EPSILON,
     MEMORIZATION_GAP_THRESHOLD_BPB,
@@ -27,6 +28,15 @@ from .scoring import (
     PrequentialBpbScore,
     score_prequential_bpb,
 )
+
+# Dual ladder re-exports for Official pin consumers (VAL-RESLAB-003).
+OFFICIAL_EXPLORE_PARAM_CAP = _param_ladder.EXPLORE_MAX_PARAMETERS
+OFFICIAL_PROMOTE_PARAM_CAP = _param_ladder.PROMOTE_MAX_PARAMETERS
+OFFICIAL_DEFAULT_PARAM_CAP = _param_ladder.OFFICIAL_DEFAULT_PARAM_CAP
+OFFICIAL_DEFAULT_PARAM_STAGE = _param_ladder.OFFICIAL_DEFAULT_PARAM_STAGE
+OFFICIAL_EXPLORE_STAGE = _param_ladder.STAGE_EXPLORE
+OFFICIAL_PROMOTE_STAGE = _param_ladder.STAGE_PROMOTE
+dual_ladder_summary = _param_ladder.dual_ladder_summary
 
 # --- Protocol pin constants (VAL-COMP-006 / docs ProtocolPin sketch) ---------------------------
 PROTOCOL_ID = "prism_official_compare.v1"
@@ -58,7 +68,10 @@ OFFICIAL_LONG_CTX_CHANCE: dict[str, float] = {
 }
 
 # Matched-budget protocol defaults (fair fixed pin for ArchCompare / TrainCompare).
-OFFICIAL_PARAM_CAP = 150_000_000
+# Dual ladder honesty (VAL-RESLAB-003): Official default pin follows the **promote**
+# ceiling (350M). Explore-stage pins may still use 124M explicitly via ProtocolPin.
+# Legacy single 150M emission-only pin is gone from the dual-ladder path.
+OFFICIAL_PARAM_CAP = OFFICIAL_DEFAULT_PARAM_CAP  # promote ceiling (350M)
 OFFICIAL_DEFAULT_TOKEN_BUDGET = 500_000
 OFFICIAL_DEFAULT_VAL_BYTE_BUDGET = 65_536
 OFFICIAL_DEFAULT_SEEDS: tuple[int, ...] = (1337, 2027, 4242)
@@ -106,6 +119,8 @@ class ProtocolPin:
     wall_clock_seconds: float | None = 1200.0
     seeds: tuple[int, ...] = OFFICIAL_DEFAULT_SEEDS
     param_cap: int = OFFICIAL_PARAM_CAP
+    # Dual ladder stage honesty on the pin (promote default; explore pins set "explore").
+    param_ladder_stage: str = OFFICIAL_DEFAULT_PARAM_STAGE
     seq_len: int = OFFICIAL_DEFAULT_SEQ_LEN
     batch_size: int = OFFICIAL_DEFAULT_BATCH_SIZE
     tokenizer: str = OFFICIAL_DEFAULT_TOKENIZER
@@ -129,6 +144,12 @@ class ProtocolPin:
             "wall_clock_seconds": self.wall_clock_seconds,
             "seeds": list(self.seeds),
             "param_cap": self.param_cap,
+            "param_ladder_stage": self.param_ladder_stage,
+            "param_ladder": {
+                "explore_max_parameters": OFFICIAL_EXPLORE_PARAM_CAP,
+                "promote_max_parameters": OFFICIAL_PROMOTE_PARAM_CAP,
+                "stage": self.param_ladder_stage,
+            },
             "seq_len": self.seq_len,
             "batch_size": self.batch_size,
             "tokenizer": self.tokenizer,
@@ -942,6 +963,7 @@ def rank_official(records: Iterable[OfficialScoreRecord]) -> list[OfficialScoreR
 def protocol_budget_constants() -> dict[str, Any]:
     """Surface matched budget + denominator knobs for pin / docs / tests (VAL-COMP-006)."""
     pin = ProtocolPin()
+    ladder = dual_ladder_summary()
     return cast(
         dict[str, Any],
         {
@@ -958,6 +980,11 @@ def protocol_budget_constants() -> dict[str, Any]:
             "scorecard_id": SCORECARD_ID,
             "scorecard_schema": SCORECARD_SCHEMA,
             "scorecard_tiers": list(SCORECARD_TIERS),
+            # Dual ladder honesty: Official pin defaults to promote; both caps remain visible.
+            "explore_max_parameters": ladder["explore_max_parameters"],
+            "promote_max_parameters": ladder["promote_max_parameters"],
+            "official_default_param_stage": ladder["official_default_param_stage"],
+            "dual_param_ladder": ladder,
         },
     )
 

@@ -51,6 +51,9 @@ class ComputeBlock(SchemaModel):
     # the challenge online-loss instrument), recorded so the cap can be shown to bind the scored
     # model, not just ``build_model`` in isolation (architecture.md 4.1, 6; VAL-CHEAT-022).
     model_params: int | None = Field(default=None, ge=0)
+    # Dual ladder stage labels (VAL-RESLAB-003). Observability-only; never enters final_score.
+    param_ladder_stage: str | None = Field(default=None, min_length=1)
+    param_ladder_cap: int | None = Field(default=None, ge=0)
     # Observability-only scientific compute telemetry, all NULLABLE so manifests that predate the
     # instrumentation (or runs without a CUDA device) simply omit them. The runner measures
     # ``peak_vram_bytes`` / ``peak_rss_bytes`` / ``wall_clock_seconds`` (rank-0, exact for scored

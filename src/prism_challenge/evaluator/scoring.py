@@ -162,6 +162,8 @@ def build_compute_block(
     device: str,
     max_gpu_count: int | None = None,
     model_params: int | None = None,
+    param_ladder_stage: str | None = None,
+    param_ladder_cap: int | None = None,
     peak_vram_bytes: int | None = None,
     peak_rss_bytes: int | None = None,
     wall_clock_seconds: float | None = None,
@@ -174,8 +176,10 @@ def build_compute_block(
     ``score_prequential_bpb`` (``final_score`` derives only from compute-normalized learning
     metrics, so there is no GPU-count reward and no scaling bonus). ``model_params`` records the
     realized parameter count of the model the runner actually trained/scored so the cap can be
-    shown to bind the scored model (VAL-CHEAT-022). Validated through the typed
-    :class:`~prism_challenge.evaluator.schemas.ComputeBlock` so the launch shape is well-formed.
+    shown to bind the scored model (VAL-CHEAT-022). Dual ladder stage labels
+    (``param_ladder_stage`` / ``param_ladder_cap``) are observability-only (VAL-RESLAB-003).
+    Validated through the typed :class:`~prism_challenge.evaluator.schemas.ComputeBlock` so the
+    launch shape is well-formed.
     """
     block = ComputeBlock(
         gpu_count=gpu_count,
@@ -184,6 +188,8 @@ def build_compute_block(
         device=device,
         max_gpu_count=max_gpu_count,
         model_params=model_params,
+        param_ladder_stage=param_ladder_stage,
+        param_ladder_cap=param_ladder_cap,
         peak_vram_bytes=peak_vram_bytes,
         peak_rss_bytes=peak_rss_bytes,
         wall_clock_seconds=wall_clock_seconds,

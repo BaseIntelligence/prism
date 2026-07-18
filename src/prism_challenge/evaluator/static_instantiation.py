@@ -75,9 +75,9 @@ def check_build_model_static(
     Returns the model's parameter count on success. Raises :class:`SandboxViolation` when the
     factory returns a non-``nn.Module``, raises during construction, exceeds the time/resource
     budget, or yields more than the parameter cap. The cap defaults to ``ctx.max_parameters``
-    (150M) and may be overridden via ``max_parameters``; it is architecture-agnostic because it
-    counts the actual instantiated tensors regardless of the model family. The whole check happens
-    before any GPU lease/job is created.
+    (dual ladder: explore 124M / promote 350M) and may be overridden via ``max_parameters``; it is
+    architecture-agnostic because it counts the actual instantiated tensors regardless of the
+    model family. The whole check happens before any GPU lease/job is created.
     """
     cap = ctx.max_parameters if max_parameters is None else max_parameters
     result: tuple[str, object] | None = None

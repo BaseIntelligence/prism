@@ -69,6 +69,7 @@ def create_app(
             sequence_length=app_settings.sequence_length,
             max_layers=app_settings.max_layers,
             max_parameters=app_settings.max_parameters,
+            param_ladder_stage=app_settings.param_ladder_stage,
         )
     worker = PrismWorker(
         repository,

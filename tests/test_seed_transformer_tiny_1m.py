@@ -1,7 +1,7 @@
 """Transformer tiny-1m seed package gates (VAL-SEED-001/002/003/007).
 
 Targeted lab-seed surface only: inventory + packaging harness, AST sandbox, forced-seed
-param cap ≤150M, and multi-GPU single-node static contract. No GPU re-exec thrash.
+param cap ≤124M explore, and multi-GPU single-node static contract. No GPU re-exec thrash.
 """
 
 from __future__ import annotations
@@ -31,7 +31,8 @@ from prism_challenge.seed_packaging import (
 REPO_ROOT = Path(__file__).resolve().parents[1]
 TINY_ROOT = REPO_ROOT / "examples" / "tiny-1m"
 FAMILY_ID = "transformer-tiny-1m"
-MAX_PARAMS = 150_000_000
+# Dual ladder explore default (VAL-RESLAB-003); seeds stay under 124M explore.
+MAX_PARAMS = 124_000_000
 
 
 def _read_scripts() -> tuple[str, str]:
@@ -82,7 +83,7 @@ def test_transformer_seed_passes_ast_sandbox_hard_blocks() -> None:
 
 @pytest.mark.parametrize("vocab_size", [4096, 50257])
 def test_transformer_seed_under_param_cap_forced_seed(vocab_size: int) -> None:
-    """VAL-SEED-003: forced-seed static instantiation reports ≤ 150M params."""
+    """VAL-SEED-003: forced-seed static instantiation reports ≤ 124M explore params."""
     arch, _train = _read_scripts()
     ctx = PrismContext(vocab_size=vocab_size, sequence_length=128, seed=1337)
     count = check_build_model_static(

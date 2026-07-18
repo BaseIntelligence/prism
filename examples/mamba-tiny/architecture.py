@@ -19,7 +19,7 @@ from torch import nn
 from prism_challenge.evaluator.interface import PrismContext
 
 # Geometry chosen to land near ~1M realized params with a 4096-class lab vocab
-# (still far under the family-agnostic 150M cap with gpt2's 50257 vocab).
+# (still far under the family-agnostic 124M explore ladder with gpt2's 50257 vocab).
 MODEL_DIM = 128
 MODEL_LAYERS = 2
 MODEL_D_STATE = 16
@@ -196,7 +196,7 @@ class TinyMambaLM(nn.Module):
 
 def build_model(ctx: PrismContext) -> TinyMambaLM:
     # Pure factory: size the vocabulary from ctx; SSM dims stay small so the
-    # parameter count is ~1M (far under ctx.max_params and the 150M cap). No
+    # parameter count is ~1M (far under ctx.max_params and the 124M explore cap). No
     # native mamba_ssm import is used or required.
     return TinyMambaLM(
         vocab_size=ctx.vocab_size,

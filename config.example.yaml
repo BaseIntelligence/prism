@@ -10,7 +10,12 @@ allow_insecure_signatures: false
 signature_ttl_seconds: 300
 epoch_seconds: 21600
 max_code_bytes: 7500000
-max_parameters: 150000000
+# Dual param ladder (explore provisional / promote confirm-or-revoke).
+# Default continuous admission = explore 124M; promote pin = 350M.
+max_parameters: 124000000
+explore_max_parameters: 124000000
+promote_max_parameters: 350000000
+param_ladder_stage: explore
 max_layers: 96
 max_sequence_length: 512
 sequence_length: 128

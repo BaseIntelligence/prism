@@ -40,7 +40,7 @@ from .dataset import LockedDatasetError, iter_locked_documents
 from .interface import PrismContext
 from .scoring import MEMORIZATION_GAP_THRESHOLD_BPB
 
-# Raised from the original 120s: a 150M-param model forward over the bounded val subsample on the
+# Raised from the original 120s: a promote-scale (~350M) model forward over the bounded val on the
 # manager CPU needs headroom above 120s, while the byte budget keeps the absolute compute small.
 # Configurable per-deploy via ``PrismSettings.base_eval_heldout_timeout_seconds``.
 DEFAULT_TIMEOUT_SECONDS = 600.0

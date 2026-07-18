@@ -136,7 +136,7 @@ class TinyDecoderLM(nn.Module):
 
 def build_model(ctx: PrismContext) -> TinyDecoderLM:
     # Pure factory: size the vocabulary from ctx; dim/layers stay small so the
-    # parameter count is ~1.05M (far under ctx.max_params and the 150M cap).
+    # parameter count is ~1.05M (far under ctx.max_params and the 124M explore cap).
     return TinyDecoderLM(
         vocab_size=ctx.vocab_size,
         dim=MODEL_DIM,
