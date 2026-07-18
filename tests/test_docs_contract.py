@@ -165,9 +165,8 @@ def test_research_lab_identity_and_ladder_are_documented() -> None:
 
 
 def test_emission_vs_research_multimetric_surfaces_are_honest() -> None:
-    """VAL-RESLAB-002: emission held-out primary; multimetric is research grade not emission scalar."""
-    scoring = read_doc("docs/scoring.md")
-    protocol = read_doc("docs/official-comparison.md")
+    """VAL-RESLAB-002: emission held-out primary; multimetric is research grade."""
+    scoring = read_doc("docs/scoring.md")    protocol = read_doc("docs/official-comparison.md")
     overview = read_doc("docs/overview.md")
     submissions = read_doc("docs/submissions.md")
     combined = f"{scoring}\n{protocol}\n{overview}\n{submissions}"
