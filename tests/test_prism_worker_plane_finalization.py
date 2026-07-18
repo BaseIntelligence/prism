@@ -320,7 +320,8 @@ async def test_worker_plane_skips_heldout_and_never_reads_secret_split(tmp_path,
     monkeypatch.setattr(PrismWorker, "_evaluate_within_wall_time", _boom_eval)
     monkeypatch.setattr("prism_challenge.queue.GpuLeaseScheduler", _boom_lease)
 
-    # A manifest that FABRICATES a held-out delta must be scored bpb-only anyway.
+    # A manifest that FABRICATES a held-out delta must be scored degraded (skip_heldout) and
+    # cannot crown emission (VAL-RESLAB-006).
     forged = await _seed(app)
     forged_manifest = _scoreable_manifest("forged", heldout_delta=5.0)
     forged_proof = _proof_dict(signer, forged, forged_manifest)
@@ -334,14 +335,16 @@ async def test_worker_plane_skips_heldout_and_never_reads_secret_split(tmp_path,
     assert forged_row is not None
     forged_score, forged_metrics = forged_row
 
-    # bpb-only: equals score_prequential_bpb with the held-out delta skipped ...
-    bpb_only = score_prequential_bpb(forged_manifest, skip_heldout=True).final_score
-    assert forged_score == pytest.approx(bpb_only)
-    # ... and is NOT the delta-inclusive score the tie-break would have produced.
+    # Degraded secondary-only: equals score_prequential_bpb with held-out skipped ...
+    bpb_only = score_prequential_bpb(forged_manifest, skip_heldout=True)
+    assert forged_score == pytest.approx(bpb_only.final_score)
+    assert bpb_only.emission_crown_eligible is False
+    # ... and is NOT the held-out-primary emission rank score.
     assert forged_score != pytest.approx(score_prequential_bpb(forged_manifest).final_score)
-    # No held-out contribution is recorded in the finalized metrics.
+    # No held-out contribution is recorded in the finalized metrics; crown ineligible.
     assert "heldout_delta" not in forged_metrics
     assert "held_out_delta" not in forged_metrics
+    assert forged_metrics.get("emission_crown_eligible") is False
 
     # A submission WITHOUT any held-out field scores identically to the fabricated-delta one.
     plain = await _seed(app)

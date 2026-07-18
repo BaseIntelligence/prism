@@ -306,11 +306,14 @@ def _manifest_payload(submission_id: str, vocab: int, *, bpb: float) -> dict:
         },
         "score": {
             "schema": "prism_score.v2",
-            "primary_metric": "prequential_bpb",
+            "primary_metric": "heldout_delta",
+            "secondary_metric": "prequential_bpb",
+            "emission_ranking": "heldout_primary_bpb_secondary",
             "prequential_bpb": bpb,
             "bits_per_byte": bpb,
             "final_score": 1.0 / (1.0 + bpb),
             "lower_is_better": True,
+            "tie_breaker": "prequential_bpb",
         },
         # trained_state IS recorded for THIS run: the skip is driven purely by the ABSENT val split.
         "artifacts": {"trained_state": "trained_state.pt"},

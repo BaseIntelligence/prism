@@ -55,8 +55,9 @@ usually enter through the BASE proxy and the internal bridge route instead.
 }
 ```
 
-`final_score` is the challenge-computed prequential bits-per-byte score (a lower bpb yields a higher
-`final_score`); `q_arch`, `q_recipe`, `diversity_bonus`, and `penalty` are legacy fields retained for
+`final_score` is the challenge-computed emission rank (held-out / generalization primary; a larger
+honest held-out delta yields a higher `final_score`, with prequential bpb secondary); `q_arch`,
+`q_recipe`, `diversity_bonus`, and `penalty` are legacy fields retained for
 response-schema stability. `status` is `pending`, `running`, `completed`, `failed`, or `rejected`
 (rejected = failed a static gate, the two-script contract, deterministic similarity/anti-cheat, or
 other admission gates). There is **no** live `held` status after gateway removal.

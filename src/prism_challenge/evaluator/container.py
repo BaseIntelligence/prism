@@ -1805,7 +1805,13 @@ def _write_watchdog_manifest(reason):
             "budget_exceeded": reason == "wall_clock",
             "artifacts_quota_exceeded": reason == "artifacts_quota",
         },
-        "score": {"final_score": None, "primary_metric": "prequential_bpb"},
+        "score": {
+            "final_score": None,
+            # Provisional runner block only; host scoring sets heldout_delta primary on finalize.
+            "primary_metric": "heldout_delta",
+            "secondary_metric": "prequential_bpb",
+            "emission_ranking": "heldout_primary_bpb_secondary",
+        },
         "miner_reported_ignored": True,
     }
     try:
@@ -2123,7 +2129,12 @@ def _write_challenge_manifest():
         "metrics": metrics_block,
         "score": {
             "schema": "prism_score.v2",
-            "primary_metric": "prequential_bpb",
+            # Runner writes secondary prequential_bpb + a provisional final_score display.
+            # Host ``score_prequential_bpb`` rewrites held-out PRIMARY emission rank on finalize
+            # (VAL-RESLAB-006); this gentle block must not claim bpb-primary emission.
+            "primary_metric": "heldout_delta",
+            "secondary_metric": "prequential_bpb",
+            "emission_ranking": "heldout_primary_bpb_secondary",
             "prequential_bpb": prequential_bpb,
             "bits_per_byte": prequential_bpb,
             "final_score": score_final,
@@ -2139,6 +2150,7 @@ def _write_challenge_manifest():
             "anti_cheat_multiplier": score_anti_cheat_multiplier,
             "anomaly": step0_anomaly,
             "miner_reported_ignored": True,
+            "tie_breaker": "prequential_bpb",
         },
         "anti_cheat": {
             "step0_anomaly": step0_anomaly,

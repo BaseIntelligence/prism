@@ -122,11 +122,14 @@ def _manifest_payload(submission_id: str, vocab: int) -> dict:
         },
         "score": {
             "schema": "prism_score.v2",
-            "primary_metric": "prequential_bpb",
+            "primary_metric": "heldout_delta",
+            "secondary_metric": "prequential_bpb",
+            "emission_ranking": "heldout_primary_bpb_secondary",
             "prequential_bpb": bpb,
             "bits_per_byte": bpb,
             "final_score": 1.0 / (1.0 + bpb),
             "lower_is_better": True,
+            "tie_breaker": "prequential_bpb",
         },
         # The host scorer reads trained_state.pt ONLY when the CHALLENGE manifest records it for
         # THIS run (a bare is_file() on the miner-writable artifacts_dir is an RCE sink).

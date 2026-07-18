@@ -40,7 +40,7 @@ flowchart LR
 | Container runner | Challenge-owned forced-init re-execution that captures the online loss stream |
 | External-result ingest | Accepts **only** `ExternalResultEnvelope` on the worker-plane result route (fail closed on legacy bodies) |
 | TEE verifier | Prism-only fail-closed attestation checks; **LOCAL-FIXTURE PASS** only for elevated tier today |
-| Scoring | Prequential bits-per-byte plus the held-out delta tie-breaker and anti-memorization gap |
+| Scoring | Emission rank: held-out / generalization primary, prequential bpb secondary, anti-memorization gap |
 | Raw-weight push | Pushes authenticated raw hotkey weights to the BASE master for aggregation |
 
 ## BASE Integration
@@ -139,19 +139,20 @@ everything from the challenge-owned capture:
 ```mermaid
 flowchart LR
     Reexec[Online Loss Stream] --> Bpb[Prequential bits-per-byte]
-    Bpb --> Final[final_score]
-    Heldout[Held-out Delta on Secret val] --> Final
+    Heldout[Held-out Delta on Secret val] --> Final[final_score / emission_rank]
+    Bpb --> Final
     Gap[Train-vs-Held-out Gap] --> Final
     Final --> Board[Leaderboard ORDER BY final_score DESC]
     Board --> Raw[Raw-Weight Push to Master]
 ```
 
-The primary axis is the prequential bits-per-byte (lower bpb → better `final_score`); the held-out delta
-refines near-ties only, the train-vs-held-out gap penalizes memorization, and a step-0 anomaly
-multiplier zeroes a smuggled-weights run. The leaderboard orders by `final_score` with an
-earliest-commit-wins tie-break. PRISM pushes authenticated raw hotkey weights to the BASE master;
-validators fetch the master vector and call `set_weights` with their own wallets. PRISM never writes
-weights on-chain.
+The emission primary axis is held-out / generalization (higher heldout_delta → better `final_score`);
+prequential bits-per-byte is secondary (lower bpb breaks near-ties on primary only). The
+train-vs-held-out gap penalizes memorization, and a step-0 anomaly multiplier zeroes a
+smuggled-weights run. Worker-plane `skip_heldout` degrades without inventing held-out and cannot
+advance emission crowns. The leaderboard orders by `final_score` with an earliest-commit-wins
+tie-break. PRISM pushes authenticated raw hotkey weights to the BASE master; validators fetch the
+master vector and call `set_weights` with their own wallets. PRISM never writes weights on-chain.
 
 ## Failure Handling
 

@@ -5,7 +5,6 @@ import math
 from prism_challenge.evaluator.scoring import (
     LEADERBOARD_TIE_EPSILON,
     LeaderboardRow,
-    bpb_to_final_score,
     leaderboard_rank_key,
     rank_leaderboard,
     score_prequential_bpb,
@@ -61,16 +60,22 @@ def _row(sub: str, final_score: float, accepted_at: str, hotkey: str = "hk") -> 
     )
 
 
-# --- VAL-SCORE-012: leaderboard ordering reflects bpb / learning ---------------------------------
+# --- VAL-SCORE-012 / VAL-RESLAB-006: leaderboard orders by emission rank (held-out primary) ------
 
 
-def test_scoring_leaderboard_orders_by_bpb_even_against_commit_time() -> None:
-    # A lower-bpb (better) run committed LATER still outranks a higher-bpb run committed earlier:
-    # the primary axis is bpb (via final_score), not commit time.
-    high_bpb_early = _row("high-bpb", bpb_to_final_score(2.0), "2024-01-01T00:00:00+00:00")
-    low_bpb_late = _row("low-bpb", bpb_to_final_score(0.5), "2024-01-02T00:00:00+00:00")
-    ranked = rank_leaderboard([high_bpb_early, low_bpb_late])
-    assert [r.submission_id for r in ranked] == ["low-bpb", "high-bpb"]
+def test_scoring_leaderboard_orders_by_emission_rank_even_against_commit_time() -> None:
+    # A better emission-rank score (held-out primary band) committed LATER still outranks a worse
+    # score committed earlier: the primary axis is emission final_score, not commit time.
+    from prism_challenge.evaluator.scoring import heldout_to_primary_score
+
+    worse_early = _row(
+        "worse-heldout", heldout_to_primary_score(0.1), "2024-01-01T00:00:00+00:00"
+    )
+    better_late = _row(
+        "better-heldout", heldout_to_primary_score(1.0), "2024-01-02T00:00:00+00:00"
+    )
+    ranked = rank_leaderboard([worse_early, better_late])
+    assert [r.submission_id for r in ranked] == ["better-heldout", "worse-heldout"]
 
 
 # --- VAL-SCORE-019: deterministic final tie-break (earliest-commit-wins) -------------------------
@@ -106,9 +111,9 @@ def test_scoring_leaderboard_equal_score_and_commit_breaks_by_submission_id() ->
     assert [r.submission_id for r in ranked] == ["sub-a", "sub-b"]
 
 
-def test_scoring_leaderboard_delta_tiebreak_not_collapsed_by_epsilon() -> None:
-    # VAL-SCORE-008 preserved: equal bpb, the LARGER held-out delta wins even when committed later.
-    # The tie epsilon must stay below the delta tie-break resolution so a genuine delta difference
+def test_scoring_leaderboard_heldout_primary_not_collapsed_by_epsilon() -> None:
+    # VAL-RESLAB-006: equal secondary bpb, the LARGER held-out delta wins even when committed later.
+    # The tie epsilon must stay below the primary resolution so a genuine held-out difference
     # still orders ahead of the commit-time tie-break.
     big_delta = score_prequential_bpb(_manifest(bpb=1.0, heldout_delta=0.8))
     small_delta = score_prequential_bpb(_manifest(bpb=1.0, heldout_delta=0.1))

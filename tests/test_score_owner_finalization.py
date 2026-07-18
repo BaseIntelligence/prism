@@ -101,6 +101,9 @@ def _settings(tmp_path: Path) -> PrismSettings:
 def _manifest(marker: str = "v2", *, nll: float = 900.0) -> dict[str, Any]:
     covered_bytes = 4096
     online_loss = [10.0, 6.0, 3.0, 2.0]
+    bpb = (nll / math.log(2.0)) / covered_bytes
+    # Worker-plane skip_heldout ignores held-out fields (degraded, no crown). Kept for docs.
+    heldout_delta = 1.0 / (1.0 + bpb)
     return {
         "schema_version": "prism_run_manifest.v2",
         "data": {"covered_bytes": covered_bytes, "single_pass": True},
@@ -112,7 +115,9 @@ def _manifest(marker: str = "v2", *, nll: float = 900.0) -> dict[str, Any]:
             "step0_loss": online_loss[0],
             "consumed_batches": len(online_loss),
             "random_init_baseline_nats": math.log(50257),
-            "prequential_bpb": 1.23,
+            "prequential_bpb": bpb,
+            "heldout_delta": heldout_delta,
+            "held_out_delta": heldout_delta,
             "marker": marker,
         },
         "anti_cheat": {
@@ -220,14 +225,16 @@ async def test_finalization_is_atomic_score_status_arch_training(tmp_path: Path)
     assert len(after["families"]) == 1
     assert after["families"][0]["owner_hotkey"] == "hk-alpha"
     assert after["families"][0]["canonical_submission_id"] == submission_id
-    assert float(after["families"][0]["q_arch_best"]) == pytest.approx(after["final_score"])
+    # Worker-plane skip_heldout degrades: scores persist, crown key stays 0 (VAL-RESLAB-006).
+    assert float(after["families"][0]["q_arch_best"]) == pytest.approx(0.0)
     assert len(after["variants"]) == 1
     assert after["variants"][0]["owner_hotkey"] == "hk-alpha"
     assert after["variants"][0]["submission_id"] == submission_id
     assert int(after["variants"][0]["is_current_best"]) == 1
 
     weights = await get_weights(app.state.repository, settings.epoch_seconds)
-    assert weights == {"hk-alpha": pytest.approx(1.0)}
+    # Non-positive q_arch_best contributes empty emission map (fail-closed crown).
+    assert weights == {}
 
 
 async def test_duplicate_finalization_is_idempotent_noop(tmp_path: Path) -> None:
@@ -300,13 +307,13 @@ async def test_conflicting_result_cannot_overwrite_score(tmp_path: Path) -> None
     assert after["families"][0]["canonical_submission_id"] == submission_id
 
 
-async def test_two_hotkeys_yield_one_crown_and_stable_single_owners(tmp_path: Path) -> None:
+async def test_two_hotkeys_worker_skip_heldout_cannot_crown(tmp_path: Path) -> None:
     settings = _settings(tmp_path)
     app = await _make_app(settings)
     signer = worker_signer_from_key(WORKER_KEY)
     db_path = tmp_path / "coord.sqlite3"
 
-    # Stronger learner first: lower nll => better (higher) bpb-derived final_score.
+    # Stronger learner first: lower nll => better degraded secondary final_score.
     strong_id = await _seed(app, hotkey="hk-strong")
     strong_manifest = _manifest("strong", nll=400.0)
     strong = await ingest_work_unit_result(
@@ -333,14 +340,11 @@ async def test_two_hotkeys_yield_one_crown_and_stable_single_owners(tmp_path: Pa
     assert snap_strong["final_score"] > snap_weak["final_score"]
 
     families = snap_strong["families"]
-    # Distinct source codes become distinct architecture families; score-owner
-    # for emission still collapses to one crown via get_weights.
+    # Distinct sources yield families, but skip_heldout leaves q_arch_best at 0 (no emission crown).
     assert len(families) >= 1
+    assert float(snap_strong["families"][0]["q_arch_best"]) == pytest.approx(0.0)
     weights = await get_weights(app.state.repository, settings.epoch_seconds)
-    # Exactly one positive owner receives architecture+training shares after normalize.
-    assert len(weights) == 1
-    assert set(weights) == {"hk-strong"}
-    assert weights["hk-strong"] == pytest.approx(1.0)
+    assert weights == {}
 
 
 async def test_invalidated_score_does_not_keep_crown(tmp_path: Path) -> None:
@@ -356,9 +360,8 @@ async def test_invalidated_score_does_not_keep_crown(tmp_path: Path) -> None:
         result=_result(_proof_dict(signer, submission_id, manifest), manifest),
     )
     assert outcome.finalized is True
-    assert await get_weights(app.state.repository, settings.epoch_seconds) == {
-        "hk-only": pytest.approx(1.0)
-    }
+    # Worker-plane path never crowns without held-out, so emission is already empty.
+    assert await get_weights(app.state.repository, settings.epoch_seconds) == {}
 
     invalidated = await app.state.repository.invalidate_submission_score(
         submission_id, reason="audit_fail"

@@ -88,24 +88,28 @@ def test_scoring_heldout_delta_recorded_in_payload_and_score_block() -> None:
     assert block["held_out_delta"] == pytest.approx(0.4)
     assert block["val_bpb_trained"] == pytest.approx(2.6)
     assert block["val_bpb_random_init"] == pytest.approx(3.0)
-    assert block["tie_breaker"] == "heldout_delta"
+    # Emission invert (VAL-RESLAB-006): held-out is primary; bpb is the secondary tie-breaker.
+    assert block["primary_metric"] == "heldout_delta"
+    assert block["tie_breaker"] == "prequential_bpb"
 
 
 def test_scoring_larger_heldout_delta_ranks_better_on_near_tie() -> None:
-    # VAL-SCORE-008: equal primary bpb -> the LARGER held-out delta wins the tie.
+    # VAL-RESLAB-006 / primary axis: equal secondary bpb -> the LARGER held-out delta wins.
     bigger = score_prequential_bpb(_manifest(bpb=1.0, heldout_delta=0.8))
     smaller = score_prequential_bpb(_manifest(bpb=1.0, heldout_delta=0.1))
     assert bigger.bpb == pytest.approx(smaller.bpb)
     assert bigger.final_score > smaller.final_score
 
 
-def test_scoring_heldout_tie_break_does_not_override_clear_bpb() -> None:
-    # VAL-SCORE-001 preserved: a strictly lower bpb still ranks above a higher bpb even when the
-    # higher-bpb run has a much larger held-out delta (tie-break is secondary to the primary axis).
+def test_scoring_heldout_primary_overrides_clear_bpb() -> None:
+    # VAL-RESLAB-006: clearer held-out primary beats pure lower bpb (invert of legacy bpb-primary).
     lower_bpb = score_prequential_bpb(_manifest(bpb=0.50, heldout_delta=0.0))
     higher_bpb = score_prequential_bpb(_manifest(bpb=0.60, heldout_delta=1.0))
     assert lower_bpb.bpb < higher_bpb.bpb
-    assert lower_bpb.final_score > higher_bpb.final_score
+    assert higher_bpb.heldout_delta is not None and higher_bpb.heldout_delta > (
+        lower_bpb.heldout_delta or 0.0
+    )
+    assert higher_bpb.final_score > lower_bpb.final_score
 
 
 def test_scoring_excessive_memorization_gap_flagged_and_penalized() -> None:
@@ -131,15 +135,17 @@ def test_scoring_worse_than_random_ranks_below_baseline() -> None:
     assert anti_learner.final_score < baseline.final_score
 
 
-def test_scoring_absent_heldout_is_backward_compatible() -> None:
-    # No secret val split scored -> held-out skipped: delta None, no penalty, final_score is the
-    # pure bpb transform (no regression for the prior prequential-only path).
+def test_scoring_absent_heldout_is_degraded_not_crowned() -> None:
+    # No secret val split scored -> held-out missing: delta None, degraded secondary-only band,
+    # emission_crown_eligible=False (cannot crown emission without held-out; VAL-RESLAB-006).
     score = score_prequential_bpb(_manifest(bpb=0.5))
     assert score.heldout_delta is None
     assert score.train_heldout_gap is None
     assert score.memorization_flag is False
     assert score.memorization_penalty == pytest.approx(1.0)
     assert score.final_score == pytest.approx(bpb_to_final_score(0.5))
+    assert score.emission_crown_eligible is False
+    assert "heldout_missing" in score.flags
 
 
 def test_scoring_step0_anomaly_zeroes_score_even_with_positive_delta() -> None:

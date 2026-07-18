@@ -359,7 +359,7 @@ jq '{schema, authority, miner_reported_ignored, n: (.points|length), grads: [.po
 
 **UI note (VAL-TELE-008):** the public Architecture Lab already wires `GET .../curve` into the loss/bpb chart (`getSubmissionCurve` → loss vs covered bytes). The API now also returns `train_series` for grad_norm / clip time-flow under the same trust path. Operators verify multichannel series via the curl/jq path above when frontend render of grad has not yet recaptured the optional field; **do not** invent a parallel miner-trust chart.
 
-Do not rank packages solely on prettier grad_norm aesthetics. Use multi-axis Official / Complete View for scientific claims; keep emission on the bpb leaderboard path.
+Do not rank packages solely on prettier grad_norm aesthetics. Use multi-axis Official / Complete View for scientific claims; keep emission on the held-out-primary leaderboard path (bpb secondary).
 
 ## Troubleshooting
 

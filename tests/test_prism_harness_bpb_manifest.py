@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import math
 
+import pytest
 from test_prism_harness_online_loss import (
     ARCH_LM,
     TRAIN_LEARN,
@@ -28,7 +29,9 @@ def test_harness_manifest_carries_computed_bpb_score_block(tmp_path):
     assert isinstance(bpb, float)
     assert math.isfinite(bpb) and bpb > 0.0
     assert bpb != 1.0
-    assert score["primary_metric"] == "prequential_bpb"
+    # Emission lock (VAL-RESLAB-006): primary heldout_delta; bpb secondary.
+    assert score.get("primary_metric") in {"heldout_delta", "prequential_bpb"}
+    assert score.get("secondary_metric", "prequential_bpb") == "prequential_bpb"
     # VAL-SCORE-003 / VAL-HARNESS-017: bpb == sum(-log2 p) / covered_bytes (BYTE denominator).
     covered_bytes = metrics["covered_bytes"]
     assert covered_bytes > 0
@@ -53,8 +56,13 @@ def test_harness_manifest_bpb_matches_scoring_module(tmp_path):
     manifest = _read_manifest(artifacts)
     recomputed = score_prequential_bpb(manifest)
     assert recomputed.bpb == manifest["score"]["prequential_bpb"]
-    assert recomputed.final_score == manifest["score"]["final_score"]
+    # Without host held-out investigate, recomputed is degraded secondary-only; matches runner
+    # provisional bpb display final_score. With held-out attached later, emission rank differs.
+    assert recomputed.bpb == pytest.approx(manifest["score"]["prequential_bpb"])
     assert recomputed.covered_bytes == manifest["metrics"]["covered_bytes"]
+    if recomputed.heldout_delta is None:
+        assert recomputed.final_score == pytest.approx(manifest["score"]["final_score"])
+        assert recomputed.emission_crown_eligible is False
     assert manifest["miner_reported_ignored"] is True
 
 

@@ -139,9 +139,10 @@ def test_scoring_bpb_is_bits_over_bytes_from_challenge_manifest() -> None:
     assert score.covered_bytes == 200
     assert score.sum_neg_log2_likelihood_bits == pytest.approx(100.0)
     assert score.bpb == pytest.approx(0.5)
-    # final_score is a monotone transform; lower bpb -> larger final_score.
+    # Without held-out the path is degraded secondary-only (bpb display); no emission crown.
     assert score.final_score == pytest.approx(bpb_to_final_score(0.5))
     assert score.final_score == pytest.approx(1.0 / 1.5)
+    assert score.emission_crown_eligible is False
 
 
 def test_scoring_bpb_matches_sum_neg_log2_over_covered_bytes() -> None:
@@ -153,12 +154,15 @@ def test_scoring_bpb_matches_sum_neg_log2_over_covered_bytes() -> None:
     assert score.bpb > 0.0
 
 
-def test_scoring_lower_bpb_ranks_better() -> None:
+def test_scoring_lower_bpb_ranks_better_on_degraded_secondary_path() -> None:
     good = score_prequential_bpb(_manifest(sum_nll_nats=20.0, covered_bytes=400))
     bad = score_prequential_bpb(_manifest(sum_nll_nats=200.0, covered_bytes=400))
     assert good.bpb < bad.bpb
-    # Better learner (lower bpb) must get a strictly higher final_score (DESC leaderboard).
+    # Without held-out (degraded), lower bpb still ranks higher among secondary-only peers.
+    # Crown remains ineligible without held-out primary (VAL-RESLAB-006).
     assert good.final_score > bad.final_score
+    assert good.emission_crown_eligible is False
+    assert bad.emission_crown_eligible is False
 
 
 def test_scoring_denominator_is_bytes_not_tokens() -> None:
@@ -267,7 +271,8 @@ def test_container_path_scores_prequential_bpb_from_challenge_manifest(tmp_path,
         assert process.status_code == 200, process.text
         status = client.get(f"/v1/submissions/{submission_id}").json()
         assert status["status"] == "completed"
-        # final_score IS the bpb-derived primary (lower bpb -> better), NOT a NAS q_arch/q_recipe.
+        # Without held-out this path is degraded secondary-only (no emission crown primary).
+        # final_score is the bpb display transform, NOT a NAS q_arch/q_recipe blend.
         assert status["final_score"] == pytest.approx(expected_final)
         assert status["q_arch"] == pytest.approx(expected_final)
         assert status["q_recipe"] == pytest.approx(0.0)

@@ -146,18 +146,18 @@ def test_official_primary_heldout_beats_identical_train_bpb() -> None:
 
 
 def test_official_primary_heldout_overrides_worse_train_bpb() -> None:
-    """Held-out primary must beat secondary when deltas diverge beyond ε (docs invert)."""
+    """Held-out primary must beat secondary when deltas diverge beyond eps (docs invert)."""
     strong_heldout_weaker_bpb = _record(label="generalizer", bpb=1.80, heldout_delta=1.20)
     weak_heldout_stronger_bpb = _record(label="compressor", bpb=1.00, heldout_delta=0.10)
     result = compare_official(strong_heldout_weaker_bpb, weak_heldout_stronger_bpb)
     assert result.winner == "a"
     assert result.reason == "primary_heldout"
-    # Production leaderboard would prefer lower bpb; official invert is intentional.
-    score_leaderboard_side = score_prequential_bpb(
+    # Emission path is now Official-like too (VAL-RESLAB-006): held-out primary wins scalar rank.
+    score_generalizer = score_prequential_bpb(
         _challenge_manifest(bpb=1.80, heldout_delta=1.20)
     )
-    score_other = score_prequential_bpb(_challenge_manifest(bpb=1.00, heldout_delta=0.10))
-    assert score_other.final_score > score_leaderboard_side.final_score
+    score_compressor = score_prequential_bpb(_challenge_manifest(bpb=1.00, heldout_delta=0.10))
+    assert score_generalizer.final_score > score_compressor.final_score
 
 
 # --- VAL-COMP-003: prequential bpb secondary and always Prism-recomputed ---------

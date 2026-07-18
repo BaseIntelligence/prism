@@ -8,9 +8,10 @@ the protocol defined in ``docs/official-comparison.md``:
 * Anti-overfit: memorization gap flag + step-0 anomaly remain active
 * Wall-clock and miner self-report may be *recorded* but never enter the rank key
 
-Production leaderboard scoring (``score_prequential_bpb`` / ``final_score`` with bpb
-primary) is intentionally left unchanged. Official Comparison is a separate comparison
-mode used by offline a-vs-b harnesses and pure unit fixtures.
+Production emission scoring (``score_prequential_bpb`` / ``final_score``) is now
+Official-like as well (held-out primary, bpb secondary; VAL-RESLAB-006). Official
+Comparison remains the multi-axis scientific grade surface (offline a-vs-b harnesses,
+scorecard / Complete View annexes) and is not the emission scalar.
 """
 
 from __future__ import annotations

@@ -7,29 +7,38 @@ from typing import Any
 
 from .schemas import ComputeBlock
 
-# --- Prequential bits-per-byte primary scoring (architecture.md section 5) -------------------
-# The authoritative score is the prequential / online compression metric in bits-per-byte: the
-# AREA UNDER the from-scratch online loss curve (integrated over the whole single-pass run),
-# normalized by the number of raw UTF-8 BYTES covered (tokenizer-agnostic by construction). It is
-# always recomputed from the CHALLENGE-OWNED prism_run_manifest.v2 capture; miner-reported numbers
+# --- Emission scoring: Official-like held-out primary (VAL-RESLAB-006 / VAL-RESLAB-007) ----------
+# Production emission crowns (leaderboard final_score, q_arch_best, q_recipe) rank:
+#   PRIMARY: held-out / generalization (heldout_delta higher-better; preferred form)
+#   SECONDARY: challenge-recomputed prequential bits-per-byte (lower-better)
+#   Gates: step-0 / smuggled-weights anomaly zeroes; memorization gap multiplies a penalty
+# Multimetric / Complete View remain published scientific grade and are NOT the emission scalar.
+#
+# The authoritative secondary metric is the prequential / online compression metric in
+# bits-per-byte: the AREA UNDER the from-scratch online loss curve (integrated over the whole
+# single-pass run), normalized by the number of raw UTF-8 BYTES covered (tokenizer-agnostic).
+# Always recomputed from the CHALLENGE-OWNED prism_run_manifest.v2 capture; miner-reported numbers
 # are ignored. The legacy raw-loss ``standardized_lm_quality`` term is retired from the score.
 NATS_TO_BITS = 1.0 / math.log(2.0)
 # A finite/positive sanity band for bits-per-byte; anything outside it is treated as a degenerate
 # (non-scorable) run rather than silently ranked.
 BPB_SANE_MAX = 64.0
 
-# --- Held-out delta tie-breaker + anti-memorization gap (architecture.md sections 5, 6) ----------
-# The held-out delta-over-random-init (``bpb(random-init twin on val) - bpb(trained on val)``) is a
-# NEAR-TIE TIE-BREAKER: a larger improvement ranks better, but it must NEVER override the primary
-# bpb axis. The tie-break term folded into ``final_score`` is therefore bounded (see
-# ``_heldout_tie_break``) so it can only reorder submissions whose bpb is within
-# ``HELDOUT_DELTA_BPB_EPSILON`` of each other (VAL-SCORE-001 / VAL-SCORE-019); beyond that band the
-# bpb ordering always wins. The train-vs-held-out gap flags memorization: an excessive gap penalizes
-# the score so a memorizer ranks below an equivalent non-memorizing run.
-HELDOUT_DELTA_TIE_BREAK_WEIGHT = 1e-3
-# bpb band within which the held-out delta is allowed to break a near-tie. Submissions whose bpb
-# differs by more than this keep strict bpb order regardless of delta.
+# Primary held-out band for the scalar emission_rank / final_score (higher better). OFFSET keeps
+# any finite held-out primary (including moderately negative deltas after penalty) strictly above
+# the degraded no-heldout secondary-only band so bpb-only paths cannot outrank fair held-out
+# winners (VAL-RESLAB-006).
+EMISSION_HELDOUT_PRIMARY_OFFSET = 100.0
+EMISSION_HELDOUT_PRIMARY_SCALE = 1.0
+# Near-tie band on held-out primary within which secondary bpb may reorder. Beyond this band the
+# held-out ordering always wins - pure short-train lower-bpb alone cannot beat a better held-out
+# winner (Official eps; mirrors OFFICIAL_EPS_HELDOUT).
 HELDOUT_DELTA_BPB_EPSILON = 5e-3
+# Cap on the secondary bpb contribution folded into final_score. Named for history; now bounds the
+# BPB secondary term so it can only break near-ties on primary held-out (inverted from legacy
+# bpb-primary + heldout-tie-break).
+HELDOUT_DELTA_TIE_BREAK_WEIGHT = 1e-3
+BPB_SECONDARY_TIE_BREAK_WEIGHT = HELDOUT_DELTA_TIE_BREAK_WEIGHT
 MEMORIZATION_GAP_THRESHOLD_BPB = 1.0
 MEMORIZATION_PENALTY_FACTOR = 0.5
 
@@ -42,14 +51,19 @@ class ScoreValidationError(ValueError):
 
 @dataclass(frozen=True)
 class PrequentialBpbScore:
-    """Challenge-computed prequential bits-per-byte primary score (architecture.md section 5).
+    """Challenge-computed emission rank score (held-out primary, bpb secondary).
 
     ``bpb`` is the prequential code-length integrated over the WHOLE single-pass online-loss curve
-    divided by the raw UTF-8 BYTES covered (tokenizer-agnostic). ``final_score`` is a documented
-    monotone transform where a SMALLER bpb yields a BETTER (larger) final_score, so the existing
-    leaderboard ``ORDER BY final_score DESC`` ranks better learners higher. A step-0 / smuggled-
-    weights anomaly drives the anti-cheat multiplier to zero so an anomalously-low bpb is flagged
-    rather than rewarded.
+    divided by the raw UTF-8 BYTES covered (tokenizer-agnostic). ``final_score`` / emission rank is
+    a documented monotone transform where a LARGER held-out delta (PRIMARY) yields a BETTER
+    (larger) final_score, and within a near-tie on held-out a SMALLER bpb (SECONDARY) yields a
+    better rank - so leaderboard ``ORDER BY final_score DESC`` ranks better generalizing learners
+    higher. A step-0 / smuggled-weights anomaly drives the anti-cheat multiplier to zero so an
+    anomalously-low bpb is flagged rather than rewarded.
+
+    Without challenge-owned held-out (``skip_heldout`` or missing delta) the score is **degraded**:
+    ``emission_crown_eligible`` is False and final_score stays in the secondary-only band so it
+    cannot crown emission against honest held-out winners (no faked held-out).
     """
 
     bpb: float
@@ -63,8 +77,8 @@ class PrequentialBpbScore:
     anti_cheat_multiplier: float
     anomaly: bool
     flags: tuple[str, ...]
-    # Held-out delta tie-breaker + anti-memorization gap (architecture.md sections 5, 6). These are
-    # ``None`` when no secret val split was scored for the run (held-out simply skipped).
+    # Held-out primary + anti-memorization gap. ``None`` when no secret val split was scored or when
+    # ``skip_heldout`` forced the degraded path.
     heldout_delta: float | None = None
     val_bpb_trained: float | None = None
     val_bpb_random_init: float | None = None
@@ -75,6 +89,14 @@ class PrequentialBpbScore:
     # reference produced the gap ("converged" vs the curve-averaged "prequential" fallback).
     train_bpb_converged: float | None = None
     gap_basis: str | None = None
+    # Emission crown eligibility: False when held-out was skipped/missing (cannot crown).
+    emission_crown_eligible: bool = True
+    primary_metric: str = "heldout_delta"
+
+    @property
+    def emission_rank_score(self) -> float:
+        """Alias for ``final_score`` (emission crown input; held-out primary)."""
+        return self.final_score
 
     def metrics_payload(self) -> dict[str, Any]:
         """Flat metrics for the ``scores`` row (challenge-computed; no raw-loss term)."""
@@ -82,6 +104,11 @@ class PrequentialBpbScore:
             "prequential_bpb": self.bpb,
             "bits_per_byte": self.bpb,
             "final_score": self.final_score,
+            "emission_rank_score": self.final_score,
+            "emission_crown_eligible": self.emission_crown_eligible,
+            "primary_metric": self.primary_metric,
+            "secondary_metric": "prequential_bpb",
+            "emission_ranking": "heldout_primary_bpb_secondary",
             "total_bytes_covered": float(self.covered_bytes),
             "covered_bytes": float(self.covered_bytes),
             "sum_neg_log2_likelihood_bits": self.sum_neg_log2_likelihood_bits,
@@ -113,10 +140,15 @@ class PrequentialBpbScore:
         """Challenge-authored ``score`` block merged into prism_run_manifest.v2.json."""
         block: dict[str, Any] = {
             "schema": "prism_score.v2",
-            "primary_metric": "prequential_bpb",
+            "primary_metric": self.primary_metric,
+            "secondary_metric": "prequential_bpb",
+            "emission_ranking": "heldout_primary_bpb_secondary",
+            "emission_crown_eligible": self.emission_crown_eligible,
             "prequential_bpb": self.bpb,
             "bits_per_byte": self.bpb,
             "final_score": self.final_score,
+            "emission_rank_score": self.final_score,
+            # lower_is_better applies to the secondary bpb axis only; final_score is higher-better.
             "lower_is_better": True,
             "covered_bytes": self.covered_bytes,
             "total_bytes_covered": self.covered_bytes,
@@ -128,7 +160,7 @@ class PrequentialBpbScore:
             "anti_cheat_multiplier": self.anti_cheat_multiplier,
             "anomaly": self.anomaly,
             "flags": list(self.flags),
-            "tie_breaker": "heldout_delta",
+            "tie_breaker": "prequential_bpb",
             "memorization_flag": self.memorization_flag,
             "memorization_penalty": self.memorization_penalty,
             "miner_reported_ignored": True,
@@ -150,8 +182,17 @@ class PrequentialBpbScore:
 
 
 def bpb_to_final_score(bpb: float) -> float:
-    """Monotone-decreasing transform of bits-per-byte: lower bpb -> higher (better) final_score."""
+    """Monotone-decreasing transform of bits-per-byte: lower bpb -> higher display value.
+
+    Under emission ranking this is the SECONDARY axis contribution base, not the emission primary.
+    Kept as a pure helper for secondary terms, degraded no-heldout display, and tests.
+    """
     return 1.0 / (1.0 + max(0.0, float(bpb)))
+
+
+def heldout_to_primary_score(delta: float) -> float:
+    """Monotone map of heldout_delta into the primary emission band (higher delta -> larger)."""
+    return EMISSION_HELDOUT_PRIMARY_OFFSET + EMISSION_HELDOUT_PRIMARY_SCALE * float(delta)
 
 
 def build_compute_block(
@@ -198,14 +239,14 @@ def build_compute_block(
     return block.model_dump(by_alias=True, exclude_none=True)
 
 
-# --- Deterministic leaderboard ordering + final tie-break (architecture.md section 5) ------------
-# ``final_score`` already folds the primary prequential bpb and the held-out-delta tie-breaker into
-# one monotone number (lower bpb / larger delta => larger final_score, so ORDER BY final_score DESC
-# ranks better learners first). When two submissions are near-equal on BOTH axes their final_score
-# is (near-)equal; the FINAL deterministic tie-break is EARLIEST-COMMIT-WINS (then submission id) so
-# the leaderboard order is a TOTAL, reproducible order. The tie epsilon stays far below
-# ``HELDOUT_DELTA_TIE_BREAK_WEIGHT`` so a genuine held-out-delta difference still orders ahead of
-# the commit-time tie-break (the delta tie-break is never collapsed).
+# --- Deterministic leaderboard ordering + final tie-break ----------------------------------------
+# ``final_score`` already folds held-out primary and prequential-bpb secondary into one monotone
+# number (larger held-out / lower bpb within near-tie => larger final_score, so ORDER BY
+# final_score DESC ranks better generalizing learners first). When two submissions are near-equal
+# on BOTH axes their final_score is (near-)equal; the FINAL deterministic tie-break is
+# EARLIEST-COMMIT-WINS (then submission id) so the leaderboard order is a TOTAL, reproducible
+# order. The tie epsilon stays far below ``BPB_SECONDARY_TIE_BREAK_WEIGHT`` so a genuine secondary
+# bpb difference still orders ahead of the commit-time tie-break.
 LEADERBOARD_TIE_EPSILON = 1e-9
 
 
@@ -232,16 +273,16 @@ def leaderboard_rank_key(row: LeaderboardRow) -> tuple[int, str, str]:
 
 
 def rank_leaderboard(rows: Iterable[LeaderboardRow]) -> list[LeaderboardRow]:
-    """Order leaderboard rows by bpb/learning with the deterministic earliest-commit tie-break."""
+    """Order leaderboard rows by emission rank with the deterministic earliest-commit tie-break."""
     return sorted(rows, key=leaderboard_rank_key)
 
 
 def dedupe_best_per_hotkey(rows: Iterable[LeaderboardRow]) -> list[LeaderboardRow]:
     """Keep exactly ONE surviving submission per hotkey: the one the canonical leaderboard
-    total-order ranks first for that hotkey (highest final_score on the epsilon grid -- with the
-    held-out-delta tie-break already folded into final_score above the grid -- then earliest
-    commit, then submission id). A hotkey therefore appears at most ONCE, and a worse same-hotkey
-    submission never supersedes or co-drives weight when a better one exists (architecture.md 5,10).
+    total-order ranks first for that hotkey (highest final_score on the epsilon grid -- with
+    held-out primary already folded into final_score above the grid -- then earliest commit, then
+    submission id). A hotkey therefore appears at most ONCE, and a worse same-hotkey submission
+    never supersedes or co-drives weight when a better one exists (architecture.md 5,10).
     """
     best: dict[str, LeaderboardRow] = {}
     for row in rows:
@@ -254,18 +295,24 @@ def dedupe_best_per_hotkey(rows: Iterable[LeaderboardRow]) -> list[LeaderboardRo
 def score_prequential_bpb(
     manifest: Mapping[str, Any], *, sane_max: float = BPB_SANE_MAX, skip_heldout: bool = False
 ) -> PrequentialBpbScore:
-    """Compute the prequential bits-per-byte score from the challenge-owned v2 manifest.
+    """Compute the emission rank score from the challenge-owned v2 manifest.
+
+    Emission rank (``final_score``) is **Official-like**:
+
+    * PRIMARY: heldout_delta (higher better)
+    * SECONDARY: prequential bpb (lower better; breaks near-ties on primary only)
+    * Gates: step-0 anomaly zeroes; memorization penalty multiplies primary
 
     ``bpb = (sum over consumed tokens of -log2 p(token)) / total_bytes_covered`` where the
     numerator is the token-weighted online (predict-then-train) negative log-likelihood the
     challenge captured itself. Raises ``ScoreValidationError`` for a degenerate (zero-coverage,
     non-finite, or out-of-band) run so it never collapses into a fabricated/0-that-ranks score.
 
-    ``skip_heldout`` grades on prequential bpb ALONE (delta ``None``, no tie-break, no memorization
-    penalty) regardless of any held-out fields the manifest carries. The worker plane passes it
-    because the held-out delta needs the master-only secret val split, which never reaches a
-    miner-funded worker (architecture.md 4); a forwarded manifest therefore scores bpb-only and a
-    fabricated held-out field can never move the score.
+    ``skip_heldout`` grades on the **degraded** path (no emission crown): bpb is recorded, but
+    held-out fields from a forwarded worker manifest are ignored and
+    ``emission_crown_eligible`` is False. The worker plane passes it because the held-out delta
+    needs the master-only secret val split, which never reaches a miner-funded worker
+    (architecture.md 4); a forwarded manifest therefore cannot fake held-out into an emission crown.
     """
     metrics = manifest.get("metrics")
     if not isinstance(metrics, Mapping):
@@ -309,13 +356,28 @@ def score_prequential_bpb(
     )
     if heldout.memorization_flag:
         flags.append("memorization_gap")
-    # The held-out delta refines ranking only as a NEAR-TIE tie-breaker (bounded additive term,
-    # monotone in the delta) so a strictly lower bpb is NEVER ranked worse on the primary axis even
-    # at high bpb where ``base`` compresses; an excessive train-vs-held-out gap multiplies in a
-    # memorization penalty so a memorizer ranks below an equivalent non-memorizing run.
-    base = bpb_to_final_score(bpb)
-    tie_break = _heldout_tie_break(bpb, heldout.delta, heldout.penalty)
-    final_score_value = (base * heldout.penalty + tie_break) * anti_cheat_multiplier
+
+    if skip_heldout:
+        flags.append("heldout_skipped")
+    elif heldout.delta is None:
+        flags.append("heldout_missing")
+
+    # --- Emission rank fold (held-out PRIMARY, bpb SECONDARY) ---------------------------------
+    if heldout.delta is None:
+        # Degraded / fail-closed crown path: never invent held-out. final_score stays in the
+        # secondary-only band ((0, 1] via bpb_to_final_score) so it cannot beat any honest held-out
+        # primary (offset band ~100). emission_crown_eligible=False so q_arch_best / q_recipe
+        # consumers refuse crown advancement.
+        final_score_value = bpb_to_final_score(bpb) * anti_cheat_multiplier * heldout.penalty
+        crown_eligible = False
+        primary_metric = "prequential_bpb_degraded"
+    else:
+        primary = heldout_to_primary_score(heldout.delta)
+        secondary = _bpb_secondary_term(heldout.delta, bpb, heldout.penalty)
+        final_score_value = (primary * heldout.penalty + secondary) * anti_cheat_multiplier
+        crown_eligible = anti_cheat_multiplier > 0.0 and final_score_value > 0.0
+        primary_metric = "heldout_delta"
+
     step0_loss = metrics.get("step0_loss")
     return PrequentialBpbScore(
         bpb=bpb,
@@ -337,6 +399,8 @@ def score_prequential_bpb(
         memorization_penalty=heldout.penalty,
         train_bpb_converged=heldout.train_bpb_converged,
         gap_basis=heldout.gap_basis,
+        emission_crown_eligible=crown_eligible,
+        primary_metric=primary_metric,
     )
 
 
@@ -362,8 +426,8 @@ def _read_heldout(
     """Read the host-computed held-out delta + anti-memorization gap from the v2 manifest.
 
     The held-out delta + gap are populated host-side (``evaluator/heldout.py``) into the metrics /
-    score blocks. When absent (no secret val split scored) the run is graded on prequential bpb
-    alone with no tie-break and no penalty.
+    score blocks. When absent (no secret val split scored) the run is graded on the degraded
+    secondary-only path with ``emission_crown_eligible=False`` (no faked primary).
     """
     score_block = manifest.get("score")
     score_block = score_block if isinstance(score_block, Mapping) else {}
@@ -440,21 +504,30 @@ def _coerce_str(value: Any) -> str | None:
     return value if isinstance(value, str) and value else None
 
 
-def _heldout_tie_break(bpb: float, delta: float | None, penalty: float) -> float:
-    """Held-out-delta tie-break bounded so it can ONLY reorder a NEAR-TIE on bpb.
+def _bpb_secondary_term(delta: float, bpb: float, penalty: float) -> float:
+    """Secondary prequential-bpb term bounded so it can ONLY reorder a NEAR-TIE on held-out.
 
-    The term is capped at half the (penalty-scaled) final_score resolution across a
-    ``HELDOUT_DELTA_BPB_EPSILON`` bpb band (and never above ``HELDOUT_DELTA_TIE_BREAK_WEIGHT``). The
-    resolution shrinks monotonically as bpb grows (``base`` is convex), so two submissions whose bpb
-    differs by more than the epsilon keep strict bpb order regardless of delta (VAL-SCORE-001 /
-    VAL-SCORE-019); within the band the larger delta wins (VAL-SCORE-008).
+    The term is capped at half the (penalty-scaled) primary resolution across a
+    ``HELDOUT_DELTA_BPB_EPSILON`` held-out band (and never above
+    ``BPB_SECONDARY_TIE_BREAK_WEIGHT``). Two submissions whose held-out delta differs by more than
+    the epsilon keep strict held-out order regardless of bpb (VAL-RESLAB-006); within the band the
+    lower bpb wins.
+    """
+    del delta  # primary resolution is linear in EMISSION_HELDOUT_PRIMARY_SCALE; delta unused
+    resolution = EMISSION_HELDOUT_PRIMARY_SCALE * HELDOUT_DELTA_BPB_EPSILON
+    weight = max(0.0, float(penalty))
+    cap = min(BPB_SECONDARY_TIE_BREAK_WEIGHT * weight, 0.5 * weight * max(0.0, resolution))
+    return cap * bpb_to_final_score(bpb)
+
+
+def _heldout_tie_break(bpb: float, delta: float | None, penalty: float) -> float:
+    """Backward-compat wrapper: under the invert this is the bpb SECONDARY term.
+
+    Kept so older imports still resolve. Prefer :func:`_bpb_secondary_term`.
     """
     if delta is None:
         return 0.0
-    resolution = bpb_to_final_score(bpb) - bpb_to_final_score(bpb + HELDOUT_DELTA_BPB_EPSILON)
-    weight = max(0.0, penalty)
-    cap = min(HELDOUT_DELTA_TIE_BREAK_WEIGHT * weight, 0.5 * weight * max(0.0, resolution))
-    return cap * math.tanh(delta)
+    return _bpb_secondary_term(delta, bpb, penalty)
 
 
 def _manifest_covered_bytes(manifest: Mapping[str, Any], metrics: Mapping[str, Any]) -> int:

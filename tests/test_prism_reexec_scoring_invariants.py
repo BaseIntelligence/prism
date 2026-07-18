@@ -94,36 +94,37 @@ def test_non_positive_bpb_raises():
         score_prequential_bpb(_manifest(bpb=0.0))
 
 
-# --- VAL-PRISM-011: held-out delta is a bounded near-tie tie-breaker only -------------------------
+# --- VAL-RESLAB-006: held-out is primary; bpb is bounded secondary -------------------------------
 
 
-def test_strictly_lower_bpb_always_outranks_despite_delta():
-    # A higher-bpb run with a large favourable held-out delta must NOT outrank a strictly lower-bpb
-    # run outside the near-tie epsilon band; bpb is the primary axis.
+def test_strictly_better_heldout_outranks_despite_worse_bpb():
+    # Emission invert: a run with a clearly larger held-out delta outranks a strictly lower-bpb
+    # short-train compressor outside the near-tie epsilon band.
     low_bpb = score_prequential_bpb(_manifest(bpb=0.30, heldout_delta=0.0, val_bpb_trained=0.30))
     high_bpb_big_delta = score_prequential_bpb(
         _manifest(
             bpb=0.30 + 10 * HELDOUT_DELTA_BPB_EPSILON, heldout_delta=5.0, val_bpb_trained=0.30
         )
     )
-    assert low_bpb.final_score > high_bpb_big_delta.final_score
+    assert high_bpb_big_delta.final_score > low_bpb.final_score
 
 
-def test_within_epsilon_band_larger_delta_wins_but_bounded():
-    base_bpb = 0.30
-    small = score_prequential_bpb(
-        _manifest(bpb=base_bpb, heldout_delta=0.0, val_bpb_trained=base_bpb)
+def test_within_epsilon_band_lower_bpb_wins_but_secondary_bounded():
+    # Same held-out primary; secondary bpb breaks the near-tie and stays bounded.
+    base_delta = 0.30
+    worse_bpb = score_prequential_bpb(
+        _manifest(bpb=0.50, heldout_delta=base_delta, val_bpb_trained=base_delta)
     )
-    larger = score_prequential_bpb(
+    better_bpb = score_prequential_bpb(
         _manifest(
-            bpb=base_bpb + 0.2 * HELDOUT_DELTA_BPB_EPSILON,
-            heldout_delta=2.0,
-            val_bpb_trained=base_bpb,
+            bpb=0.50 - 0.2 * HELDOUT_DELTA_BPB_EPSILON,
+            heldout_delta=base_delta,
+            val_bpb_trained=base_delta,
         )
     )
-    # Within the band the larger delta can edge ahead, but the tie-break term is capped.
-    assert larger.final_score >= small.final_score
-    assert abs(larger.final_score - small.final_score) <= HELDOUT_DELTA_TIE_BREAK_WEIGHT + 1e-9
+    assert better_bpb.final_score >= worse_bpb.final_score
+    spread = abs(better_bpb.final_score - worse_bpb.final_score)
+    assert spread <= HELDOUT_DELTA_TIE_BREAK_WEIGHT + 1e-9
 
 
 # --- VAL-PRISM-012: excessive train-vs-held-out gap applies the memorization penalty --------------

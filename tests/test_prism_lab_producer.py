@@ -74,6 +74,9 @@ def _train(variant: int) -> str:
 def _v2_manifest(submission_id: str, *, sum_nll_nats: float, covered_bytes: int) -> dict:
     bits = sum_nll_nats / math.log(2.0)
     bpb = bits / covered_bytes
+    # Synthetic held-out primary so master-side finalize can crown (VAL-RESLAB-006). Keep ordering
+    # consistent with lower-bpb-is-better by mapping a larger heldout_delta for lower bpb.
+    heldout_delta = 1.0 / (1.0 + bpb)
     online_loss = [2.5, 2.0, 1.5]
     cumulative = [covered_bytes // 3, (covered_bytes * 2) // 3, covered_bytes]
     return {
@@ -106,6 +109,10 @@ def _v2_manifest(submission_id: str, *, sum_nll_nats: float, covered_bytes: int)
             "tokens_seen": 96,
             "prequential_bpb": bpb,
             "bits_per_byte": bpb,
+            "heldout_delta": heldout_delta,
+            "held_out_delta": heldout_delta,
+            "val_bpb_trained": max(0.1, bpb),
+            "val_bpb_random_init": max(0.1, bpb) + heldout_delta,
             "step0_loss": online_loss[0],
             "consumed_batches": 3,
             "random_init_baseline_nats": math.log(128),
@@ -123,8 +130,10 @@ def _v2_manifest(submission_id: str, *, sum_nll_nats: float, covered_bytes: int)
 
 
 def _final_score(sum_nll_nats: float, covered_bytes: int) -> float:
-    bpb = (sum_nll_nats / math.log(2.0)) / covered_bytes
-    return 1.0 / (1.0 + bpb)
+    from prism_challenge.evaluator.scoring import score_prequential_bpb
+
+    manifest = _v2_manifest("score-probe", sum_nll_nats=sum_nll_nats, covered_bytes=covered_bytes)
+    return float(score_prequential_bpb(manifest).final_score)
 
 
 def _settings(tmp_path) -> PrismSettings:

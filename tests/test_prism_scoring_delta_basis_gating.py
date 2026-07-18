@@ -89,18 +89,18 @@ def test_scoring_same_basis_still_flags_excessive_memorization_gap() -> None:
     assert "memorization_gap" in score.flags
 
 
-def test_scoring_delta_tiebreak_never_reorders_clearly_different_bpb() -> None:
-    # DEFECT 3 / VAL-SCORE-001 + VAL-SCORE-019: a clearly-lower bpb keeps the better rank even when
-    # the higher-bpb run carries the maximal favorable held-out delta. The delta is a NEAR-TIE
-    # tie-break only; it must NEVER reorder submissions whose bpb meaningfully differs.
+def test_scoring_heldout_primary_reorders_despite_clearly_different_bpb() -> None:
+    # VAL-RESLAB-006: clearer held-out primary keeps the better rank even when the weaker held-out
+    # run carries a clearly better (lower) prequential bpb. Pure short-train bpb alone cannot
+    # overturn a better held-out winner inside the rules.
     lower_bpb = score_prequential_bpb(_manifest(bpb=5.0, heldout_delta=-1.0))
     higher_bpb = score_prequential_bpb(_manifest(bpb=5.03, heldout_delta=1.0))
     assert lower_bpb.bpb < higher_bpb.bpb
-    assert lower_bpb.final_score > higher_bpb.final_score
+    assert higher_bpb.final_score > lower_bpb.final_score
 
 
 def test_scoring_delta_still_breaks_a_true_near_tie() -> None:
-    # The delta tie-break STILL orders an exact bpb tie by the larger delta (VAL-SCORE-008).
+    # Equal secondary bpb: held-out primary orders by the larger delta (VAL-RESLAB-006).
     bigger = score_prequential_bpb(_manifest(bpb=2.0, heldout_delta=0.8))
     smaller = score_prequential_bpb(_manifest(bpb=2.0, heldout_delta=0.1))
     assert bigger.bpb == pytest.approx(smaller.bpb)

@@ -196,8 +196,10 @@ class PrismWorker:
         submission SOURCE) and the static fingerprints/arch_hash/name from the component review. It
         takes NO GPU lease and NEVER constructs the evaluator (no ``evaluator.evaluate`` /
         ``_evaluate_within_wall_time`` / ``_augment_with_heldout``). The held-out delta is SKIPPED
-        (``skip_heldout=True``) so the score is bpb-only and the master-only secret val split
-        (``base_eval_val_data_dir``) is never read (architecture.md 4).
+        (``skip_heldout=True``): score finalizes on the degraded secondary-only band with
+        ``emission_crown_eligible=False`` so the path cannot crown emission against honest
+        master-side held-out winners, and the master-only secret val split
+        (``base_eval_val_data_dir``) is never read (architecture.md 4; VAL-RESLAB-006).
 
         A failure while deriving the source-static tail is transient and internal (not a worker
         fault), so it does NOT terminally fail the submission: it reverts the claim to ``pending``
@@ -942,9 +944,10 @@ class PrismWorker:
         persists the loss curve + reconciled compute block into ``submission_curves`` so the data is
         centrally queryable (none of these are inputs to the score).
 
-        ``skip_heldout`` forces the bpb-only scoring path (no held-out delta tie-break); the worker
-        plane sets it so a forwarded worker manifest is graded on prequential bpb alone without ever
-        needing the master-only secret val split (architecture.md 4).
+        ``skip_heldout`` forces the degraded secondary-only scoring path (no held-out primary,
+        ``emission_crown_eligible=False``). The worker plane sets it so a forwarded worker manifest
+        is graded without ever needing the master-only secret val split and cannot advance
+        architecture/training emission crowns (architecture.md 4; VAL-RESLAB-006).
 
         Under TEE-required mode (``tee.require_for_score``), this path refuses to write a
         production score or architecture-family row unless ``tee_score_authorized`` is true. Legacy
@@ -973,8 +976,17 @@ class PrismWorker:
             return
         anti_multiplier = max(0.0, min(1.0, float(getattr(anti, "multiplier", 1.0))))
         final_score_value = max(0.0, score.final_score * anti_multiplier)
+        # Emission crown requires challenge-owned held-out primary (VAL-RESLAB-006). Worker
+        # skip_heldout / missing held-out degrades the scalar and must not advance q_arch_best /
+        # q_recipe crowns (fail-closed; never invent held-out).
+        crown_eligible = bool(getattr(score, "emission_crown_eligible", True)) and (
+            final_score_value > 0.0 and not bool(getattr(score, "anomaly", False))
+        )
+        if skip_heldout or not bool(getattr(score, "emission_crown_eligible", True)):
+            crown_eligible = False
         metrics_payload = score.metrics_payload()
         metrics_payload["arch_hash"] = arch_hash
+        metrics_payload["emission_crown_eligible"] = crown_eligible
         # Dual ladder stage labels on the scores row (VAL-RESLAB-003); never enter final_score.
         from .evaluator.param_ladder import (
             STAGE_EXPLORE,
@@ -1001,14 +1013,16 @@ class PrismWorker:
         labels = ladder_labels(
             stage,
             param_count=model_params_metric,
-            score_valid=final_score_value > 0.0 and not bool(getattr(score, "anomaly", False)),
+            score_valid=crown_eligible,
             max_parameters=stage_cap,
         )
         metrics_payload.update(
             {
                 "param_ladder_stage": labels["param_ladder_stage"],
                 "param_ladder_cap": labels["param_ladder_cap"],
-                "provisional_crown_eligible": labels["provisional_crown_eligible"],
+                "provisional_crown_eligible": bool(
+                    labels["provisional_crown_eligible"] and crown_eligible
+                ),
             }
         )
         if model_params_metric is not None:
@@ -1019,6 +1033,10 @@ class PrismWorker:
             fingerprints.behavior_fingerprint if fingerprints else ""
         ) or arch_hash
         now = now_iso()
+        # Crown input: only held-out-primary eligible scores advance q_arch_best / q_recipe.
+        # Degraded skip_heldout runs still persist scores/metrics for inventory, but use 0.0 as
+        # the architecture-family / training-variant crown key so they cannot displace crowns.
+        crown_score_value = final_score_value if crown_eligible else 0.0
         async with self.repository.database.connect() as conn:
             await conn.execute(
                 "INSERT OR REPLACE INTO scores("
@@ -1047,7 +1065,7 @@ class PrismWorker:
                 behavior_fingerprint=behavior_fingerprint,
                 owner_hotkey=hotkey,
                 submission_id=submission_id,
-                final_score=final_score_value,
+                final_score=crown_score_value,
                 display_name=name,
                 now=now,
             )
@@ -1057,7 +1075,7 @@ class PrismWorker:
                 training_hash=training_hash or arch_hash,
                 owner_hotkey=hotkey,
                 submission_id=submission_id,
-                final_score=final_score_value,
+                final_score=crown_score_value,
                 now=now,
             )
             await self._persist_submission_curve(
