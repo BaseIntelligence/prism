@@ -68,6 +68,7 @@ def test_health_version_and_internal_auth(client):
 def test_submit_status_process_and_leaderboard(client, monkeypatch):
     def fake_run(self, spec, timeout_seconds):
         artifact_dir = next(mount.source for mount in spec.mounts if mount.target == "/artifacts")
+        # Held-out primary must be present for emission crown / get_weights (VAL-RESLAB-006).
         manifest = {
             "schema_version": "prism_run_manifest.v2",
             "metrics": {
@@ -76,6 +77,10 @@ def test_submit_status_process_and_leaderboard(client, monkeypatch):
                 "online_loss": [3.1, 2.9, 2.4],
                 "predicted_tokens": 800,
                 "tokens_seen": 800,
+                "heldout_delta": 0.35,
+                "val_bpb_trained": 1.10,
+                "val_bpb_random_init": 1.45,
+                "param_ladder_stage": "explore",
             },
         }
         (artifact_dir / "prism_run_manifest.v2.json").write_text(

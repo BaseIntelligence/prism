@@ -25,6 +25,7 @@ _INTERNAL_HEADERS = {"Authorization": "Bearer secret", "X-Base-Challenge-Slug": 
 
 def _fake_run(self: Any, spec: Any, timeout_seconds: Any) -> DockerRunResult:
     artifact_dir = next(mount.source for mount in spec.mounts if mount.target == "/artifacts")
+    # Held-out primary required so crowning / get_weights stay non-empty under reslab invert.
     manifest = {
         "schema_version": "prism_run_manifest.v2",
         "metrics": {
@@ -33,6 +34,10 @@ def _fake_run(self: Any, spec: Any, timeout_seconds: Any) -> DockerRunResult:
             "online_loss": [3.1, 2.9, 2.4],
             "predicted_tokens": 800,
             "tokens_seen": 800,
+            "heldout_delta": 0.35,
+            "val_bpb_trained": 1.10,
+            "val_bpb_random_init": 1.45,
+            "param_ladder_stage": "explore",
         },
     }
     (artifact_dir / "prism_run_manifest.v2.json").write_text(json.dumps(manifest), encoding="utf-8")

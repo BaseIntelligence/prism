@@ -173,6 +173,7 @@ def test_static_build_model_valid_returns_param_count() -> None:
 
 
 def test_static_build_model_large_model_not_false_rejected_by_memory_cap() -> None:
+    """~138M params fits promote (350M) but not default explore (124M)."""
     arch = (
         "import torch\n"
         "from torch import nn\n\n"
@@ -187,7 +188,13 @@ def test_static_build_model_large_model_not_false_rejected_by_memory_cap() -> No
         "def build_model(ctx):\n"
         "    return Big()\n"
     )
-    count = check_build_model_static({"architecture.py": arch}, "architecture.py", ctx=CTX)
+    promote_ctx = PrismContext(
+        vocab_size=256,
+        sequence_length=16,
+        max_parameters=350_000_000,
+        param_ladder_stage="promote",
+    )
+    count = check_build_model_static({"architecture.py": arch}, "architecture.py", ctx=promote_ctx)
     assert count == 33 * (2048 * 2048 + 2048)
 
 
