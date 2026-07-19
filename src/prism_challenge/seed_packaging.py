@@ -196,6 +196,110 @@ SEED_FAMILIES: dict[str, SeedFamily] = {
             ),
         },
     ),
+    "mla-tiny-1m": SeedFamily(
+        family_id="mla-tiny-1m",
+        display_name="MLA tiny pure-torch (DeepSeek-class)",
+        architecture_family="mla",
+        source_dir=EXAMPLES_ROOT / "mla-tiny",
+        description=(
+            "Weight-tied ~3-8M Multi-Head Latent Attention decoder "
+            "(dim=128, heads=4, 3 layers, kv_lora_rank=32, decoupled RoPE) under "
+            "the two-script Prism contract and 124M explore ladder. Pure torch "
+            "DeepSeek-V2 MLA class (arXiv 2405.04434); NOT full V3/V4 weights."
+        ),
+        knobs={
+            "param_counting": (
+                "Architecture-agnostic forced-seed tensor count over latent KV "
+                "projections, multi-head up-proj, dense SwiGLU, weight-tied emb/head."
+            ),
+            "step_throughput": (
+                "LOCAL_BATCH=4, AdamW lr=0.004, GRAD_CLIP_NORM=1.0; materializes "
+                "K/V heads (no FlashMLA); scores compute-normalized."
+            ),
+            "stability": (
+                "Single-node multi-GPU (≤8) Imp-compatible primitives; modest LR; "
+                "works at world_size=1."
+            ),
+            "tokenizer": "prism.yaml tokenizer=gpt2 (pre-staged offline reference).",
+            "pure_torch_caveat": (
+                "No flash_attn / FlashMLA / cpp_extension required for correctness."
+            ),
+            "honesty": (
+                "Mechanism downscale of DeepSeek-class MLA only — not full "
+                "DeepSeek-V3/V4 frontier weights or multi-hundred-B checkpoints."
+            ),
+        },
+    ),
+    "ds-moe-tiny-1m": SeedFamily(
+        family_id="ds-moe-tiny-1m",
+        display_name="DeepSeekMoE-style tiny pure-torch",
+        architecture_family="ds_moe",
+        source_dir=EXAMPLES_ROOT / "ds-moe-tiny",
+        description=(
+            "Weight-tied ~4-12M total DeepSeekMoE-class fine-grained MoE LM "
+            "(dim=128, 2 layers, 8 routed top_k=2 + 1 shared SwiGLU expert, dense "
+            "causal MHA) under the two-script contract and 124M explore ladder. "
+            "Pure torch (arXiv 2401.06066); NOT full V3/V4/K2 multi-TB MoE."
+        ),
+        knobs={
+            "param_counting": (
+                "Forced-seed counts ALL expert tensors (total params), not "
+                "activated-only; architecture-agnostic like Imp seeds."
+            ),
+            "step_throughput": (
+                "LOCAL_BATCH=4, AdamW lr=0.0035, GRAD_CLIP_NORM=1.0; top-k sparse "
+                "FFN forward; scores compute-normalized."
+            ),
+            "stability": (
+                "Single-node multi-GPU (≤8) Imp-compatible primitives; light router "
+                "noise at train; no EP / DualPipe required."
+            ),
+            "tokenizer": "prism.yaml tokenizer=gpt2 (pre-staged offline reference).",
+            "pure_torch_caveat": (
+                "No expert-parallel infra or fused kernel required for correctness."
+            ),
+            "honesty": (
+                "Mechanism downscale of DeepSeekMoE-class fine-grained routing only "
+                "— not full frontier MoE weights."
+            ),
+        },
+    ),
+    "kda-tiny-1m": SeedFamily(
+        family_id="kda-tiny-1m",
+        display_name="Kimi Delta Attention tiny pure-torch",
+        architecture_family="kda",
+        source_dir=EXAMPLES_ROOT / "kda-tiny",
+        description=(
+            "Weight-tied ~3-10M Kimi Delta Attention (KDA) linear recurrence LM "
+            "(dim=128, 3 layers, d_state=48, heads=4, channel-wise forget gates) "
+            "under the two-script contract and 124M explore ladder. Kimi Linear "
+            "class (arXiv 2510.26692); distinct from gated-delta-tiny; NOT full "
+            "Kimi Linear-48B / K2 / K3 weights."
+        ),
+        knobs={
+            "param_counting": (
+                "Architecture-agnostic forced-seed count; includes beta/channel_gate "
+                "projections, learned key→state map, weight-tied emb/head."
+            ),
+            "step_throughput": (
+                "LOCAL_BATCH=4, AdamW lr=0.003, GRAD_CLIP_NORM=1.0; sequential KDA "
+                "scan slower/token than fused FLA kernels; wall-clock never ranks."
+            ),
+            "stability": (
+                "Single-node multi-GPU (≤8) Imp-compatible primitives; soft beta/"
+                "channel_gate bias init; pure torch only."
+            ),
+            "tokenizer": "prism.yaml tokenizer=gpt2 (pre-staged offline reference).",
+            "pure_torch_caveat": (
+                "Do not require flash_linear_attn / FLA / Tritonc chunk kernels "
+                "for static lab acceptance."
+            ),
+            "honesty": (
+                "Mechanism downscale of Kimi Linear / KDA-class attention only — "
+                "not full Kimi Linear-48B, K2, or production K3 frontier weights."
+            ),
+        },
+    ),
 }
 
 
