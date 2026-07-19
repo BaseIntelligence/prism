@@ -195,7 +195,8 @@ def grad_norm_aggregates_from_series(series: Mapping[str, Any] | None) -> dict[s
             "clip_event_rate": None,
         }
     assert series is not None
-    points = series.get("points") if isinstance(series.get("points"), list) else []
+    raw_points = series.get("points")
+    points: list[Any] = raw_points if isinstance(raw_points, list) else []
     grads: list[float] = []
     clips = 0
     for point in points:
@@ -206,7 +207,8 @@ def grad_norm_aggregates_from_series(series: Mapping[str, Any] | None) -> dict[s
             grads.append(float(g))
         if point.get("clip_event") is True:
             clips += 1
-    aggregates = series.get("aggregates") if isinstance(series.get("aggregates"), Mapping) else {}
+    raw_aggregates = series.get("aggregates")
+    aggregates: Mapping[str, Any] = raw_aggregates if isinstance(raw_aggregates, Mapping) else {}
     if not grads:
         return {
             "ok": False,
@@ -217,12 +219,8 @@ def grad_norm_aggregates_from_series(series: Mapping[str, Any] | None) -> dict[s
             "grad_norm_median": None,
             "grad_norm_max": None,
             "grad_norm_p95": None,
-            "grad_spike_rate": aggregates.get("grad_spike_rate")
-            if isinstance(aggregates, Mapping)
-            else None,
-            "clip_events": int(aggregates.get("clip_events", clips))
-            if isinstance(aggregates, Mapping)
-            else int(clips),
+            "grad_spike_rate": aggregates.get("grad_spike_rate"),
+            "clip_events": int(aggregates.get("clip_events", clips)),
             "clip_event_rate": None,
         }
     ordered = sorted(grads)
@@ -231,9 +229,7 @@ def grad_norm_aggregates_from_series(series: Mapping[str, Any] | None) -> dict[s
     thr = max(med * 10.0, 1e-8)
     spike = sum(1 for g in grads if g > thr) / float(n)
     p95 = ordered[min(n - 1, int(math.ceil(0.95 * n) - 1))]
-    clip_total = (
-        int(aggregates.get("clip_events", clips)) if isinstance(aggregates, Mapping) else int(clips)
-    )
+    clip_total = int(aggregates.get("clip_events", clips))
     return {
         "ok": True,
         "reason": None,
