@@ -107,19 +107,28 @@ Common cheats are **inert**, not merely detected:
 - **No memorization** — the secret `val`/`test` splits never leave the master; an excessive train-vs-held-out gap is penalized.
 - **Deterministic** — fixed seeds and a challenge-controlled data order reproduce the same score within tolerance.
 
-## TEE Verifier
+## Provider trust and IMAGE_PIN
 
-PRISM includes a **Prism-only, fail-closed local TEE fixture verifier** for unit and contract tests.
-Real Lium/Targon remote attestation that would produce a production PASS is **blocked** until those
-provider readiness gates are satisfied. Local fixture verification does not imply live TEE production
-readiness on Lium or Targon. Lab GPU scores and image pin checks never unlock **REAL-PROVIDER TEE PASS**.
+PRISM does **not** ship a TEE verifier package and does **not** require TEE evidence to finalize
+production scores. Operators trust **Lium/Targon** as GPU providers. Integrity levers that remain:
+
+| Label | Meaning |
+| --- | --- |
+| **PROVIDER_TRUST** | Operator trusts Lium/Targon compute; no Prism crypto TEE path |
+| **IMAGE_PIN** / **IMAGE_PIN_VERIFY** | `worker_plane.pinned_image_digest` match grants effective tier **1** (max); mismatch downgrades |
+| **DEPLOY SMOKE** | Provider lifecycle works (always-terminate paid pods) |
+| **LAB-GPU** | Fair CUDA lab scores under Official Comparison |
+| **REAL-PROVIDER TEE** | **Retired for Prism product** (historical lab tables may still say BLOCKED; do not implement) |
+
+Configure `worker_plane.pinned_image_digest` when pinning the evaluator/worker image. Score finalization
+never fails closed on missing TEE evidence.
 
 ## Worker Plane (optional)
 
 PRISM can move GPU re-execution onto **miner-funded workers** (deployed on Lium/Targon via the BASE
 `base worker` CLI). Validators then run verify-only plausibility checks plus probabilistic audits,
 and each result carries an `ExecutionProof` (manifest hash + worker sr25519 signature, with optional
-image-digest and attestation tiers). Gated behind `worker_plane` (default off). See the
+image-digest pin for tier-1). Gated behind `worker_plane` (default off). See the
 <a href="https://github.com/BaseIntelligence/base/blob/main/docs/miner/worker-plane.md">worker deployment guide</a>.
 
 ## Documentation

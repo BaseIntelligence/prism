@@ -15,8 +15,9 @@ then by recomputed prequential **bits-per-byte**. The challenge owns every numbe
 > wins remain **provisional only**. Challenge-owned **`prism_train_series.v1`** is visibility + residual
 > densify for sample-eff/stability only — **never sole primary** over held-out/bpb. When an Official
 > grade pin **requires** the series and it is missing/corrupt, Official grade **fail-closes** (not
-> silent PASS); miner dashboards remain non-authoritative. REAL-PROVIDER TEE remains orthogonal and
-> **BLOCKED**.
+> silent PASS); miner dashboards remain non-authoritative. Provider trust + **IMAGE_PIN** govern
+> worker integrity; **REAL-PROVIDER TEE** is **retired** for Prism product (historical tables may
+> still say BLOCKED; never a production scoring gate).
 ```mermaid
 flowchart LR
     Loss[Single-pass online loss stream] --> Bpb[Prequential bits-per-byte]
@@ -154,9 +155,10 @@ Every number above is recomputed by the challenge from the challenge-authored
 raw-loss term and the v1-NAS architecture/training ownership pools are retired from the score.
 
 Miner self-reports remain non-authoritative on both the emission path and Official Comparison mode
-(including scorecard v1.1, Complete View, and train series). REAL-PROVIDER TEE labels are
-orthogonal to ranking: see [Official Comparison](official-comparison.md) §17 train series telemetry,
-scorecard / TEE non-claims, and [Security](security.md).
+(including scorecard v1.1, Complete View, and train series). Provider-trust / IMAGE_PIN / LAB-GPU
+labels are orthogonal to ranking; **REAL-PROVIDER TEE** is a retired product goal (historical
+non-claims only): see [Official Comparison](official-comparison.md) §17 train series telemetry,
+scorecard honesty, and [Security](security.md).
 
 ## Reference Studies
 

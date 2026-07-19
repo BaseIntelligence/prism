@@ -500,6 +500,61 @@ def test_llm_hard_gate_is_documented() -> None:
     assert "before any gpu" in combined_lower or "before gpu" in combined_lower
 
 
+def test_no_tee_provider_trust_and_image_pin_are_documented() -> None:
+    """VAL-NOTEE-011: provider trust + IMAGE_PIN; no TEE-required production scoring path."""
+    readme = read_doc("README.md")
+    architecture = read_doc("docs/architecture.md")
+    security = read_doc("docs/security.md")
+    scoring = read_doc("docs/scoring.md")
+    operators = read_doc("docs/operators.md")
+    overview = read_doc("docs/overview.md")
+    api = read_doc("docs/api.md")
+    validator = read_doc("docs/validator/README.md")
+    protocol = read_doc("docs/official-comparison.md")
+    config_example = Path("config.example.yaml").read_text(encoding="utf-8")
+
+    product_docs = (
+        f"{readme}\n{architecture}\n{security}\n{scoring}\n{operators}\n"
+        f"{overview}\n{api}\n{validator}"
+    )
+    product_lower = product_docs.lower()
+    all_lower = f"{product_docs}\n{protocol}".lower()
+
+    # Provider trust + IMAGE_PIN narrative on shipping surfaces.
+    assert "provider_trust" in product_lower or "provider trust" in product_lower
+    assert (
+        "image_pin" in product_lower
+        or "image pin" in product_lower
+        or "pinned_image_digest" in product_docs
+    )
+    assert "lium" in product_lower and "targon" in product_lower
+    assert "pinned_image_digest" in config_example
+    # config.example.yaml must not reintroduce a product tee: block.
+    assert "\ntee:" not in config_example
+    assert not any(line.strip().startswith("tee:") for line in config_example.splitlines())
+
+    # Production path must NOT instruct TEE-required scoring / active TeeVerifier.
+    forbidden_production = (
+        "tee-required scoring",
+        "tee required mode",
+        "enable tee-required",
+        "prism-only, fail-closed local tee fixture verifier",
+        "prism is the only tee-attestation verifier",
+    )
+    for phrase in forbidden_production:
+        assert phrase not in product_lower, f"production TEE path still instructed: {phrase}"
+
+    # Explicit no-TEE product stance on core surfaces.
+    assert "does not" in product_lower and (
+        "tee verifier" in product_lower or "tee-attestation verifier" in product_lower
+    )
+    assert "retired" in all_lower and "real-provider" in all_lower
+
+    # Historical REAL-PROVIDER BLOCKED honesty may remain on lab/protocol surfaces.
+    assert "real-provider" in all_lower
+    assert "blocked" in all_lower
+
+
 def test_multi_gpu_contract_is_documented() -> None:
     submissions = read_doc("docs/submissions.md")
     scaling = read_doc("docs/scaling.md")

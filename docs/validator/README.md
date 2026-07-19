@@ -133,12 +133,12 @@ PRISM uses the static AST sandbox, the forced-seed parameter cap, the multi-GPU 
 terminal before any GPU work. A borderline duplicate is folded into a terminal rejection at ingress:
 there is no operator hold-resolution surface and no LLM hard gate.
 
-## TEE Readiness
+## Provider Trust And IMAGE_PIN
 
-- Local verifier fixtures may yield a labeled **`LOCAL-FIXTURE PASS`** only.
-- Real Lium/Targon production PASS is **blocked** until public digests, contracts, and trust roots
-  exist.
+- Production scoring does **not** require Prism TEE evidence; operators trust **Lium/Targon** providers.
+- Pin the evaluator/worker image via `worker_plane.pinned_image_digest` (**IMAGE_PIN**, max tier **1**).
 - Do not treat inventory probes or opaque quote fields as elevated-tier proof.
+- **REAL-PROVIDER TEE** is retired as a Prism product goal (historical lab labels may still say BLOCKED).
 
 ## Base SDK Pin
 

@@ -4,7 +4,7 @@
 **Document status:** Operator- and miner-facing protocol (docs + tests first)  
 **Audience:** Operators running offline A-vs-B architecture/training comparisons; miners building unknown architectures under fair matched budgets  
 
-This document defines **Prism Official Comparison Protocol v1**: an architecture-agnostic protocol for ranking any two qualifying training submissions (or seed packages) under matched data, tokens/bytes, seeds, and fairness constraints. It is the **scientific lab/compare surface** (published research grade via multimetric / Complete View). It is **not** a silent replacement for the live emission scalar and it never claims live **REAL-PROVIDER TEE PASS**.
+This document defines **Prism Official Comparison Protocol v1**: an architecture-agnostic protocol for ranking any two qualifying training submissions (or seed packages) under matched data, tokens/bytes, seeds, and fairness constraints. It is the **scientific lab/compare surface** (published research grade via multimetric / Complete View). It is **not** a silent replacement for the live emission scalar. Production integrity is **PROVIDER_TRUST** (Lium/Targon) + **IMAGE_PIN**; **REAL-PROVIDER TEE** is retired Prism product language (historical tables may still say BLOCKED).
 
 For production subnet scoring (leaderboard emission rank, raw-weight push), see [Scoring](scoring.md).
 **Emission volume-1 is Official-like:** held-out / generalization **PRIMARY**, prequential bpb
@@ -49,7 +49,8 @@ Non-goals in v1:
 | **Unknown architecture** | Any `torch.nn.Module` built by `build_model(ctx)` under sandbox and param cap; no family-specific score path. |
 | **Miner self-report** | Any number, log line, or manifest the miner writes; **never authoritative**. |
 | **Challenge-owned metric** | Metrics Prism recomputes from its own capture / host held-out (`prism_run_manifest.v2.json`). |
-| **REAL-PROVIDER TEE** | Cryptographic provider attestation PASS. Orthogonal to Official Comparison; still **BLOCKED** until external provider contracts exist. See [Security](security.md). |
+| **PROVIDER_TRUST / IMAGE_PIN** | Production integrity: trusted Lium/Targon + pinned image digest (max tier 1). See [Security](security.md). |
+| **REAL-PROVIDER TEE** (retired) | Historical honesty label only. Orthogonal to Official Comparison; **BLOCKED** / not a Prism product goal. |
 
 ---
 
@@ -323,7 +324,7 @@ On a host with working NVIDIA + Docker GPU runtime:
 
 1. Run both sides under the same ProtocolPin with `device: cuda` and `token_budget` large enough that both stop on `token_budget`, not wall-clock.
 2. Capture challenge-authored manifests per seed, pin hash, and `compare_official` outcome.
-3. Still label TEE honestly: LOCAL-FIXTURE vs blocked REAL-PROVIDER paths independently of the scientific ranking.
+3. Still label provider integrity honestly: PROVIDER_TRUST / IMAGE_PIN / LAB-GPU; REAL-PROVIDER TEE remains a retired historical BLOCKED label only, independently of the scientific ranking.
 
 ### 8.3 LAB-GPU path without local NVIDIA (remote CUDA + host rank)
 
@@ -332,24 +333,24 @@ Local `nvidia-smi` DEFERRED applies to **host-local GPU smoke** only. When real 
 1. Rank on a **CPU mission host** with `python -m prism_challenge.evaluator.official_compare_harness --lab-gpu-artifacts <root>`.
 2. Label the report `score_class=LAB-GPU` / `device_class=lab-gpu` (not fixture-only synthetic; not “DEFERRED-for-no-nvidia”).
 3. Primary = held-out; secondary = Prism-recomputed prequential bpb; wall-clock recorded but ignored for rank.
-4. `REAL-PROVIDER TEE` remains **BLOCKED / NOT_CLAIMED**. Lab score success never unlocks REAL-PROVIDER PASS and invents no trust roots.
+4. `REAL-PROVIDER TEE` remains **BLOCKED / NOT_CLAIMED** (retired product language). Lab score success never implements REAL-PROVIDER TEE PASS and invents no trust roots. Use PROVIDER_TRUST / LAB-GPU / IMAGE_PIN labels.
 
 Short vs long refers to the remote train pin (token budget / spend ceiling), not the host rank step. Missing dual-family manifests must surface as **BLOCKED**, not invented scores. See [Operators — Lab GPU short/long Official Comparison](operators.md#lab-gpu-shortlong-official-comparison-host-rank-of-remote-cuda).
 
 ---
 
-## 9. TEE honesty is orthogonal
+## 9. Provider trust honesty is orthogonal (REAL-PROVIDER TEE retired)
 
 Official Comparison ranking compares **learning quality metrics** only.
 
 | Classification | Relation to official rank |
 | --- | --- |
-| No TEE / legacy path | May still produce lab metric records if product mode allows; does not improve rank |
-| `LOCAL-FIXTURE PASS` | Elevated local crypto class for verifier honesty only; **never** REAL-PROVIDER |
+| No TEE / provider-trust path | Default production path; may produce lab metric records; does not improve rank by itself |
+| PROVIDER_TRUST + IMAGE_PIN | Production integrity levers (Lium/Targon + pinned digest tier-1); orthogonal to pair rank |
 | Lium / Targon deploy smoke | Infra `DEPLOY SMOKE PASS|FAIL` only |
-| `REAL-PROVIDER TEE PASS` | **BLOCKED** until authoritative evidence contracts, trust roots, digests exist; **not** unlocked by Official Comparison |
+| `REAL-PROVIDER TEE PASS` (retired) | **BLOCKED** historical honesty only; **not** a Prism product goal; **not** unlocked by Official Comparison |
 
-Protocol docs and compare reports MUST keep a clean separation paragraph: scoring comparison never claims REAL-PROVIDER PASS. Fail-closed TEE-required production scoring (when enabled) remains a product gate independent of this ranking table.
+Protocol docs and compare reports MUST keep a clean separation paragraph: scoring comparison never claims REAL-PROVIDER TEE PASS. Prism has **no** TEE production scoring gate; score finalize never fails closed on missing TEE evidence.
 
 ---
 
@@ -441,7 +442,7 @@ Report marks `score_class=LAB-GPU`, `gpu_verification.status=LAB-GPU`, `real_pro
 | [Submissions](submissions.md) | Two-script contract and `PrismContext` honest hooks |
 | [Operators](operators.md) | Offline dual-family Official Comparison harness (CPU/fixture) + LAB-GPU host rank of remote CUDA |
 | [Miner guide](miner/README.md) | Lab seed families and submission shape |
-| [Security](security.md) | Sandbox, deterministic admission, TEE fail-closed honesty |
+| [Security](security.md) | Sandbox, deterministic admission, provider trust + IMAGE_PIN honesty |
 | [Scaling](scaling.md) | Single-node multi-GPU contract (pin may force nproc=1) |
 
 Research background (mission-only audit, not shipping product claim): assembly notes that predated this lock may still talk “bpb primary” for scientific MDL framing of the **capture metric**. Under **user-locked Official Comparison v1 ranking**, held-out/generalization is PRIMARY and bpb is SECONDARY.

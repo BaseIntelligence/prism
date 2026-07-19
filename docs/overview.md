@@ -99,8 +99,8 @@ replace the emission scalar in volume-1. See [Scoring](scoring.md) and
 
 Deploy as a **long-lived Compose challenge service**. Preferred production layout is the BASE master
 Compose project with PRISM in **combined mode** (API + in-process queue drain) and digest-pinned
-images. Real Lium/Targon TEE production PASS is blocked; local fixtures alone can produce a labeled
-`LOCAL-FIXTURE PASS`. See [Architecture](architecture.md), [Security](security.md), and
+images (**IMAGE_PIN**). Production scoring trusts Lium/Targon providers and does **not** require a
+Prism TEE verifier. See [Architecture](architecture.md), [Security](security.md), and
 [Operators](operators.md).
 
 See [Scaling Evaluation](scaling.md) for the multi-GPU contract and budget, [Scoring](scoring.md)

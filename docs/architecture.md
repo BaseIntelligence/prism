@@ -2,9 +2,9 @@
 
 PRISM is a BASE challenge service: a FastAPI application with SQLite state, internal BASE
 authentication, and GPU evaluation through the BASE Docker broker (or optional external worker-plane
-TEE evaluation). It measures a model's ability to learn: miners submit two scripts, the challenge
-owns the data and the evaluation, and scored runs are re-executed under a forced random init so the
-challenge computes the score itself.
+evaluation on trusted Lium/Targon providers). It measures a model's ability to learn: miners submit
+two scripts, the challenge owns the data and the evaluation, and scored runs are re-executed under a
+forced random init so the challenge computes the score itself.
 
 PRISM pins the immutable Base SDK wheel **v3.1.2** (see the root README and `pyproject.toml`). There
 is **no LLM gateway** dependency, client, route, or admission path.
@@ -39,7 +39,7 @@ flowchart LR
 | Source similarity | Exact-hash and borderline-similarity checks; quarantine band is a **terminal reject** (never held) |
 | Container runner | Challenge-owned forced-init re-execution that captures the online loss stream |
 | External-result ingest | Accepts **only** `ExternalResultEnvelope` on the worker-plane result route (fail closed on legacy bodies) |
-| TEE verifier | Prism-only fail-closed attestation checks; **LOCAL-FIXTURE PASS** only for elevated tier today |
+| Provider trust + IMAGE_PIN | Trusts Lium/Targon providers; `pinned_image_digest` → audit effective tier 0/1 (max 1); no TEE verifier |
 | Scoring | Emission rank: held-out / generalization primary, prequential bpb secondary, anti-memorization gap |
 | Raw-weight push | Pushes authenticated raw hotkey weights to the BASE master for aggregation |
 
@@ -110,19 +110,21 @@ The challenge harness drives every scored run; miner code only supplies the mode
 The eval container is non-root, has a read-only rootfs except `artifacts_dir`, uses `network=none`, and
 is bounded by a wall-clock budget that is only a safety cap, never part of the score.
 
-## TEE Boundary
+## Provider Trust And IMAGE_PIN Boundary
 
-Prism alone verifies TEE evidence (Base validates ordinary proof envelopes only). Full fail-closed
-local cryptographic fixtures can yield a labeled **`LOCAL-FIXTURE PASS`**. Real Lium/Targon production
-PASS remains **blocked** until authoritative provider contracts, public digests, trust roots, and
-measurements exist. Opaque non-empty `tdx_quote_b64` / `gpu_eat_jwt` fields never grant elevated tier
-by themselves. See [Security](security.md).
+Prism does **not** ship a TEE verifier and does **not** gate production score finalization on TEE
+evidence. Operators trust **Lium/Targon** as GPU providers. Ordinary ExecutionProof envelopes and
+signatures remain; **IMAGE_PIN** (`worker_plane.pinned_image_digest`) may grant effective tier **1**
+on digest match and downgrades on mismatch. Max effective tier is **1** (no TEE tier-2 elevation).
+Legacy claim fields such as `tdx_quote_b64` / `gpu_eat_jwt`, if present on the wire, are inert and
+never elevate tier. **REAL-PROVIDER TEE** is a **retired** Prism product goal (historical lab tables
+may still record BLOCKED). See [Security](security.md).
 
 ## State Model
 
 State lives in SQLite. Key tables include `miners`, `submissions`, `eval_jobs`, `gpu_leases`,
-`scores`, `submission_sources`, `epochs`, plus raw-weight push ledger state and optional TEE nonce
-ledgers when the verifier is used.
+`scores`, `submission_sources`, `epochs`, plus raw-weight push ledger state. TEE nonce / decision
+ledgers are not created by the current product path.
 
 - `eval_jobs` tracks each attempt (including the `level='l1'` static-tracking placeholder, which is not
   GPU work).

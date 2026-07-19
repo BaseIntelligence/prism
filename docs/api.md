@@ -132,9 +132,10 @@ body must include `api_version`, assignment/challenge bindings, and an execution
 reduced bodies without those fields are rejected with **422** before scoring or persistence. Enabled
 only when the worker plane is on; otherwise **404**.
 
-TEE fields in results, when present, are verified fail-closed by Prism. Elevated tier requires a true
-verifier success; local fixtures alone may yield **`LOCAL-FIXTURE PASS`**. Real Lium/Targon PASS is
-blocked until provider contracts and digests exist.
+Proof envelopes may carry optional claim fields; Prism does **not** run a TEE verifier on them.
+**IMAGE_PIN** (`worker_plane.pinned_image_digest`) is the product elevation path (max effective tier
+**1**). Score finalization is never blocked for missing TEE evidence. Provider trust is Lium/Targon
+plus ordinary signature/plausibility gates on the worker plane.
 
 ### Other internal routes
 

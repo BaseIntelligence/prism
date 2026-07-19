@@ -65,23 +65,23 @@ or legacy reduced bodies fail closed with a 422 before scoring or persistence. P
 plausibility gates run before finalization; duplicate deliveries are idempotent and conflicts refuse
 mutation of sealed scores.
 
-## TEE Verification
+## Provider Trust And IMAGE_PIN
 
-Prism is the only TEE-attestation verifier in this stack. Behavior is fail-closed:
+Prism does **not** ship a TEE-attestation verifier and does **not** require TEE evidence to finalize
+production scores. Integrity for miner-funded GPU work rests on:
 
-- Signature, issuer, audience, expiration, nonce, replay, workload, image digest, measurements, and GPU
-  identity bindings must verify before elevated tier is granted.
-- The only elevated classification local tests and fixtures can produce is a labeled
-  **`LOCAL-FIXTURE PASS`**. Status APIs, CLI summaries, audit records, and lab dashboards must keep an
-  explicit `local_fixture` / LOCAL-FIXTURE source label and **must not** smuggle that outcome into
-  **`REAL-PROVIDER PASS`**, a production mine badge, or live-emission authority.
-- Real-provider **Lium/Targon PASS remains blocked** until public digest-pinned worker images, evidence
-  contracts, and trust roots exist. Safe inventory/API probes and paid deploy smoke prove reachability
-  or infra only (`DEPLOY SMOKE`) and never promote a synthetic REAL-PROVIDER PASS
-  (`would_grant_real_provider_pass` stays false). Targon is future/blocked.
-- Hard-gate checklist (`HARD_GATE_ITEMS`, 11 authoritative dependencies) remains in force for any
-  future real-provider unlock; operator flags and credentials never satisfy it alone.
-- Opaque non-empty `tdx_quote_b64` / `gpu_eat_jwt` never imply tier 2 by presence alone.
+- **PROVIDER_TRUST** — operators trust **Lium/Targon** as compute providers (no Prism crypto TEE path).
+- **IMAGE_PIN** — `worker_plane.pinned_image_digest` match grants audit effective tier **1** (maximum);
+  pin mismatch yields an honest non-elevated downgrade (not silent ignore).
+- **DEPLOY SMOKE** — paid provider lifecycle proofs are reachability/infra only; always terminate pods.
+- **LAB-GPU** — remote CUDA lab scores under Official Comparison; scientific only.
+- Ordinary ExecutionProof envelope + worker signature checks on the worker-plane path.
+
+**REAL-PROVIDER TEE** (cryptographic provider attestation PASS as a Prism product goal) is
+**retired**. Historical lab tables and reports may still show `real_provider_tee=BLOCKED` as honesty
+history; do not implement or document a TEE production scoring gate as the live path. Opaque
+non-empty `tdx_quote_b64` / `gpu_eat_jwt` fields never imply tier 2 by presence alone (max effective
+tier is 1 via image pin).
 
 ## Locked Data, No Network
 
@@ -103,7 +103,8 @@ a broker-backed container that is non-root, has a read-only rootfs except `artif
 `network=none` and `no-new-privileges`, and is bounded by CPU, memory, PID, and wall-clock caps.
 Host-side static instantiation and held-out scoring run in bounded child processes with
 `weights_only=True` for any deserialization. Application code does **not** create ephemeral evaluator
-containers; evaluation is the long-lived challenge runtime (or external TEE workers when enabled).
+containers; evaluation is the long-lived challenge runtime (or external worker-plane GPUs on trusted
+providers when enabled).
 
 ## ZIP Hardening
 
@@ -131,5 +132,5 @@ their own wallets. The challenge and master never write weights on-chain.
 - Keep public submissions disabled when PRISM is deployed only behind BASE.
 - Keep the eval container on `network=none` and the rootfs read-only except `artifacts_dir`.
 - Do **not** configure LLM gateway URL/token fields; those surfaces are gone and residual knobs fail closed.
-- Treat TEE local fixture results as `LOCAL-FIXTURE PASS` only; do not claim live Lium/Targon readiness.
+- Prefer `worker_plane.pinned_image_digest` for IMAGE_PIN tier-1; do not enable any removed TEE production scoring path.
 - Monitor rejected, failed, and completed submissions separately (legacy held is not a live path).

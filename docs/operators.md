@@ -149,36 +149,24 @@ the master private ingress (versioned epoch/revision, digest, idempotent). Confi
 and challenge-scoped credentials via settings/secret files; never log tokens. Validators submit the
 master-aggregated vector on-chain; PRISM does not call `set_weights`.
 
-## External Results And TEE
+## External Results, Provider Trust, And IMAGE_PIN
 
 Worker-plane result ingest accepts **only** `ExternalResultEnvelope` from the Base SDK. Legacy bodies
 without the full binding/proof schema fail closed.
 
-TEE:
+Provider trust (no TEE production scoring gate):
 
-- Local cryptographic fixtures may yield **`LOCAL-FIXTURE PASS`** under the fail-closed verifier.
-  That label is the **only** elevated local-crypto success class. It must never be rewritten,
-  summarized, or badged as **`REAL-PROVIDER PASS`**, production mine, or live-emission authority
-  (APIs, CLI, audit records, and lab reports).
-- Real Lium/Targon production PASS is **blocked** until contracts and digests exist. Paid Lium
-  provision smoke is **`DEPLOY SMOKE PASS|FAIL` only** and independent of crypto classification.
-- Adapter readiness reports always expose `would_grant_real_provider_pass=false` for Lium/Targon
-  in this code path, even when credentials are present, inventory is reachable, `lium_ready` /
-  `targon_ready` is flipped, or a complete-looking `provider_contract` blob is supplied.
-- Targon remains **`future/blocked`** (`PROVIDER_FUTURE_BLOCKED`) for REAL-PROVIDER PASS.
-- Safe provider probes (inventory/health) never become REAL-PROVIDER PASS.
-- **Readiness hard gates still in force** (`HARD_GATE_ITEMS`, all required for any future real PASS):
-  1. `authoritative_evidence_endpoint`
-  2. `authoritative_evidence_format`
-  3. `authoritative_issuer_audience`
-  4. `authoritative_trust_roots`
-  5. `freshness_and_clock_policy`
-  6. `nonce_semantics`
-  7. `digest_pinned_public_worker_image`
-  8. `measurement_policy`
-  9. `gpu_claim_policy`
-  10. `cross_binding_semantics`
-  11. `real_workload_evidence_artifact`
+- Operators trust **Lium/Targon** as GPU providers (**PROVIDER_TRUST**). Prism does **not** ship a
+  TEE verifier and does **not** fail closed on missing TEE evidence at score finalize.
+- **IMAGE_PIN** — set `worker_plane.pinned_image_digest` (`sha256:<64hex>`) so proof claims that match
+  the pin receive audit effective tier **1** (maximum). Mismatch is an honest downgrade.
+- Paid Lium/Targon provision smoke is **`DEPLOY SMOKE PASS|FAIL` only** (always-terminate pods) and
+  independent of emission ranking.
+- Safe provider probes (inventory/health) prove reachability only; they do not unlock cryptographic
+  provider attestation as a Prism product surface.
+- **REAL-PROVIDER TEE** is **retired** for Prism product language. Historical lab tables may still
+  show `real_provider_tee=BLOCKED` / non-claims; do not document or enable a TEE production scoring
+  gate.
 - Residual removed LLM env/keys (`PRISM_LLM_*`, gateway tokens, component-agent knobs) fail closed
   at settings load and never fall through to scored operation.
 
@@ -212,7 +200,7 @@ curl -H "Authorization: Bearer dev-secret" -H "X-Base-Challenge-Slug: prism" \
 
 ## Offline Official Comparison (CPU / fixture)
 
-Operators can rank two unknown-style seed packages under **Prism Official Comparison Protocol v1** without NVIDIA. The dual-family harness packages Transformer `tiny-1m` and pure-torch Mamba, builds comparable official score records from challenge-owned metrics, and prints a clear A-vs-B `compare_official` outcome. Long multi-step GPU pair trains remain **DEFERRED** when the host has no NVIDIA; tee notes never claim **REAL-PROVIDER PASS**.
+Operators can rank two unknown-style seed packages under **Prism Official Comparison Protocol v1** without NVIDIA. The dual-family harness packages Transformer `tiny-1m` and pure-torch Mamba, builds comparable official score records from challenge-owned metrics, and prints a clear A-vs-B `compare_official` outcome. Long multi-step GPU pair trains remain **DEFERRED** when the host has no NVIDIA. Honesty labels use PROVIDER_TRUST / LAB-GPU / IMAGE_PIN; **REAL-PROVIDER TEE** is retired product language (historical tables may still say BLOCKED).
 
 Full ranking axioms: [Official Comparison](official-comparison.md).
 
@@ -246,7 +234,7 @@ Report fields of interest:
 | `ranking.outcome_label` | Human-readable winner label (package family id) |
 | `side_a` / `side_b` | Bundle hashes, mean held-out + recomputed bpb, validity |
 | `gpu_verification.status` | `DEFERRED` when nvidia-smi/`/dev/nvidia*`/nvidia runtime absent; never claimed PASS by the harness |
-| `tee_note` | Always orthogonal: REAL-PROVIDER PASS not claimed |
+| `tee_note` / provider labels | Orthogonal to rank; PROVIDER_TRUST / IMAGE_PIN; REAL-PROVIDER TEE retired (historical BLOCKED OK) |
 
 Do not treat the offline fixture winner as an automatic emission weight crown unless production emission scoring independently agrees (emission is held-out primary + bpb secondary; multimetric / Complete View remain published scientific research grade and do not silently replace emission).
 
@@ -261,7 +249,7 @@ Additive annex on Protocol v1: **`scorecard_id=multimetric.v1.1`**. Full catalog
 | Multi-seed | Public non-provisional scorecard requires clean **K≥3**; K=1 is provisional only |
 | Prior LAB-GPU | Prior short-ctx K=1 mamba heldout lead is **provisional only**; insufficient for architecture superiority |
 | Suites | Validity V, short-gen, long-ctx (needle / MQAR / induction-copy / lag-NLL), sample-efficiency, memo, efficiency (VRAM / tok/s / params), stability — mark not-run honestly if a suite is missing |
-| TEE / ops | REAL-PROVIDER TEE stays **BLOCKED**; always-terminate paid pods; no live Swarm mutate; no `set_weights` from compare |
+| TEE / ops (retired product goal) | REAL-PROVIDER TEE stays **BLOCKED** in historical honesty fields only; production path is PROVIDER_TRUST + IMAGE_PIN; always-terminate paid pods; no live Swarm mutate; no `set_weights` from compare |
 
 Inspect scorecard fields when present:
 
@@ -281,7 +269,7 @@ MAX A→Z machine dashboard on Protocol v1: **`schema=complete_view.v1.3`**, **`
 | Reasoning panel | `P10_reasoning_logic` closed-acc + forced CE + chance baselines; suite_mean shell until probe suite fills |
 | Honesty | Seed-scale synthetic logic is **lab/architecture comparison only**; not human AGI; not emission crown |
 | Suites not-run | null + reason; never invent metrics |
-| TEE / ops | REAL-PROVIDER TEE **BLOCKED**; no live Swarm mutate; no `set_weights`; always-terminate paid remesure pods |
+| TEE / ops (retired product goal) | REAL-PROVIDER TEE **BLOCKED** in historical honesty only; use PROVIDER_TRUST + IMAGE_PIN; no live Swarm mutate; no `set_weights`; always-terminate paid remesure pods |
 | Product module | `prism_challenge.evaluator.complete_view` |
 
 ```bash
@@ -296,7 +284,8 @@ When real dual-family CUDA trains already completed on a remote GPU host (for ex
 | --- | --- |
 | **fixture / CPU** | Synth metrics + seed packaging only; host `gpu_verification.status=DEFERRED` with no local NVIDIA |
 | **LAB-GPU** (short or long) | Real CUDA trains produced manifests; host recompute via `official_record_from_manifest` + `compare_official`; report `score_class=LAB-GPU` |
-| **REAL-PROVIDER TEE** | Always **BLOCKED / NOT_CLAIMED** on this path. Lab score success never unlocks REAL-PROVIDER PASS |
+| **PROVIDER_TRUST / IMAGE_PIN** | Production integrity: trusted Lium/Targon + pinned image digest (max tier 1) |
+| **REAL-PROVIDER TEE** (retired) | Historical honesty only: **BLOCKED / NOT_CLAIMED**. Lab score success never implements REAL-PROVIDER TEE PASS |
 
 Layout expected under `--lab-gpu-artifacts`:
 
@@ -322,7 +311,7 @@ jq '{score_class, ranking, real_provider_tee, gpu_verification}' \
 
 Protocol axioms still hold: held-out **primary**, prequential bpb **secondary**, wall-clock may be recorded but **never ranks**, miner self-report is non-authoritative. Exit code `2` with `BLOCKED:` means dual-family manifests were missing — do not invent scores. No HA-live Swarm mutate and no `set_weights` are required for ranking.
 
-**Provisional honesty for prior K=1 short-ctx LAB-GPU wins:** a single-seed mamba heldout_delta lead under short context is a valid **provisional** lab observation under Protocol v1, **not** multi-seed public architecture superiority. Apply the multimetric.v1.1 scorecard (long-ctx, sample-eff, K≥3, efficiency, polar rules) before any crown language. REAL-PROVIDER TEE remains BLOCKED on this path.
+**Provisional honesty for prior K=1 short-ctx LAB-GPU wins:** a single-seed mamba heldout_delta lead under short context is a valid **provisional** lab observation under Protocol v1, **not** multi-seed public architecture superiority. Apply the multimetric.v1.1 scorecard (long-ctx, sample-eff, K≥3, efficiency, polar rules) before any crown language. Label integrity with PROVIDER_TRUST / IMAGE_PIN / LAB-GPU; REAL-PROVIDER TEE remains a retired / historical BLOCKED label only.
 
 ### Challenge-owned train series telemetry (operators)
 
@@ -336,7 +325,7 @@ Machine identity: **`schema=prism_train_series.v1`**. Full protocol: [Official C
 | Rank role of series | Visibility + densify **sample-eff / stability residual** only — **never sole primary rank** over held-out/bpb |
 | Fail-closed Official pin | If grading pin sets `require_train_series` and series is missing/empty/corrupt → Official scientific grade **fail-closes** (not silent PASS) |
 | APIs | **`GET /v1/submissions/{id}/curve`** (public challenge routes under existing Base proxy / internal auth) returns legacy `loss_curve` **and** optional challenge-owned **`train_series`** (`prism_train_series.v1`) with downsample-safe multichannel points: train CE / running bpb, tokens_seen, wall_s, **grad_norm**, **clip_event**. Miner authority payloads are **never** returned. Chart-safe key projection strips unknown/secret fields. Frontend Architecture Lab already plots loss vs covered bytes from this route; operators may also plot cosine-style time-flow via CLI `jq` on `train_series.points` until UI surfaces `grad_norm` series natively. |
-| TEE / ops | Series realize lab observability only; REAL-PROVIDER TEE **BLOCKED**; no live Swarm mutate; no `set_weights` from telemetry |
+| TEE / ops (retired product goal) | Series realize lab observability only; REAL-PROVIDER TEE historical **BLOCKED**; production uses PROVIDER_TRUST + IMAGE_PIN; no live Swarm mutate; no `set_weights` from telemetry |
 
 ```bash
 # Operator time-flow: loss + grad_norm vs tokens / wall (same auth as other curve reads)
@@ -371,12 +360,12 @@ Do not rank packages solely on prettier grad_norm aesthetics. Use multi-axis Off
 | evaluation failed | Broker, image, GPU, timeout, missing locked data, or container error |
 | empty weights / no push | No completed scored submissions yet; raw-weight push disabled or master URL missing |
 | `result_envelope_invalid` | Body is not a full `ExternalResultEnvelope` |
-| TEE elevated tier never grants | Expected until real-provider contracts land; only local fixtures can PASS |
+| TEE elevated tier never grants | Expected: Prism has no TEE verifier; max tier is IMAGE_PIN tier-1 |
 | `missing_locked_data` | The read-only FineWeb-Edu train mount is absent or empty on the GPU node |
 | Offline compare says GPU DEFERRED | Expected without `nvidia-smi` on the **fixture/CPU** path; use fixture metrics or list CUDA as metadata only |
 | LAB-GPU report still fixture | Forgot `--lab-gpu-artifacts`; fixture path is the default |
 | `BLOCKED: LAB-GPU host compare` | Missing `{family}/seed-*/prism_run_manifest.v2.json` for one or both families |
-| LAB-GPU vs REAL-PROVIDER | Lab GPU score class is scientific only; REAL-PROVIDER TEE remains BLOCKED |
+| LAB-GPU vs REAL-PROVIDER | Lab GPU score class is scientific only; REAL-PROVIDER TEE is retired product language (historical BLOCKED OK) |
 | Prior mamba short-ctx win treated as “Mamba better architecture” | K=1 short-ctx LAB-GPU is provisional; require multimetric.v1.1 scorecard + K≥3; TIE_POLAR if short vs long axes disagree |
 | Scorecard long-ctx / sample-eff fields missing | Suite not run yet — mark not-run/BLOCKED; do not invent metrics |
 | Official grade missing train series | Pin requires `prism_train_series.v1` and capture empty/miner-only — fail-closed Official grade; do not PASS on miner dashboard |
