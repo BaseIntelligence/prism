@@ -44,8 +44,11 @@ before any 350M promote:
 
 | Family id | Path | Notes |
 | --- | --- | --- |
-| `transformer-tiny-1m` | `examples/tiny-1m` | Weight-tied ~1M decoder transformer; default explore shape under 124M; multi-GPU single-node ≤8 |
-| `mamba-tiny-1m` | `examples/mamba-tiny` | Pure-PyTorch selective SSM (Mamba-style); **no** `mamba_ssm` C++/CUDA dep; same dual ladder + multi-GPU contract |
+| `transformer-tiny-1m` | `examples/tiny-1m` | Imp baseline: weight-tied ~1M decoder transformer; default explore shape under 124M; multi-GPU single-node ≤8 |
+| `mamba-tiny-1m` | `examples/mamba-tiny` | Imp baseline: pure-PyTorch selective SSM (Mamba-style); **no** `mamba_ssm` C++/CUDA dep; same dual ladder + multi-GPU contract |
+| `deeploop-tiny-1m` | `examples/deeploop-tiny` | Novel DeepLoop-class shared-weight looped residual (arXiv 2607.13491 class); ~1–1.5M; pure torch |
+| `gated-delta-tiny-1m` | `examples/gated-delta-tiny` | Novel gated delta-rule linear recurrence (DeltaNet 2406.06484 class); ~1.5–3M; sequential pure torch |
+| `hybrid-attn-ssm-tiny-1m` | `examples/hybrid-attn-ssm-tiny` | Novel hybrid causal attn × pure-torch SSM (Hymba/Jamba-mini spirit); ~2–4M; no `mamba_ssm`/`flash_attn` |
 
 Family knobs that matter for lab interpretation (not product baseline tables):
 

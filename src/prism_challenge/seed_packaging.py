@@ -45,7 +45,8 @@ class SeedFamily:
     knobs: Mapping[str, str]
 
 
-# Registry is the single packaging harness surface. Dual-family zips share this table.
+# Registry is the single packaging harness surface. Imp dual-family + arXiv-class
+# novel seed zips share this table (same outer entry/fingerprint contract).
 SEED_FAMILIES: dict[str, SeedFamily] = {
     "transformer-tiny-1m": SeedFamily(
         family_id="transformer-tiny-1m",
@@ -100,6 +101,98 @@ SEED_FAMILIES: dict[str, SeedFamily] = {
             "pure_torch_caveat": (
                 "Selective scan is implemented in Python/Torch for AST-lab portability; "
                 "do not import mamba_ssm for the static lab path."
+            ),
+        },
+    ),
+    "deeploop-tiny-1m": SeedFamily(
+        family_id="deeploop-tiny-1m",
+        display_name="DeepLoop-class tiny pure-torch",
+        architecture_family="deeploop",
+        source_dir=EXAMPLES_ROOT / "deeploop-tiny",
+        description=(
+            "Weight-tied ~1-1.5M DeepLoop-class looped residual decoder "
+            "(dim=128, 1 physical block x 4 loops, causal MHA + SwiGLU) under the "
+            "two-script Prism contract and 124M explore ladder. Pure torch only "
+            "(arXiv 2607.13491 class)."
+        ),
+        knobs={
+            "param_counting": (
+                "Same architecture-agnostic forced-seed tensor count; loop scales "
+                "and shared physical block tensors only (no unique layer copies)."
+            ),
+            "step_throughput": (
+                "LOCAL_BATCH=4, AdamW lr=0.004, GRAD_CLIP_NORM=1.0; loops multiply "
+                "depth compute without param growth; scores compute-normalized."
+            ),
+            "stability": (
+                "Single-node multi-GPU (≤8) Imp-compatible static primitives; loop "
+                "residual scales init 0.1; works at world_size=1."
+            ),
+            "tokenizer": "prism.yaml tokenizer=gpt2 (pre-staged offline reference).",
+            "pure_torch_caveat": (
+                "Shared-weight deep unrolls only; no flash_attn or native extensions."
+            ),
+        },
+    ),
+    "gated-delta-tiny-1m": SeedFamily(
+        family_id="gated-delta-tiny-1m",
+        display_name="Gated delta linear tiny pure-torch",
+        architecture_family="gated_delta",
+        source_dir=EXAMPLES_ROOT / "gated-delta-tiny",
+        description=(
+            "Weight-tied ~1.5-3M gated delta-rule linear recurrence LM "
+            "(dim=128, 2 layers, d_state=32, heads=4) under the two-script contract "
+            "and 124M explore ladder. Sequential pure-torch scan only "
+            "(DeltaNet 2406.06484 class); no fused linear-attn kernels."
+        ),
+        knobs={
+            "param_counting": (
+                "Architecture-agnostic forced-seed count; includes beta/gate/conv "
+                "projections plus weight-tied emb/head."
+            ),
+            "step_throughput": (
+                "LOCAL_BATCH=4, AdamW lr=0.003, GRAD_CLIP_NORM=1.0; sequential delta "
+                "scan slower/token than fused kernels; wall-clock never ranks."
+            ),
+            "stability": (
+                "Single-node multi-GPU (≤8) Imp-compatible primitives; small beta "
+                "bias init; pure torch only."
+            ),
+            "tokenizer": "prism.yaml tokenizer=gpt2 (pre-staged offline reference).",
+            "pure_torch_caveat": (
+                "Do not require flash_attn / flash_linear_attn / Tritonc chunk kernels "
+                "for static lab acceptance."
+            ),
+        },
+    ),
+    "hybrid-attn-ssm-tiny-1m": SeedFamily(
+        family_id="hybrid-attn-ssm-tiny-1m",
+        display_name="Hybrid attn×SSM tiny pure-torch",
+        architecture_family="hybrid_attn_ssm",
+        source_dir=EXAMPLES_ROOT / "hybrid-attn-ssm-tiny",
+        description=(
+            "Weight-tied ~2-4M hybrid tiny causal-attn × pure-torch selective SSM LM "
+            "(dim=128, 3 layers, attn every 2, d_state=16) under the two-script "
+            "contract and 124M explore ladder. Hymba/Jamba/Zamba-mini spirit; no "
+            "mamba_ssm / flash_attn."
+        ),
+        knobs={
+            "param_counting": (
+                "Architecture-agnostic forced-seed count over SSM + sparse MHA + "
+                "SwiGLU tensors with weight-tied emb/head."
+            ),
+            "step_throughput": (
+                "LOCAL_BATCH=4, AdamW lr=0.0035, GRAD_CLIP_NORM=1.0; mixed scan+MHA "
+                "compute; scores compute-normalized."
+            ),
+            "stability": (
+                "Single-node multi-GPU (≤8) Imp-compatible primitives; pure torch "
+                "SSM scan + stock causal MHA only."
+            ),
+            "tokenizer": "prism.yaml tokenizer=gpt2 (pre-staged offline reference).",
+            "pure_torch_caveat": (
+                "Selective scan is pure PyTorch like mamba-tiny; do not import "
+                "mamba_ssm or flash_attn for the static lab path."
             ),
         },
     ),
