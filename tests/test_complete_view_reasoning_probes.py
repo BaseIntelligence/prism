@@ -378,7 +378,9 @@ def test_all_must_probes_fixture_suite_and_panel_fill() -> None:
     )
     assert doc["schema"] == COMPLETE_VIEW_SCHEMA == "complete_view.v1.3"
     assert doc["scorecard_id"] == COMPLETE_VIEW_SCORECARD_ID
-    assert doc["real_provider_tee"] == "BLOCKED"
+    assert "real_provider_tee" not in doc
+    assert doc["labels"]["provider_trust"] == "PROVIDER_TRUST"
+    assert doc["non_claims"]["prism_tee_product"] is False
     p10 = doc["panels"]["P10_reasoning_logic"]
     assert p10["status"] == "filled"
     for key in LOGIC_PROBE_KEYS:

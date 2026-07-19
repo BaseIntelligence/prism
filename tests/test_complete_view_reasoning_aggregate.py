@@ -156,7 +156,9 @@ def test_val_reason_009_per_axis_leads_reasoning_and_tie_polar() -> None:
     assert p10["aggregates"]["suite_mean"]["a"] is not None
     assert p10["aggregates"]["suite_mean"]["b"] is not None
     assert p10["aggregates"]["logic_rel_macro"]["b"] > p10["aggregates"]["logic_rel_macro"]["a"]
-    assert doc["real_provider_tee"] == "BLOCKED"
+    assert "real_provider_tee" not in doc
+    assert doc["labels"]["provider_trust"] == "PROVIDER_TRUST"
+    assert doc["non_claims"]["prism_tee_product"] is False
     assert validate_complete_view_document(doc) == []
     assert_complete_view_document(doc)
 

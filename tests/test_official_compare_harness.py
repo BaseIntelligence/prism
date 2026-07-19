@@ -3,7 +3,7 @@
 Proves two unknown-style seed packages (Transformer tiny-1m vs pure-torch Mamba)
 under protocol fairness produce comparable official records and a clear A-vs-B
 ``compare_official`` outcome without NVIDIA. Synthetic challenge-owned metrics only;
-no multi-hour train; REAL-PROVIDER TEE PASS never claimed.
+no multi-hour train; PROVIDER_TRUST / LAB-GPU / IMAGE_PIN labels only.
 """
 
 from __future__ import annotations
@@ -17,12 +17,13 @@ import pytest
 from prism_challenge.evaluator.official_compare_harness import (
     DEFAULT_MAMBA_PROFILE,
     DEFAULT_TRANSFORMER_PROFILE,
+    IMAGE_PIN_LABEL,
     LAB_GPU_DEFAULT_SEED,
+    PROVIDER_TRUST_LABEL,
     REPORT_SCHEMA,
     SCORE_CLASS_LAB_GPU,
     SIDE_A_FAMILY_ID,
     SIDE_B_FAMILY_ID,
-    TEE_CLASS_BLOCKED,
     FamilySynthProfile,
     LabGpuArtifactsMissingError,
     SynthSeedMetrics,
@@ -123,7 +124,7 @@ def test_dual_family_official_compare_clear_outcome_without_gpu(tmp_path: Path) 
     assert report["mode"] == "ArchCompare"
     assert report["device_class"] == "fixture"
     assert report["gpu_verification"]["claim_gpu_pass"] is False
-    assert "REAL-PROVIDER" in report["tee_note"]
+    assert "PROVIDER_TRUST" in report["provider_honesty"]
 
     # Both sides comparable official records under matched pin.
     a = report["side_a"]
@@ -310,8 +311,9 @@ def test_build_compare_report_schema_matches_docs_sketch(tmp_path: Path) -> None
         "aggregate",
         "ranking",
         "validity",
-        "tee_note",
+        "provider_honesty",
         "gpu_verification",
+        "labels",
     ):
         assert key in report
     assert report["ranking"]["winner"] in {"a", "b", "tie"}
@@ -352,7 +354,6 @@ def _write_lab_gpu_family_manifest(
         device="cuda",
     )
     manifest["score_class"] = SCORE_CLASS_LAB_GPU
-    manifest["tee_class"] = TEE_CLASS_BLOCKED
     dest = root / family_id / f"seed-{seed}" / "prism_run_manifest.v2.json"
     dest.parent.mkdir(parents=True, exist_ok=True)
     dest.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
@@ -364,7 +365,8 @@ def test_lab_gpu_verification_status_not_deferred_for_lab_class() -> None:
     gpu = lab_gpu_verification_status(train_host_note="unit-lium")
     assert gpu["status"] == SCORE_CLASS_LAB_GPU
     assert gpu["claim_gpu_pass"] is True  # lab scores only
-    assert gpu["real_provider_tee"] == TEE_CLASS_BLOCKED
+    assert gpu["provider_trust"] == PROVIDER_TRUST_LABEL
+    assert gpu["image_pin"] == IMAGE_PIN_LABEL
     assert gpu["not_deferred_for_missing_local_nvidia"] is True
     assert gpu["score_class"] == SCORE_CLASS_LAB_GPU
     # Fixture path stays DEFERRED / no claim on this host shape.
@@ -425,9 +427,11 @@ def test_run_lab_gpu_host_official_compare_clear_winner(tmp_path: Path) -> None:
     assert report["device_class"] == "lab-gpu"
     assert report["gpu_verification"]["status"] == SCORE_CLASS_LAB_GPU
     assert report["gpu_verification"]["claim_gpu_pass"] is True
-    assert report["real_provider_tee"] == TEE_CLASS_BLOCKED
-    assert report["tee_class"] == TEE_CLASS_BLOCKED
-    assert "REAL-PROVIDER" in report["tee_note"]
+    assert report["labels"]["provider_trust"] == PROVIDER_TRUST_LABEL
+    assert report["labels"]["image_pin"] == IMAGE_PIN_LABEL
+    assert report["labels"]["prism_tee_product"] is False
+    assert "real_provider_tee" not in report
+    assert "PROVIDER_TRUST" in report["provider_honesty"]
     assert report["validity"]["wall_clock_never_ranks"] is True
     assert report["ranking"]["wall_clock_ignored_for_rank"] is True
     assert report["ranking"]["reason"] == "primary_heldout"
@@ -491,7 +495,8 @@ def test_harness_cli_lab_gpu_path(tmp_path: Path, capsys: pytest.CaptureFixture[
     captured = capsys.readouterr().out
     assert "score_class=LAB-GPU" in captured
     assert "winner=" in captured
-    assert "real_provider_tee=BLOCKED" in captured
+    assert "provider_trust=PROVIDER_TRUST" in captured
+    assert "image_pin=IMAGE_PIN" in captured
     assert (out / "prism_compare_report.v1.json").is_file()
 
 

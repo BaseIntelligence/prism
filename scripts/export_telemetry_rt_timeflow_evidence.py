@@ -5,7 +5,7 @@ Writes challenge-owned ``prism_train_series.v1`` documents with loss + grad_norm
 clip to a destination directory (default: mission ``evidence/telemetry-rt/``).
 
 Does **not**:
-* claim REAL-PROVIDER TEE PASS
+* claim a Prism TEE product path
 * call live Swarm or set_weights
 * require Lium / NVIDIA (CPU fixture synthetic series)
 
@@ -174,7 +174,12 @@ def export_evidence(out_dir: Path) -> dict[str, Any]:
         "source": "fixture",
         "device_class": "fixture",
         "score_class": "fixture",
-        "real_provider_tee": "BLOCKED",
+        "labels": {
+            "provider_trust": "PROVIDER_TRUST",
+            "image_pin": "IMAGE_PIN",
+            "score_class": "fixture",
+            "prism_tee_product": False,
+        },
         "lium_used": False,
         "swarm_mutated": False,
         "require_train_series_pin_on": pin_on,
@@ -186,7 +191,7 @@ def export_evidence(out_dir: Path) -> dict[str, Any]:
             "VAL-TELE-009": ("missing series under require_train_series fails grade_valid"),
         },
         "non_claims": [
-            "REAL-PROVIDER TEE PASS",
+            "prism_tee_product",
             "live Swarm mutation",
             "set_weights",
             "series sole-ranking over heldout/bpb",
@@ -261,7 +266,8 @@ def main(argv: list[str] | None = None) -> int:
     assert red["missing"]["grade_valid"] is False
     assert red["empty"]["grade_valid"] is False
     assert red["corrupt"]["grade_valid"] is False
-    assert index["real_provider_tee"] == "BLOCKED"
+    assert index["labels"]["prism_tee_product"] is False
+    assert index["labels"]["provider_trust"] == "PROVIDER_TRUST"
     assert index["lium_used"] is False
     return 0
 

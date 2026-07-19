@@ -1,6 +1,6 @@
 """Official Comparison Protocol v1 ranking (VAL-COMP-002..007, 011).
 
-Synthetic metrics only: no multi-hour train, no live Swarm, no REAL-PROVIDER TEE claim.
+Synthetic metrics only: no multi-hour train, no live Swarm, no Prism TEE product claim.
 """
 
 from __future__ import annotations

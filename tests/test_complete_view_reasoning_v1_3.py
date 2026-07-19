@@ -158,8 +158,9 @@ def test_val_reason_001_p10_shell_dual_scoring_and_document() -> None:
     assert p10["chance_table"] == dict(COMPLETE_VIEW_REASONING_CHANCE_TABLE)
     assert p10["scoring"]["closed_choice_accuracy"] is True
     assert p10["scoring"]["forced_ce"] is True
-    assert doc["real_provider_tee"] == "BLOCKED"
-    assert doc["non_claims"]["real_provider_tee_pass"] is False
+    assert "real_provider_tee" not in doc
+    assert doc["labels"]["provider_trust"] == "PROVIDER_TRUST"
+    assert doc["non_claims"]["prism_tee_product"] is False
     assert doc["non_claims"]["emission_weight_crown"] is False
     assert doc["non_claims"]["human_agi_reasoning"] is False
     assert doc["non_claims"]["gsm8k_mmlu_primary"] is False

@@ -26,10 +26,11 @@ from prism_challenge.evaluator.multi_family_compare import (
     run_multi_family_official_compare,
 )
 from prism_challenge.evaluator.official_compare_harness import (
+    IMAGE_PIN_LABEL,
     LAB_GPU_DEFAULT_SEED,
+    PROVIDER_TRUST_LABEL,
     SCORE_CLASS_FIXTURE,
     SCORE_CLASS_LAB_GPU,
-    TEE_CLASS_BLOCKED,
     protocol_pin_hash,
     synth_challenge_manifest,
 )
@@ -135,7 +136,10 @@ def test_frontier_fixture_score_table_under_shared_pin(tmp_path: Path) -> None:
     )
     assert report["schema"] == MULTI_FAMILY_REPORT_SCHEMA
     assert report["score_class"] == SCORE_CLASS_FIXTURE
-    assert report["real_provider_tee"] == TEE_CLASS_BLOCKED
+    assert report["labels"]["provider_trust"] == PROVIDER_TRUST_LABEL
+    assert report["labels"]["image_pin"] == IMAGE_PIN_LABEL
+    assert report["labels"]["prism_tee_product"] is False
+    assert "real_provider_tee" not in report
     assert report["protocol_hash"] == protocol_pin_hash(pin)
     assert report["pin"]["token_budget"] == 500_000
     assert report["pin"]["seeds"] == [1337]
@@ -160,7 +164,10 @@ def test_multi_family_fixture_score_table_under_shared_pin(tmp_path: Path) -> No
     assert report["schema"] == MULTI_FAMILY_REPORT_SCHEMA
     assert report["score_class"] == SCORE_CLASS_FIXTURE
     assert report["labels"]["fixture_labelled"] is True
-    assert report["real_provider_tee"] == TEE_CLASS_BLOCKED
+    assert report["labels"]["provider_trust"] == PROVIDER_TRUST_LABEL
+    assert report["labels"]["image_pin"] == IMAGE_PIN_LABEL
+    assert report["labels"]["prism_tee_product"] is False
+    assert "real_provider_tee" not in report
     assert report["protocol_hash"] == protocol_pin_hash(pin)
     assert report["pin"]["param_ladder_stage"] == "explore"
     assert report["pin"]["tokenizer"] == "gpt2"
@@ -319,7 +326,10 @@ def test_lab_gpu_multi_family_partial_imp_scored_novels_blocked(tmp_path: Path) 
         allow_partial=True,
     )
     assert report["score_class"] == SCORE_CLASS_LAB_GPU
-    assert report["real_provider_tee"] == TEE_CLASS_BLOCKED
+    assert report["labels"]["provider_trust"] == PROVIDER_TRUST_LABEL
+    assert report["labels"]["image_pin"] == IMAGE_PIN_LABEL
+    assert report["labels"]["prism_tee_product"] is False
+    assert "real_provider_tee" not in report
     scored_ids = {row["family_id"] for row in report["score_table"]}
     assert "transformer-tiny-1m" in scored_ids
     assert "mamba-tiny-1m" in scored_ids

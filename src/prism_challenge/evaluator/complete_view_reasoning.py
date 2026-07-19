@@ -878,7 +878,8 @@ def dual_family_reasoning_fixture(
         b=fb,
         notes=(
             "synthetic_fixture_not_trained_state",
-            "REAL-PROVIDER TEE BLOCKED",
+            "PROVIDER_TRUST",
+            "LAB-GPU_or_fixture_lab_only",
             "not_gsm8k_mmlu",
         ),
     )

@@ -61,8 +61,9 @@ ScoreClass = Literal["fixture", "LAB-GPU", "CPU"]
 # Local host may still lack NVIDIA; score class remains LAB-GPU (not DEFERRED-for-no-nvidia).
 SCORE_CLASS_LAB_GPU: ScoreClass = "LAB-GPU"
 SCORE_CLASS_FIXTURE: ScoreClass = "fixture"
-TEE_CLASS_BLOCKED = "BLOCKED"
-TEE_CLASS_NOT_CLAIMED = "NOT_CLAIMED"
+# Provider-trust honesty labels (Prism NO TEE residual — no crypto TEE product).
+PROVIDER_TRUST_LABEL = "PROVIDER_TRUST"
+IMAGE_PIN_LABEL = "IMAGE_PIN"
 LAB_GPU_MANIFEST_NAME = "prism_run_manifest.v2.json"
 LAB_GPU_DEFAULT_SEED = 1337
 
@@ -218,8 +219,8 @@ def lab_gpu_verification_status(
 
     Real CUDA trains already occurred on a remote paid GPU (e.g. Lium). Mission host may
     still lack NVIDIA; the score class is **LAB-GPU**, not fixture DEFERRED-for-no-nvidia.
-    ``claim_gpu_pass`` is true only for **lab scores** (VAL-GPULAB-006). REAL-PROVIDER TEE
-    remains BLOCKED / NOT_CLAIMED elsewhere on the report.
+    ``claim_gpu_pass`` is true only for **lab scores** (VAL-GPULAB-006). Honesty labels
+    are PROVIDER_TRUST / LAB-GPU / IMAGE_PIN (no Prism TEE product).
     """
     host = _probe_host_nvidia()
     return {
@@ -234,9 +235,10 @@ def lab_gpu_verification_status(
         "host_has_nvidia": host["host_has_nvidia"],
         "train_device": train_device,
         "train_host_note": train_host_note,
-        # Lab scores only — never equals REAL-PROVIDER TEE PASS.
+        # Lab scores only under PROVIDER_TRUST (no Prism TEE verifier).
         "claim_gpu_pass": True,
-        "real_provider_tee": TEE_CLASS_BLOCKED,
+        "provider_trust": PROVIDER_TRUST_LABEL,
+        "image_pin": IMAGE_PIN_LABEL,
         "not_deferred_for_missing_local_nvidia": True,
         "score_class": SCORE_CLASS_LAB_GPU,
     }
@@ -493,7 +495,6 @@ def build_compare_report(
     gpu: Mapping[str, Any] | None = None,
     validity_reasons: Sequence[str] = (),
     score_class: ScoreClass = SCORE_CLASS_FIXTURE,
-    tee_class: str = TEE_CLASS_NOT_CLAIMED,
     artifact_source: str | None = None,
     train_series_a: Mapping[str, Any] | None = None,
     train_series_b: Mapping[str, Any] | None = None,
@@ -629,11 +630,17 @@ def build_compare_report(
         },
         "gpu_verification": gpu_info,
         "wall_clock_recorded": wall_clock_recorded,
-        "tee_class": tee_class,
-        "real_provider_tee": TEE_CLASS_BLOCKED,
-        "tee_note": (
-            "orthogonal; REAL-PROVIDER PASS not claimed; LOCAL-FIXTURE only if elevated "
-            "crypto is exercised separately; LAB-GPU rank never unlocks REAL-PROVIDER TEE"
+        "labels": {
+            "score_class": score_class,
+            "provider_trust": PROVIDER_TRUST_LABEL,
+            "image_pin": IMAGE_PIN_LABEL,
+            "prism_tee_product": False,
+            "wall_clock_never_ranks": True,
+        },
+        # Distinct from scorecard annex ``honesty_note`` (provisional K=1 language).
+        "provider_honesty": (
+            "PROVIDER_TRUST + LAB-GPU / IMAGE_PIN framing; Prism has no TEE verifier "
+            "product; LAB-GPU rank is lab architecture comparison only"
         ),
     }
     if artifact_source is not None:
@@ -703,7 +710,6 @@ def run_dual_family_official_compare(
         device_class=device_class,
         gpu=gpu,
         score_class=SCORE_CLASS_FIXTURE,
-        tee_class=TEE_CLASS_NOT_CLAIMED,
     )
     if write_report:
         report_path = out / "prism_compare_report.v1.json"
@@ -737,7 +743,7 @@ def run_lab_gpu_host_official_compare(
     :func:`compare_official` under held-out primary / bpb secondary. Emits
     ``prism_compare_report.v1`` with ``score_class=LAB-GPU`` (not fixture synthetic;
     not DEFERRED-for-no-nvidia). Wall-clock is recorded but ignored for rank.
-    REAL-PROVIDER TEE remains BLOCKED / NOT_CLAIMED.
+    Honesty labels: PROVIDER_TRUST / LAB-GPU / IMAGE_PIN (no Prism TEE product).
 
     Raises :class:`LabGpuArtifactsMissingError` when either family lacks manifests
     (callers should treat that as a clear BLOCKED handoff — no invented scores).
@@ -824,7 +830,6 @@ def run_lab_gpu_host_official_compare(
         device_class="lab-gpu",
         gpu=gpu,
         score_class=SCORE_CLASS_LAB_GPU,
-        tee_class=TEE_CLASS_BLOCKED,
         artifact_source=str(root),
     )
     # Per-seed recomputed surfaces for evidence without trusting miner summaries alone.
@@ -858,8 +863,9 @@ def run_lab_gpu_host_official_compare(
     }
     report["labels"] = {
         "score_class": SCORE_CLASS_LAB_GPU,
-        "real_provider_tee": TEE_CLASS_BLOCKED,
-        "tee_class": TEE_CLASS_BLOCKED,
+        "provider_trust": PROVIDER_TRUST_LABEL,
+        "image_pin": IMAGE_PIN_LABEL,
+        "prism_tee_product": False,
         "wall_clock_never_ranks": True,
         "miner_self_report_never_authoritative": True,
         "not_fixture_only_synthetic": True,
@@ -883,8 +889,8 @@ def main(argv: list[str] | None = None) -> int:
             "Run Prism Official Comparison Protocol v1 dual-family harness "
             f"({SIDE_A_FAMILY_ID} vs {SIDE_B_FAMILY_ID}). Default path is CPU/fixture "
             "synthetic metrics. Use --lab-gpu-artifacts for host rank of real Lium "
-            "CUDA train manifests (score_class=LAB-GPU). REAL-PROVIDER TEE PASS is "
-            "never claimed."
+            "CUDA train manifests (score_class=LAB-GPU). Labels: PROVIDER_TRUST / "
+            "LAB-GPU / IMAGE_PIN (no Prism TEE product)."
         )
     )
     parser.add_argument(
@@ -978,11 +984,14 @@ def main(argv: list[str] | None = None) -> int:
             f"gpu_verification: {gpu['status']} ({gpu['reason']}); "
             f"claim_gpu_pass={gpu['claim_gpu_pass']}"
         )
+        labels = report.get("labels") or {}
         print(
-            f"tee_class={report.get('tee_class')} "
-            f"real_provider_tee={report.get('real_provider_tee')}"
+            f"provider_trust={labels.get('provider_trust')} "
+            f"image_pin={labels.get('image_pin')} "
+            f"prism_tee_product={labels.get('prism_tee_product')}"
         )
-        print(f"tee_note: {report['tee_note']}")
+        if report.get("provider_honesty"):
+            print(f"provider_honesty: {report['provider_honesty']}")
         print(f"wall_clock_ignored_for_rank={ranking.get('wall_clock_ignored_for_rank')}")
         if report.get("report_path"):
             print(f"report: {report['report_path']}")

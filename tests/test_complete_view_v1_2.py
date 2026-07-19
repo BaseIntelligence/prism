@@ -126,7 +126,8 @@ def test_val_complete_001_identity_strings_locked() -> None:
         "multimetric.complete.v1.2",
     ]
     assert identity["dashboard_id"] == "scorecard_complete_view.v1.3"
-    assert identity["non_claims"]["real_provider_tee"] == "BLOCKED"
+    assert identity["non_claims"]["prism_tee_product"] is False
+    assert identity["labels"]["provider_trust"] == "PROVIDER_TRUST"
     assert identity["non_claims"]["opaque_weighted_sole_crown"] is False
     assert identity["non_claims"]["emission_crown"] is False
     assert identity["non_claims"]["human_agi_reasoning"] is False
@@ -198,7 +199,9 @@ def test_val_complete_001_document_schema_validates_shell() -> None:
     assert doc["relation_to_complete_v1_2"]["historical_preserved"] is True
     assert doc["relation_to_multimetric_v1_1"]["historical_preserved"] is True
     assert "P10_reasoning_logic" in doc["panels"]
-    assert doc["real_provider_tee"] == "BLOCKED"
+    assert "real_provider_tee" not in doc
+    assert doc["labels"]["provider_trust"] == "PROVIDER_TRUST"
+    assert doc["non_claims"]["prism_tee_product"] is False
     assert doc["non_claims"]["opaque_weighted_sole_crown"] is False
     assert doc["non_claims"]["emission_weight_crown"] is False
 
@@ -405,7 +408,7 @@ def test_val_complete_015_single_document_reconciles_panels_and_comparison(
     assert reloaded["comparison"]["crown_allowed"] is False
 
 
-def test_val_complete_015_attach_to_report_does_not_claim_real_tee() -> None:
+def test_val_complete_015_attach_to_report_uses_provider_trust_labels() -> None:
     a = _rec(label="A", heldout_delta=0.5)
     b = _rec(label="B", heldout_delta=0.4)
     report = {
@@ -413,13 +416,14 @@ def test_val_complete_015_attach_to_report_does_not_claim_real_tee() -> None:
         "protocol_id": COMPLETE_VIEW_PROTOCOL_ID,
         "ranking": {"winner": "a", "reason": "primary_heldout"},
         "score_class": "fixture",
-        "real_provider_tee": "BLOCKED",
+        "labels": {"provider_trust": "PROVIDER_TRUST", "prism_tee_product": False},
     }
     out = attach_complete_view_to_report(report, a, b)
     assert out["complete_view_scorecard_id"] == COMPLETE_VIEW_SCORECARD_ID
     assert out["complete_view"]["schema"] == COMPLETE_VIEW_SCHEMA
-    assert out["complete_view"]["real_provider_tee"] == "BLOCKED"
-    assert out["real_provider_tee"] == "BLOCKED"
+    assert "real_provider_tee" not in out["complete_view"]
+    assert out["complete_view"]["labels"]["provider_trust"] == "PROVIDER_TRUST"
+    assert out["complete_view"]["non_claims"]["prism_tee_product"] is False
     # Historical report still carries its own fields; complete_view is additive.
     assert out["schema"] == "prism_compare_report.v1"
 
@@ -439,8 +443,14 @@ def test_validate_rejects_opaque_crown_and_wrong_identity() -> None:
     assert any("opaque_weighted" in e for e in validate_complete_view_document(bad2))
 
     bad3 = dict(doc)
-    bad3["real_provider_tee"] = "REAL-PROVIDER PASS"
-    assert any("BLOCKED" in e for e in validate_complete_view_document(bad3))
+    nc = dict(doc["non_claims"])
+    nc["prism_tee_product"] = True
+    bad3["non_claims"] = nc
+    assert any("prism_tee_product" in e for e in validate_complete_view_document(bad3))
+    # Retired key must NOT be a schema gate even if someone stashes PASS on it.
+    bad4 = dict(doc)
+    bad4["real_provider_tee"] = "REAL-PROVIDER PASS"
+    assert validate_complete_view_document(bad4) == []
 
 
 def test_unknown_panel_override_rejected() -> None:

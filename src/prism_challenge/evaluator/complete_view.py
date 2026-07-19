@@ -20,9 +20,10 @@ This module freezes:
 3. Empty/partial dashboard builders that publish honest null + reason instead of
    inventing suite results (including seed-scale logic probe shells).
 
-Production leaderboard emission (bpb-primary) and REAL-PROVIDER TEE are unchanged
-/ BLOCKED orthogonally. Seed-scale logic is lab/architecture comparison only —
-not human AGI reasoning and not GSM8K/MMLU primary for ~7M from-scratch seeds.
+Production leaderboard emission remains orthogonal (held-out primary path). Prism
+lab reports use PROVIDER_TRUST / LAB-GPU / IMAGE_PIN labels — not a Prism TEE
+product goal. Seed-scale logic is lab/architecture comparison only — not human
+AGI reasoning and not GSM8K/MMLU primary for ~7M from-scratch seeds.
 """
 
 from __future__ import annotations
@@ -137,7 +138,8 @@ COMPLETE_VIEW_DEFAULT_EPS: dict[str, float] = {
 }
 
 COMPLETE_VIEW_HONESTY_NOTES: tuple[str, ...] = (
-    "Not REAL-PROVIDER TEE PASS",
+    "PROVIDER_TRUST: Lium/Targon trusted providers; Prism has no TEE verifier product",
+    "LAB-GPU / IMAGE_PIN labels only (not a Prism crypto TEE path)",
     "Not production emission weight crown",
     "Efficiency and wall-clock never sole-rank",
     (
@@ -672,7 +674,7 @@ def complete_view_identity() -> dict[str, Any]:
             k: list(v) for k, v in COMPLETE_VIEW_PANEL_TO_VAL_COMPLETE.items()
         },
         "non_claims": {
-            "real_provider_tee": "BLOCKED",
+            "prism_tee_product": False,
             "emission_crown": False,
             "opaque_weighted_sole_crown": False,
             "wall_clock_ranks": False,
@@ -680,6 +682,11 @@ def complete_view_identity() -> dict[str, Any]:
             "human_agi_reasoning": False,
             "gsm8k_mmlu_primary": False,
             "seed_scale_logic_is_lab_only": True,
+        },
+        "labels": {
+            "provider_trust": "PROVIDER_TRUST",
+            "image_pin": "IMAGE_PIN",
+            "score_class_lab_gpu": "LAB-GPU",
         },
         "honesty_notes": list(COMPLETE_VIEW_HONESTY_NOTES),
         "scoring_channels": {
@@ -788,7 +795,7 @@ def reasoning_panel_shell(*, status: str = "not_run") -> dict[str, Any]:
             "Not emission crown; efficiency never sole-ranks",
             "Near-chance results are valid architecture-outcomes at seed scale",
             "LAB/diagnostic architecture comparison only",
-            "REAL-PROVIDER TEE BLOCKED (orthogonal)",
+            "PROVIDER_TRUST / LAB-GPU / IMAGE_PIN (no Prism TEE product)",
         ],
         "multi_axis": {
             "axis": "reasoning",
@@ -1279,7 +1286,6 @@ def build_complete_view(
     panels_override: Mapping[str, Any] | None = None,
     comparison: MultiAxisComparison | None = None,
     score_class: str = "LAB-GPU",
-    real_provider_tee: str = "BLOCKED",
     spend_redacted: Mapping[str, Any] | None = None,
     per_seed_index: Mapping[str, Any] | None = None,
     extra: Mapping[str, Any] | None = None,
@@ -1332,7 +1338,11 @@ def build_complete_view(
         "protocol_id": COMPLETE_VIEW_PROTOCOL_ID,
         "compare_id_alias": COMPLETE_VIEW_COMPARE_ID_ALIAS,
         "score_class": score_class,
-        "real_provider_tee": real_provider_tee,
+        "labels": {
+            "provider_trust": "PROVIDER_TRUST",
+            "image_pin": "IMAGE_PIN",
+            "score_class": score_class,
+        },
         "identity": complete_view_identity(),
         "metric_matrix": complete_view_metric_matrix(),
         "pin": dict(pin or {"protocol_id": COMPLETE_VIEW_PROTOCOL_ID}),
@@ -1351,8 +1361,7 @@ def build_complete_view(
         ),
         "honesty": list(COMPLETE_VIEW_HONESTY_NOTES),
         "non_claims": {
-            "real_provider_tee_pass": False,
-            "real_provider_tee": "BLOCKED",
+            "prism_tee_product": False,
             "emission_weight_crown": False,
             "opaque_weighted_sole_crown": False,
             "wall_clock_ranks": False,
@@ -1408,8 +1417,7 @@ def validate_complete_view_document(document: Mapping[str, Any]) -> list[str]:
         errors.append(f"protocol_id must be {COMPLETE_VIEW_PROTOCOL_ID}")
     if document.get("historical_scorecard_id") != COMPLETE_VIEW_HISTORICAL_SCORECARD_ID:
         errors.append(f"historical_scorecard_id must be {COMPLETE_VIEW_HISTORICAL_SCORECARD_ID}")
-    if document.get("real_provider_tee") != "BLOCKED":
-        errors.append("real_provider_tee must be BLOCKED")
+    # real_provider_tee is retired (VAL-NOTEE-009): not a schema gate.
     non_claims = document.get("non_claims")
     if not isinstance(non_claims, Mapping):
         errors.append("non_claims object required")
@@ -1418,8 +1426,8 @@ def validate_complete_view_document(document: Mapping[str, Any]) -> list[str]:
             errors.append("opaque_weighted_sole_crown must be false")
         if non_claims.get("emission_weight_crown") is not False:
             errors.append("emission_weight_crown must be false")
-        if non_claims.get("real_provider_tee_pass") is not False:
-            errors.append("real_provider_tee_pass must be false")
+        if non_claims.get("prism_tee_product") is not False:
+            errors.append("prism_tee_product must be false")
         # Structural honesty flags (VAL-REASON-012): seed-scale lab only, no AGI,
         # no GSM8K/MMLU primary. Prefer hard presence over defaults-only.
         if non_claims.get("human_agi_reasoning") is not False:

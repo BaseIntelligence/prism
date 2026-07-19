@@ -496,7 +496,9 @@ def test_complete_view_eff_document_identity_and_schema() -> None:
     doc = build_complete_view_with_eff_stability(a, b, fam_a=fam_a, fam_b=fam_b)
     assert doc["schema"] == COMPLETE_VIEW_SCHEMA
     assert doc["scorecard_id"] == COMPLETE_VIEW_SCORECARD_ID
-    assert doc["real_provider_tee"] == "BLOCKED"
+    assert "real_provider_tee" not in doc
+    assert doc["labels"]["provider_trust"] == "PROVIDER_TRUST"
+    assert doc["non_claims"]["prism_tee_product"] is False
     errors = validate_complete_view_document(doc)
     assert errors == []
     # Panels present and filled residual keys not pending.

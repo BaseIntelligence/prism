@@ -9,7 +9,8 @@ novel seeds) under a single architecture-agnostic score path:
 * Held-out primary rank key shared with dual-family / emission Official axes.
 * Score class ``LAB-GPU`` for real remote CUDA train manifests; ``fixture`` only when
   synthetic (must label). Failures are ``BLOCKED_with_reason`` — never invent metrics.
-* Wall-clock may be recorded; never ranks. REAL-PROVIDER TEE remains BLOCKED.
+* Wall-clock may be recorded; never ranks. Honesty: PROVIDER_TRUST / LAB-GPU / IMAGE_PIN
+  (no Prism TEE product).
 """
 
 from __future__ import annotations
@@ -32,15 +33,15 @@ from prism_challenge.seed_packaging import (
 from .official_compare_harness import (
     DEFAULT_MAMBA_PROFILE,
     DEFAULT_TRANSFORMER_PROFILE,
+    IMAGE_PIN_LABEL,
     LAB_GPU_DEFAULT_SEED,
     LAB_GPU_MANIFEST_NAME,
+    PROVIDER_TRUST_LABEL,
     REPORT_SCHEMA,
     SCORE_CLASS_FIXTURE,
     SCORE_CLASS_LAB_GPU,
     SIDE_A_FAMILY_ID,
     SIDE_B_FAMILY_ID,
-    TEE_CLASS_BLOCKED,
-    TEE_CLASS_NOT_CLAIMED,
     DeviceClass,
     FamilySynthProfile,
     ScoreClass,
@@ -448,17 +449,15 @@ def build_multi_family_report(
             "all_sides_same_pin_hash": True,
         },
         "gpu_verification": gpu_info,
-        "tee_class": (
-            TEE_CLASS_BLOCKED if score_class == SCORE_CLASS_LAB_GPU else TEE_CLASS_NOT_CLAIMED
-        ),
-        "real_provider_tee": TEE_CLASS_BLOCKED,
-        "tee_note": (
-            "orthogonal; REAL-PROVIDER PASS not claimed; LAB-GPU multi-family rank "
-            "never unlocks REAL-PROVIDER TEE"
+        "provider_honesty": (
+            "PROVIDER_TRUST + LAB-GPU / IMAGE_PIN framing; multi-family LAB-GPU rank "
+            "is lab architecture comparison only (no Prism TEE product)"
         ),
         "labels": {
             "score_class": score_class,
-            "real_provider_tee": TEE_CLASS_BLOCKED,
+            "provider_trust": PROVIDER_TRUST_LABEL,
+            "image_pin": IMAGE_PIN_LABEL,
+            "prism_tee_product": False,
             "wall_clock_never_ranks": True,
             "architecture_agnostic": True,
             "not_fixture_only_synthetic": score_class == SCORE_CLASS_LAB_GPU,
@@ -524,7 +523,7 @@ def run_multi_family_official_compare(
         device_class=device_class,
         seed_profiles_note=(
             "synthetic challenge-owned metrics; score_class=fixture "
-            "(not LAB-GPU; not REAL-PROVIDER TEE)"
+            "(not LAB-GPU; PROVIDER_TRUST / IMAGE_PIN framing only)"
             if score_class == SCORE_CLASS_FIXTURE
             else None
         ),
@@ -647,7 +646,7 @@ def run_multi_family_lab_gpu_host_compare(
         k_label=k_label,
         seed_profiles_note=(
             "real LAB-GPU CUDA train manifests; host Prism recompute secondary bpb; "
-            "REAL-PROVIDER TEE BLOCKED"
+            "PROVIDER_TRUST / IMAGE_PIN (no Prism TEE product)"
         ),
     )
     # Surface soft PARTIAL notes without inventing scores.
@@ -694,7 +693,9 @@ def run_multi_family_lab_gpu_host_compare(
                     "artifact_source": str(root),
                     "k_label": k_label,
                     "lab_gpu_manifest_name": LAB_GPU_MANIFEST_NAME,
-                    "real_provider_tee": TEE_CLASS_BLOCKED,
+                    "provider_trust": PROVIDER_TRUST_LABEL,
+                    "image_pin": IMAGE_PIN_LABEL,
+                    "prism_tee_product": False,
                 },
                 indent=2,
                 sort_keys=True,
@@ -746,7 +747,7 @@ def main(argv: list[str] | None = None) -> int:
             f"(default families: {', '.join(ARXIV_FAIR_EVAL_FAMILY_IDS)}). "
             "Default path is fixture synthetic metrics. Use --lab-gpu-artifacts for "
             "host rank of real Lium CUDA train manifests (score_class=LAB-GPU). "
-            "REAL-PROVIDER TEE PASS is never claimed."
+            "Labels: PROVIDER_TRUST / LAB-GPU / IMAGE_PIN (no Prism TEE product)."
         )
     )
     parser.add_argument(
@@ -859,8 +860,10 @@ def main(argv: list[str] | None = None) -> int:
             f"winner={report['ranking'].get('winner')} "
             f"runner_up={report['ranking'].get('runner_up')}"
         )
+        labels = report.get("labels") or {}
         print(
-            f"real_provider_tee={report.get('real_provider_tee')} "
+            f"provider_trust={labels.get('provider_trust')} "
+            f"image_pin={labels.get('image_pin')} "
             f"architecture_agnostic={report['validity'].get('architecture_agnostic_path')}"
         )
         if report.get("report_path"):
