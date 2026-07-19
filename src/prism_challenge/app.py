@@ -36,7 +36,6 @@ from .plausibility import PlausibilityError
 from .queue import PrismWorker
 from .repository import PrismRepository
 from .routes import router
-from .tee import DurableNonceStore, TeeVerifier, tee_config_from_settings
 from .weights import get_weights
 
 
@@ -316,13 +315,6 @@ def create_app(
             "execution_proof": envelope.proof.model_dump(mode="json"),
         }
         sampler = audit_sampler_from_config(app_settings.worker_plane)
-        tee_cfg = tee_config_from_settings(app_settings)
-        nonce_store = DurableNonceStore(app_settings.resolved_database_path)
-        await nonce_store.ensure_schema()
-        tee_verifier = TeeVerifier(tee_cfg, nonce_store=nonce_store)
-        expected_tee_nonce = result_payload.get("tee_nonce")
-        if not isinstance(expected_tee_nonce, str):
-            expected_tee_nonce = None
         try:
             outcome = await ingest_work_unit_result(
                 worker=worker,
@@ -331,8 +323,6 @@ def create_app(
                 result=result_payload,
                 pinned_image_digest=app_settings.worker_plane.pinned_image_digest,
                 audit_sampler=sampler,
-                tee_verifier=tee_verifier,
-                expected_tee_nonce=expected_tee_nonce,
             )
         except ResultIngestionError as exc:
             # A transient finalization failure is retryable -> 503 so the forwarder retries; the

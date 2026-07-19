@@ -45,14 +45,6 @@ from .proof import (
     verify_execution_proof,
 )
 from .queue import PrismWorker, WorkerFinalizationError
-from .tee.score_gate import (
-    TEE_REQUIRED_REASON,
-    decision_authorizes_score,
-    reject_message,
-    require_for_score_enabled,
-)
-from .tee.types import TeeDecision
-from .tee.verifier import TeeVerifier
 
 logger = logging.getLogger(__name__)
 
@@ -96,10 +88,7 @@ class ResultIngestionError(Exception):
       nothing to finalize from without re-executing (VAL-FINAL-001);
     * ``finalization_failed`` -- worker-plane finalization failed for an internal/transient reason
       (source-static derivation error): the submission is reverted to pending and NOTHING is
-      recorded, so the forwarded result is retried rather than sealed as a clean finalize;
-    * ``tee_required`` -- TEE-required scoring is enabled and the unit lacks a verifier-accepted
-      TEE decision that authorizes production score finalization (VAL-TEEREQ-001+). No score,
-      leaderboard row, or emission-ready weight contribution is produced.
+      recorded, so the forwarded result is retried rather than sealed as a clean finalize.
     """
 
     def __init__(self, reason: str, message: str = "") -> None:
@@ -215,24 +204,21 @@ async def ingest_work_unit_result(
     pinned_image_digest: str | None = None,
     audit_sampler: AuditSampler | None = None,
     verify: SignatureVerifier = verify_hotkey_signature,
-    tee_verifier: TeeVerifier | None = None,
-    expected_tee_nonce: str | None = None,
 ) -> IngestionOutcome:
     """Verify a forwarded worker result and finalize the submission idempotently.
 
     ``work_unit_id`` is prism's stable unit id (``== submission_id``). Verification (shape ->
-    integrity -> TEE when claimed) runs BEFORE any scoring; a rejected result raises
-    :class:`ResultIngestionError` and leaves the submission untouched (eligible for retry). A
-    verified first delivery is then run through the plausibility gate (architecture.md 3.5;
-    VAL-PRISM-009): an implausible manifest raises
-    :class:`~prism_challenge.plausibility.PlausibilityError` (a reason DISTINCT from the
+    integrity) runs BEFORE any scoring; a rejected result raises :class:`ResultIngestionError` and
+    leaves the submission untouched (eligible for retry). A verified first delivery is then run
+    through the plausibility gate (architecture.md 3.5; VAL-PRISM-009): an implausible manifest
+    raises :class:`~prism_challenge.plausibility.PlausibilityError` (a reason DISTINCT from the
     proof-verification reasons) and is never scored, while a plausible manifest passes through
     UNCHANGED and finalizes via the CAS-guarded worker path. A duplicate is an idempotent no-op and
     a conflicting redelivery for an already-accepted unit is refused so the stored score/leaderboard
     is never mutated.
 
-    TEE evidence is verifier-derived only: populated attestation fields never elevate effective
-    tier without a successful Prism :class:`~prism_challenge.tee.TeeVerifier` decision.
+    Effective tier uses IMAGE_PIN only (max tier 1). Claimed attestation fields never elevate and
+    never block score finalization (Prism has no TEE-required scoring path).
     """
 
     if not isinstance(result, Mapping):
@@ -243,67 +229,7 @@ async def ingest_work_unit_result(
     manifest = raw_manifest if isinstance(raw_manifest, Mapping) else None
     verify_proof_integrity(proof, unit_id=work_unit_id, manifest=manifest, verify=verify)
 
-    tee_decision: TeeDecision | None = None
-    tee_mode = "local_fixture"
-    require_tee_score = require_for_score_enabled(settings=worker.settings)
-    if tee_verifier is not None:
-        tee_cfg = getattr(tee_verifier, "config", None)
-        if tee_cfg is not None:
-            tee_mode = str(getattr(tee_cfg, "mode", "local_fixture") or "local_fixture")
-            require_tee_score = require_for_score_enabled(
-                require_for_score=bool(getattr(tee_cfg, "require_for_score", False))
-                or require_tee_score,
-                settings=worker.settings,
-            )
-        # Always run before score/finalization when the verifier is wired so missing
-        # evidence, forged evidence, and incomplete config yield an explicit decision
-        # (VAL-TEEREQ-001/002/006). Previously attestation=None skipped the verifier,
-        # which left tee_decision None and silently scored under TEE-required.
-        tee_decision = await tee_verifier.verify_proof(
-            proof,
-            work_unit_id=work_unit_id,
-            submission_id=submission_ref or work_unit_id,
-            expected_nonce=expected_tee_nonce
-            or (result.get("tee_nonce") if isinstance(result.get("tee_nonce"), str) else None),
-        )
-        # Durable non-secret decision metadata when the store supports it.
-        store = getattr(tee_verifier, "nonce_store", None)
-        record = getattr(store, "record_decision", None)
-        if callable(record) and tee_decision is not None:
-            try:
-                await record(
-                    work_unit_id=work_unit_id,
-                    evidence_digest=tee_decision.evidence_digest or "",
-                    provider=tee_decision.provider.value,
-                    classification=tee_decision.classification.value,
-                    reason=tee_decision.reason.value,
-                    effective_tier=tee_decision.effective_tier if tee_decision.accepted else 0,
-                    claimed_tier=int(proof.tier),
-                    trust_root_fingerprint=tee_decision.trust_root_fingerprint,
-                    gpu_key_fingerprint=tee_decision.gpu_key_fingerprint,
-                    image_digest=tee_decision.image_digest,
-                    nonce_digest_value=tee_decision.nonce_digest,
-                    validated_claims=",".join(tee_decision.validated_claims),
-                )
-            except Exception:  # noqa: BLE001 - decision persistence must not break fail-closed tier
-                logger.exception("failed to persist tee decision for unit %s", work_unit_id)
-
-    # TEE-required scoring: reject before score/finalization when the decision (or
-    # its absence) cannot authorize production score material (VAL-TEEREQ-001+).
-    score_auth = decision_authorizes_score(
-        tee_decision,
-        require_for_score=require_tee_score,
-        mode=tee_mode,
-    )
-    if not score_auth.authorized:
-        logger.warning(
-            "rejecting work unit %s under TEE-required scoring: %s",
-            work_unit_id,
-            reject_message(score_auth),
-        )
-        raise ResultIngestionError(TEE_REQUIRED_REASON, reject_message(score_auth))
-
-    tier = effective_tier(proof, pinned_image_digest=pinned_image_digest, tee_decision=tee_decision)
+    tier = effective_tier(proof, pinned_image_digest=pinned_image_digest)
     claimed_tier = int(proof.tier)
     downgraded = claimed_tier != tier
     submission_id = work_unit_id
@@ -371,13 +297,9 @@ async def ingest_work_unit_result(
                 "worker-plane finalization requires the forwarded run manifest",
             )
         try:
-            # Ingestion already applied decision_authorizes_score; under TEE-required mode that
-            # is the only caller that may flip tee_score_authorized. When the flag is off the
-            # parameter is ignored by the score gate inside finalize.
             result_id = await worker.finalize_worker_result(
                 submission_id,
                 dict(manifest),
-                tee_score_authorized=True,
             )
         except WorkerFinalizationError as exc:
             # An internal/transient derivation failure is NOT a clean finalize: nothing is recorded

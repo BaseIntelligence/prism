@@ -153,12 +153,12 @@ def read_manifest_sha256(path: str | os.PathLike[str]) -> str:
 
 
 def has_attestation(attestation: Any) -> bool:
-    """Whether ``attestation`` has both documented TEE components as non-empty strings.
+    """Whether ``attestation`` has both documented attestation components as non-empty strings.
 
-    WARNING: this is ONLY a shape/presence hint for claimed-tier emission. It is NEVER
-    cryptographic verification. Prism must run :class:`~prism_challenge.tee.TeeVerifier`
-    before elevating effective tier; non-empty ``tdx_quote_b64`` / ``gpu_eat_jwt`` alone
-    must not produce effective tier 2.
+    WARNING: this is ONLY a shape/presence hint for CLAIMED-tier emission compatibility.
+    It is NEVER cryptographic verification and NEVER elevates effective tier. Prism has no
+    TEE verifier; effective tier is IMAGE_PIN only (max 1) via
+    :func:`~prism_challenge.audit.effective_tier`.
     """
 
     if not isinstance(attestation, Mapping):
@@ -174,9 +174,10 @@ def has_attestation(attestation: Any) -> bool:
 
 
 def has_structured_attestation_claim(attestation: Any) -> bool:
-    """Whether attestation claims the closed prism.tee.v1 shape (still unverified).
+    """Whether attestation claims the closed prism.tee.v1 shape (compat claim only; unverified).
 
-    Used only to decide the CLAIMED emission tier. Effective tier requires verification.
+    Used only to decide the CLAIMED emission tier for wire compatibility. Effective tier is
+    never elevated from this claim (max effective tier is 1 via IMAGE_PIN).
     """
 
     if not has_attestation(attestation):
@@ -201,11 +202,11 @@ def compute_tier(
 ) -> ExecutionProofTier:
     """Compute the CLAIMED proof tier from available provenance (architecture 3.4).
 
-    tier 2 is claimed only for a closed structured attestation shape (never mere
-    non-empty opaque strings). The claimed tier is NOT trusted at verification:
-    :func:`~prism_challenge.audit.effective_tier` recomputes from verifier results.
-    tier 1 iff BOTH a pinned image digest AND pod metadata (``provider.pod_id``)
-    are present; else tier 0.
+    tier 2 may still be *claimed* for a closed structured attestation shape (wire compat;
+    never mere non-empty opaque strings). The claimed tier is NOT trusted at verification:
+    :func:`~prism_challenge.audit.effective_tier` recomputes from IMAGE_PIN only and never
+    elevates above tier 1. tier 1 iff BOTH a pinned image digest AND pod metadata
+    (``provider.pod_id``) are present; else tier 0.
     """
 
     if has_structured_attestation_claim(attestation):

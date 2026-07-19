@@ -180,7 +180,7 @@ def test_structured_attestation_claims_tier2_but_is_unverified() -> None:
     p = build_execution_proof_from_manifest(
         signer=signer, unit_id=UNIT_ID, manifest=MANIFEST_A, env=env
     )
-    # Emission may claim tier 2; effective elevation requires TeeVerifier.
+    # Emission may claim tier 2 for wire compat; effective elevation never exceeds IMAGE_PIN tier-1.
     assert p.tier == 2
     assert p.attestation == attestation
 
