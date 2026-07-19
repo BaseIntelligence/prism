@@ -88,9 +88,7 @@ NOVEL_FRONTIER_FAMILY_IDS: tuple[str, ...] = (
     "kda-tiny-1m",
 )
 FRONTIER_FAIR_EVAL_FAMILY_IDS: tuple[str, ...] = (
-    IMP_BASELINE_FAMILY_IDS
-    + (DEEPLOOP_CONTROL_FAMILY_ID,)
-    + NOVEL_FRONTIER_FAMILY_IDS
+    IMP_BASELINE_FAMILY_IDS + (DEEPLOOP_CONTROL_FAMILY_ID,) + NOVEL_FRONTIER_FAMILY_IDS
 )
 
 MULTI_FAMILY_REPORT_SCHEMA = "prism_multi_family_compare_report.v1"
@@ -104,16 +102,29 @@ def explore_protocol_pin(
     *,
     seeds: Sequence[int] | None = None,
     token_budget: int | None = None,
+    seq_len: int | None = None,
+    batch_size: int | None = None,
     k_label: str | None = None,
 ) -> ProtocolPin:
     """Matched ProtocolPin for arXiv fair multi-arch residual (stage **explore**).
 
     All families share: token_budget, seeds K, tokenizer gpt2, seq/batch, explore
     param_cap (124M). Prefer K≥3 when cheap; callers may set K=1 and label it.
+
+    ``seq_len`` / ``token_budget`` pass through without a hardcoded 128-only trap
+    (VAL-SCALE-006). Defaults remain Official short-ctx (128 / 500k) for residual
+    continuity; P1+ scale cups pass raised values explicitly.
     """
+    del k_label  # report metadata only; not a rank / pin key
     base = default_protocol_pin(device_class="fixture")
     seed_tuple = tuple(int(s) for s in seeds) if seeds is not None else base.seeds
     budget = int(token_budget) if token_budget is not None else int(base.token_budget)
+    resolved_seq = int(seq_len) if seq_len is not None else int(base.seq_len)
+    resolved_batch = int(batch_size) if batch_size is not None else int(base.batch_size)
+    if resolved_seq <= 0:
+        raise ValueError(f"seq_len must be positive; got {resolved_seq}")
+    if budget <= 0:
+        raise ValueError(f"token_budget must be positive; got {budget}")
     # Explore stage + explore ceiling (research-lab small-first residual).
     return ProtocolPin(
         protocol_id=PROTOCOL_ID,
@@ -121,8 +132,8 @@ def explore_protocol_pin(
         seeds=seed_tuple,
         param_cap=int(OFFICIAL_EXPLORE_PARAM_CAP),
         param_ladder_stage=str(OFFICIAL_EXPLORE_STAGE),
-        seq_len=int(base.seq_len),
-        batch_size=int(base.batch_size),
+        seq_len=resolved_seq,
+        batch_size=resolved_batch,
         tokenizer=str(base.tokenizer),
         vocab_size=int(base.vocab_size),
         scored_nproc=int(base.scored_nproc),

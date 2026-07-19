@@ -78,9 +78,16 @@ rank and host **Complete View** densify. Product helpers live in
 | Phase | Pin sketch | Densify |
 | --- | --- | --- |
 | P0 | explore, seq=128, token_budget=500k, seeds K≥3 `(1337,2027,4242)` | host long_ctx + sample_eff on trained_state |
-| P1 | seq 256–512, token_budget 1–2M | long_ctx T up to 1024 when feasible |
+| P1 | `scale_p1_protocol_pin()` — seq **≥256** (target **512**), token_budget **≥1M** (to 2M) | long_ctx T up to 1024 when feasible |
 | P2 | promote 350M confirm/revoke | same multi-axis densify |
 | P3 | full_scale_eval / 100BT readiness | public K≥3 lock + research annex non-emission |
+
+**P1 product knobs (VAL-SCALE-006):** `ProtocolPin.seq_len` / `token_budget` pass through
+`explore_protocol_pin`, official compare harness, and worker-plane
+`PrismSettings.sequence_length` + optional `token_budget` (`PRISM_TOKEN_BUDGET`) into
+`PrismContext` via `prism_context_kwargs` / `prism_context_from_protocol_pin`. There is no
+hardcoded seq=128-only trap on those paths; Official short-ctx default remains 128/500k when
+knobs are unset. Tests: `tests/test_scale_pin_passthrough.py`.
 
 Emission leaderboard remains heldout primary + bpb secondary. Complete View / multimetric are
 **published research grade**, not silent emission crowns. Wall-clock never ranks. Prefer host

@@ -27,6 +27,7 @@ from .complete_view_longctx import (
     FamilyLongCtxQuality,
     build_complete_view_with_longctx_quality,
 )
+from .interface import PrismContext
 from .multi_family_compare import (
     FRONTIER_FAIR_EVAL_FAMILY_IDS,
     explore_protocol_pin,
@@ -38,8 +39,7 @@ from .official_comparison import (
     OFFICIAL_DEFAULT_SEEDS,
     OFFICIAL_DEFAULT_SEQ_LEN,
     OFFICIAL_DEFAULT_TOKEN_BUDGET,
-    OFFICIAL_DEFAULT_TOKENIZER,
-    OFFICIAL_DEFAULT_VAL_BYTE_BUDGET,
+    OFFICIAL_DEFAULT_VOCAB_SIZE,
     OFFICIAL_EXPLORE_PARAM_CAP,
     OFFICIAL_EXPLORE_STAGE,
     OFFICIAL_MIN_PUBLIC_SEEDS,
@@ -62,6 +62,19 @@ SCALE_P0_CORE_FAMILY_IDS: tuple[str, ...] = (
     "transformer-tiny-1m",
     "kda-tiny-1m",
 )
+
+# P1 scale defaults (VAL-SCALE-006): seq≥256 (512 target when VRAM allows), tokens≥1M.
+SCALE_P1_SEEDS: tuple[int, ...] = SCALE_P0_SEEDS
+SCALE_P1_SEQ_LEN: int = 256
+SCALE_P1_SEQ_LEN_TARGET: int = 512
+SCALE_P1_TOKEN_BUDGET: int = 1_000_000
+SCALE_P1_TOKEN_BUDGET_HIGH: int = 2_000_000
+SCALE_P1_BATCH_SIZE: int = SCALE_P0_BATCH_SIZE
+SCALE_P1_PARAM_STAGE: str = SCALE_P0_PARAM_STAGE
+SCALE_P1_PARAM_CAP: int = SCALE_P0_PARAM_CAP
+SCALE_P1_CORE_FAMILY_IDS: tuple[str, ...] = SCALE_P0_CORE_FAMILY_IDS
+SCALE_P1_SEQ_LEN_MIN: int = 256
+SCALE_P1_TOKEN_BUDGET_MIN: int = 1_000_000
 
 DensifyPanel = Literal["long_ctx", "sample_eff", "both"]
 
@@ -104,25 +117,100 @@ def scale_p0_protocol_pin(
             f"public scale pin requires K≥{OFFICIAL_MIN_PUBLIC_SEEDS} seeds; "
             f"got K={len(seed_tuple)} (set require_public_k=False for provisional lab)"
         )
-    pin = explore_protocol_pin(
+    return explore_protocol_pin(
         seeds=seed_tuple,
         token_budget=int(token_budget) if token_budget is not None else SCALE_P0_TOKEN_BUDGET,
-    )
-    # explore_protocol_pin inherits default seq/batch; freeze P0 knobs explicitly.
-    from dataclasses import replace
-
-    return replace(
-        pin,
         seq_len=int(seq_len) if seq_len is not None else SCALE_P0_SEQ_LEN,
         batch_size=int(batch_size) if batch_size is not None else SCALE_P0_BATCH_SIZE,
-        param_cap=SCALE_P0_PARAM_CAP,
-        param_ladder_stage=SCALE_P0_PARAM_STAGE,
-        tokenizer=OFFICIAL_DEFAULT_TOKENIZER,
-        val_byte_budget=OFFICIAL_DEFAULT_VAL_BYTE_BUDGET,
-        primary_form="heldout_delta",
-        force_iter_train_batches=True,
-        require_trained_state=True,
     )
+
+
+def scale_p1_protocol_pin(
+    *,
+    seeds: Sequence[int] | None = None,
+    token_budget: int | None = None,
+    seq_len: int | None = None,
+    batch_size: int | None = None,
+    require_public_k: bool = True,
+    require_p1_floor: bool = True,
+) -> ProtocolPin:
+    """Matched explore ProtocolPin for P1 scaled seq/token cups (VAL-SCALE-006).
+
+    Defaults: K≥3 public seeds, seq=256 (raise to 512 via ``seq_len`` when VRAM
+    allows), token_budget=1_000_000 (raise to 2M via ``token_budget``). Does **not**
+    hardcode seq=128; pin fields pass through explore/official/lab harness paths.
+    Emission ranking keys unchanged (heldout primary + bpb secondary).
+    """
+    seed_tuple = tuple(int(s) for s in seeds) if seeds is not None else SCALE_P1_SEEDS
+    if require_public_k and len(seed_tuple) < OFFICIAL_MIN_PUBLIC_SEEDS:
+        raise ValueError(
+            f"public scale pin requires K≥{OFFICIAL_MIN_PUBLIC_SEEDS} seeds; "
+            f"got K={len(seed_tuple)} (set require_public_k=False for provisional lab)"
+        )
+    resolved_seq = int(seq_len) if seq_len is not None else SCALE_P1_SEQ_LEN
+    resolved_budget = int(token_budget) if token_budget is not None else SCALE_P1_TOKEN_BUDGET
+    pin = explore_protocol_pin(
+        seeds=seed_tuple,
+        token_budget=resolved_budget,
+        seq_len=resolved_seq,
+        batch_size=int(batch_size) if batch_size is not None else SCALE_P1_BATCH_SIZE,
+    )
+    if require_p1_floor:
+        assert_scale_p1_pin_floor(pin)
+    return pin
+
+
+def assert_scale_p1_pin_floor(pin: ProtocolPin) -> None:
+    """Raise when pin is below P1 product floors (seq≥256, token_budget≥1M)."""
+    reasons: list[str] = []
+    if int(pin.seq_len) < SCALE_P1_SEQ_LEN_MIN:
+        reasons.append(
+            f"seq_len={pin.seq_len}<{SCALE_P1_SEQ_LEN_MIN} "
+            f"(P1 floor; target {SCALE_P1_SEQ_LEN_TARGET})"
+        )
+    if int(pin.token_budget) < SCALE_P1_TOKEN_BUDGET_MIN:
+        reasons.append(f"token_budget={pin.token_budget}<{SCALE_P1_TOKEN_BUDGET_MIN} (P1 floor)")
+    if reasons:
+        raise ValueError("P1 scale pin floor failed: " + "; ".join(reasons))
+
+
+def protocol_pin_context_fields(pin: ProtocolPin) -> dict[str, Any]:
+    """Map ProtocolPin knobs onto PrismContext / worker-plane field names.
+
+    Ensures seq_len and token_budget pass through without seq=128-only traps.
+    """
+    return {
+        "sequence_length": int(pin.seq_len),
+        "token_budget": int(pin.token_budget),
+        "max_parameters": int(pin.param_cap),
+        "param_ladder_stage": str(pin.param_ladder_stage),
+        "seed": int(pin.seeds[0]) if pin.seeds else 1337,
+        "vocab_size": int(pin.vocab_size) if pin.vocab_size else OFFICIAL_DEFAULT_VOCAB_SIZE,
+        "step_budget": pin.step_budget,
+    }
+
+
+def prism_context_from_protocol_pin(
+    pin: ProtocolPin,
+    *,
+    seed: int | None = None,
+    max_layers: int = 96,
+    **overrides: Any,
+) -> PrismContext:
+    """Build a :class:`PrismContext` that honors pin seq_len and token_budget.
+
+    Used by official compare / lab harness / worker-plane path wiring so raised
+    P1 pin values are not dropped when constructing eval context.
+    """
+    fields = protocol_pin_context_fields(pin)
+    if seed is not None:
+        fields["seed"] = int(seed)
+    fields["max_layers"] = int(max_layers)
+    # Drop None step_budget so PrismContext default applies cleanly.
+    if fields.get("step_budget") is None:
+        fields.pop("step_budget", None)
+    fields.update(overrides)
+    return PrismContext(**fields)
 
 
 def scale_pin_fields(pin: ProtocolPin | None = None) -> dict[str, Any]:
@@ -221,14 +309,20 @@ def densify_entrypoints() -> dict[str, Any]:
             "run_fixture": "run_multi_family_official_compare",
             "explore_pin": "explore_protocol_pin",
             "scale_p0_pin": "scale_p0_protocol_pin",
+            "scale_p1_pin": "scale_p1_protocol_pin",
             "core_families_p0": list(SCALE_P0_CORE_FAMILY_IDS),
+            "core_families_p1": list(SCALE_P1_CORE_FAMILY_IDS),
             "frontier_families": list(FRONTIER_FAIR_EVAL_FAMILY_IDS),
         },
         "scale_helpers": {
             "module": "prism_challenge.evaluator.scale_eval",
             "p0_pin": "scale_p0_protocol_pin",
+            "p1_pin": "scale_p1_protocol_pin",
             "pin_fields": "scale_pin_fields",
             "public_ok": "scale_pin_public_ok",
+            "p1_floor": "assert_scale_p1_pin_floor",
+            "context_from_pin": "prism_context_from_protocol_pin",
+            "pin_to_context": "protocol_pin_context_fields",
             "densify_pair": "densify_complete_view_pair",
             "host_compare": "run_scale_multi_family_host_compare",
         },
@@ -239,6 +333,18 @@ def densify_entrypoints() -> dict[str, Any]:
             "wall_clock_never_ranks": OFFICIAL_WALL_CLOCK_NEVER_RANKS,
             "min_public_seeds": OFFICIAL_MIN_PUBLIC_SEEDS,
             "tee_package": "absent (provider trust + IMAGE_PIN only)",
+        },
+        "p1_ladder": {
+            "seq_len_min": SCALE_P1_SEQ_LEN_MIN,
+            "seq_len_default": SCALE_P1_SEQ_LEN,
+            "seq_len_target": SCALE_P1_SEQ_LEN_TARGET,
+            "token_budget_min": SCALE_P1_TOKEN_BUDGET_MIN,
+            "token_budget_default": SCALE_P1_TOKEN_BUDGET,
+            "token_budget_high": SCALE_P1_TOKEN_BUDGET_HIGH,
+            "notes": (
+                "Raise ProtocolPin.seq_len / token_budget and settings.sequence_length / "
+                "token_budget together; no seq=128-only trap on explore/official/lab paths."
+            ),
         },
         "protocol_budget": protocol_budget_constants(),
     }
@@ -370,13 +476,26 @@ def tee_package_absent() -> bool:
 def scale_product_snapshot() -> dict[str, Any]:
     """Compact snapshot for evidence packs (no secrets, no spend)."""
     pin = scale_p0_protocol_pin()
+    pin_p1 = scale_p1_protocol_pin()
     guard = scale_pin_public_ok(pin)
+    guard_p1 = scale_pin_public_ok(pin_p1)
     return {
         "schema": "prism_scale_product_snapshot.v1",
         "pin": scale_pin_fields(pin),
+        "p1_pin": scale_pin_fields(pin_p1),
         "public_guard": guard.as_dict(),
+        "public_guard_p1": guard_p1.as_dict(),
         "densify_entrypoints": densify_entrypoints(),
         "core_families_p0": list(SCALE_P0_CORE_FAMILY_IDS),
+        "core_families_p1": list(SCALE_P1_CORE_FAMILY_IDS),
+        "p1_ladder": {
+            "seq_len_min": SCALE_P1_SEQ_LEN_MIN,
+            "seq_len_default": SCALE_P1_SEQ_LEN,
+            "seq_len_target": SCALE_P1_SEQ_LEN_TARGET,
+            "token_budget_min": SCALE_P1_TOKEN_BUDGET_MIN,
+            "token_budget_default": SCALE_P1_TOKEN_BUDGET,
+            "token_budget_high": SCALE_P1_TOKEN_BUDGET_HIGH,
+        },
         "tee_package_absent": tee_package_absent(),
         "wall_clock_never_ranks": OFFICIAL_WALL_CLOCK_NEVER_RANKS,
         "min_public_seeds": OFFICIAL_MIN_PUBLIC_SEEDS,

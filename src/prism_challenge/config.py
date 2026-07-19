@@ -314,8 +314,19 @@ class PrismSettings(ChallengeSettings):
     # Default emission admission stage label (explore | promote). Promote path is opt-in.
     param_ladder_stage: Literal["explore", "promote"] = "explore"
     max_layers: int = 96
+    # Sequence geometry for worker-plane PrismContext (VAL-SCALE-006).
+    # Default remains short-ctx 128 for legacy emission continuity; operators raise
+    # sequence_length (and pin.seq_len) to ≥256 / target 512 for scale-eval P1 cups.
+    # max_sequence_length is the hard ceiling (default 512); sequence_length may not exceed it.
     max_sequence_length: int = 512
     sequence_length: int = 128
+    # Eval token budget pass-through onto PrismContext.token_budget (None = unset / runner default).
+    # Scale-eval P1 uses ≥1_000_000 under a matched ProtocolPin; emission path unchanged when None.
+    token_budget: int | None = Field(
+        default=None,
+        ge=1,
+        validation_alias=AliasChoices("PRISM_TOKEN_BUDGET", "CHALLENGE_TOKEN_BUDGET"),
+    )
     # Static build_model instantiation gate (architecture.md section 4.1): the param-count phase
     # instantiates build_model under the forced seed in a bounded child process before any GPU
     # work, so hostile construction is time/memory-bounded at the static phase.
@@ -695,6 +706,53 @@ class PrismSettings(ChallengeSettings):
                 f"unknown param ladder stage {stage!r}; expected 'explore' or 'promote'"
             )
         return resolved, self.max_parameters_for_ladder_stage(resolved)
+
+    def resolved_eval_sequence_length(self) -> int:
+        """Worker-plane sequence length with max_sequence_length ceiling (no 128-only trap)."""
+        seq = int(self.sequence_length)
+        cap = int(self.max_sequence_length)
+        if seq <= 0:
+            raise ValueError(f"sequence_length must be positive; got {seq}")
+        if cap <= 0:
+            raise ValueError(f"max_sequence_length must be positive; got {cap}")
+        if seq > cap:
+            raise ValueError(
+                f"sequence_length={seq} exceeds max_sequence_length={cap}; "
+                "raise max_sequence_length or lower sequence_length"
+            )
+        return seq
+
+    def resolved_eval_token_budget(self) -> int | None:
+        """Optional eval token_budget pass-through (None keeps runner/pin defaults)."""
+        if self.token_budget is None:
+            return None
+        budget = int(self.token_budget)
+        if budget <= 0:
+            raise ValueError(f"token_budget must be positive; got {budget}")
+        return budget
+
+    def prism_context_kwargs(self) -> dict[str, Any]:
+        """Kwargs for :class:`PrismContext` from settings (seq + token_budget pass-through).
+
+        Does not invent a default token_budget when unset (emission path stays None).
+        Callers building scale-eval pins should set ProtocolPin.token_budget and/or
+        settings.token_budget together under a matched pin (VAL-SCALE-006).
+        """
+        kwargs: dict[str, Any] = {
+            "sequence_length": self.resolved_eval_sequence_length(),
+            "max_layers": int(self.max_layers),
+            "max_parameters": int(self.max_parameters),
+            "param_ladder_stage": self.param_ladder_stage,
+        }
+        budget = self.resolved_eval_token_budget()
+        if budget is not None:
+            kwargs["token_budget"] = budget
+        return kwargs
+
+    def model_post_init(self, __context: Any) -> None:  # noqa: ARG002
+        # Validate seq vs max at construct time so misconfigured P1 knobs fail closed early.
+        # token_budget None is valid (unset); positive when set is enforced by Field(ge=1).
+        _ = self.resolved_eval_sequence_length()
 
 
 _settings: PrismSettings | None = None

@@ -17,8 +17,12 @@ explore_max_parameters: 124000000
 promote_max_parameters: 350000000
 param_ladder_stage: explore
 max_layers: 96
+# Sequence geometry + optional token_budget (VAL-SCALE-006).
+# Default short-ctx seq=128; scale-eval P1 raises sequence_length to ≥256 (target 512)
+# and sets token_budget ≥1000000 under a matched ProtocolPin. max_sequence_length is the ceiling.
 max_sequence_length: 512
 sequence_length: 128
+# token_budget: null  # unset = runner/pin default; set e.g. 1000000 for P1 scale cups
 fineweb_sample_count: 128
 execution_backend: base_gpu
 prism_role: challenge

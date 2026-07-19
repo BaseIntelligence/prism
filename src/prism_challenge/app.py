@@ -64,12 +64,9 @@ def create_app(
         configure_cpu_reexec_test_mode(app_settings)
         ctx = cpu_test_context(app_settings.worker_plane)
     else:
-        ctx = PrismContext(
-            sequence_length=app_settings.sequence_length,
-            max_layers=app_settings.max_layers,
-            max_parameters=app_settings.max_parameters,
-            param_ladder_stage=app_settings.param_ladder_stage,
-        )
+        # Seq/token_budget pass through settings → PrismContext (VAL-SCALE-006).
+        # Defaults remain short-ctx; operators raise sequence_length / token_budget for scale cups.
+        ctx = PrismContext(**app_settings.prism_context_kwargs())
     worker = PrismWorker(
         repository,
         ctx,
