@@ -68,3 +68,20 @@ scaling bonus.
 - **Large-batch dynamics** — McCandlish et al., 2018: scaling the batch across ranks must preserve a
   stable, descending loss.
 - **Dataset provenance** — Penedo et al., 2024 (*The FineWeb Datasets*): freeze the revision and shards.
+
+## Scale-eval ladder (research multi-seed + densify)
+
+Architecture fair-eval at larger K / longer context uses the **Official Comparison** heldout-primary
+rank and host **Complete View** densify. Product helpers live in
+`prism_challenge.evaluator.scale_eval` (see [Official Comparison §11.3](official-comparison.md)):
+
+| Phase | Pin sketch | Densify |
+| --- | --- | --- |
+| P0 | explore, seq=128, token_budget=500k, seeds K≥3 `(1337,2027,4242)` | host long_ctx + sample_eff on trained_state |
+| P1 | seq 256–512, token_budget 1–2M | long_ctx T up to 1024 when feasible |
+| P2 | promote 350M confirm/revoke | same multi-axis densify |
+| P3 | full_scale_eval / 100BT readiness | public K≥3 lock + research annex non-emission |
+
+Emission leaderboard remains heldout primary + bpb secondary. Complete View / multimetric are
+**published research grade**, not silent emission crowns. Wall-clock never ranks. Prefer host
+densify before new GPU trains. Prism ships **no** tee package (provider trust + IMAGE_PIN only).

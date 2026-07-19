@@ -370,3 +370,5 @@ Do not rank packages solely on prettier grad_norm aesthetics. Use multi-axis Off
 | Scorecard long-ctx / sample-eff fields missing | Suite not run yet — mark not-run/BLOCKED; do not invent metrics |
 | Official grade missing train series | Pin requires `prism_train_series.v1` and capture empty/miner-only — fail-closed Official grade; do not PASS on miner dashboard |
 | Ranking only on grad aesthetics / wall_s | Forbidden — series residual never sole-primary; emission stays held-out primary + bpb secondary; Official multi-axis scientific grade still rule |
+| Need K≥3 scale-eval pin + densify APIs | Use `prism_challenge.evaluator.scale_eval` (`scale_p0_protocol_pin`, `densify_complete_view_pair`, `run_scale_multi_family_host_compare`); see official-comparison §11.3 |
+| Public multi-seed claim with K=1 | Provisional only — `assert_public_multi_seed_pin` / `OFFICIAL_MIN_PUBLIC_SEEDS=3` rejects public K |

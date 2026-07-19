@@ -432,6 +432,33 @@ uv run pytest tests/test_official_compare_harness.py -q -k lab_gpu
 
 Report marks `score_class=LAB-GPU`, `gpu_verification.status=LAB-GPU`, `real_provider_tee=BLOCKED`. Exit `2` is a clear BLOCKED when artifacts are missing.
 
+### 11.3 Scale-eval product pin + Complete View densify entrypoints
+
+Scale ladder P0+ product surface: `prism_challenge.evaluator.scale_eval`.
+
+| Helper | Role |
+| --- | --- |
+| `scale_p0_protocol_pin()` | Explore pin with public **K≥3** seeds `(1337, 2027, 4242)`, seq=128, token_budget=500k; raises if public K required and seeds short |
+| `scale_pin_fields` / `scale_pin_public_ok` / `assert_public_multi_seed_pin` | Document + guard multi-seed pin eligibility |
+| `densify_entrypoints()` | Machine map of long_ctx / sample_eff densify APIs |
+| `densify_complete_view_pair(a, b, panel=...)` | One entrypoint → Complete View with long_ctx and/or sample_eff panels (host densify; does **not** rewrite emission) |
+| `run_scale_multi_family_host_compare(...)` | Multi-family host compare under the P0 pin (fixture or LAB-GPU artifacts; missing → `BLOCKED_with_reason`) |
+| `tee_package_absent()` | Confirms Prism `tee` package remains deleted |
+
+Direct densify modules (prefer host on existing weights before new trains):
+
+* long_ctx: `complete_view_longctx.build_complete_view_with_longctx_quality`
+* sample_eff: `complete_view_eff.build_complete_view_with_eff_stability`
+* multi-family: `multi_family_compare.run_multi_family_lab_gpu_host_compare`
+
+Rank regression freeze: `tests/test_scale_rank_regression.py` (heldout-primary + anti mem/step0/self-report + K≥3 pin + tee absent).
+
+```bash
+export UV_CACHE_DIR=/var/tmp/uv-cache PRISM_DOCKER_BACKEND=cli
+uv run pytest tests/test_scale_rank_regression.py -q
+uv run python -c "from prism_challenge.evaluator.scale_eval import densify_entrypoints, scale_p0_protocol_pin; print(scale_p0_protocol_pin().seeds); print(densify_entrypoints()['long_ctx']['build_view'])"
+```
+
 ---
 
 ## 12. Relation to other docs
