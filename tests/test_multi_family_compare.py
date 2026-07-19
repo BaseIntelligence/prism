@@ -213,22 +213,59 @@ def test_lab_gpu_multi_family_missing_is_blocked_not_invented(tmp_path: Path) ->
         )
 
 
-def test_lab_gpu_multi_family_from_real_dual_artifacts(tmp_path: Path) -> None:
-    """Host recompute LAB-GPU for available Imp baselines (novels BLOCKED until trained)."""
-    lab_root = Path(
-        "/root/.factory/missions/a43a16a7-2230-4853-ba8a-a6bfe993a90f/"
-        "evidence/lab-gpu-official/lium-train/artifacts/out"
-    )
-    manifest = lab_root / "transformer-tiny-1m" / "seed-1337" / "prism_run_manifest.v2.json"
-    if not manifest.is_file():
-        pytest.skip("prior dual LAB-GPU artifacts not present on this host")
+def _lab_gpu_dual_artifact_root() -> Path | None:
+    """Optional host LAB-GPU dual-train root (mission path never required on CI)."""
+    import os
 
-    families = ARXIV_FAIR_EVAL_FAMILY_IDS
+    env = os.environ.get("PRISM_LAB_GPU_ARTIFACTS_ROOT", "").strip()
+    candidates: list[Path] = []
+    if env:
+        candidates.append(Path(env))
+    # Local mission residual only — may be absent or unreadable on GitHub runners.
+    candidates.append(
+        Path(
+            "/root/.factory/missions/a43a16a7-2230-4853-ba8a-a6bfe993a90f/"
+            "evidence/lab-gpu-official/lium-train/artifacts/out"
+        )
+    )
+    for root in candidates:
+        manifest = root / "transformer-tiny-1m" / "seed-1337" / "prism_run_manifest.v2.json"
+        try:
+            if manifest.is_file() and os.access(manifest, os.R_OK):
+                return root
+        except OSError:
+            continue
+    return None
+
+
+def test_lab_gpu_multi_family_partial_imp_scored_novels_blocked(tmp_path: Path) -> None:
+    """VAL-ARXEVAL-006: partial LAB-GPU scores Imp; novels BLOCKED_with_reason.
+
+    Uses synthetic manifests under tmp so CI never depends on mission absolute
+    paths. Optional real dual-artifact root via PRISM_LAB_GPU_ARTIFACTS_ROOT.
+    """
+    from prism_challenge.evaluator.official_compare_harness import SynthSeedMetrics
+
     pin = explore_protocol_pin(seeds=(LAB_GPU_DEFAULT_SEED,))
+    lab_root = tmp_path / "lab_out"
+    # Imp pair only (novels intentionally missing → blocked).
+    for fam, hd, bpb in (
+        ("transformer-tiny-1m", 3.45, 0.121),
+        ("mamba-tiny-1m", 4.62, 0.128),
+    ):
+        seed_dir = lab_root / fam / f"seed-{LAB_GPU_DEFAULT_SEED}"
+        seed_dir.mkdir(parents=True)
+        metrics = SynthSeedMetrics(seed=LAB_GPU_DEFAULT_SEED, bpb=bpb, heldout_delta=hd)
+        man = synth_challenge_manifest(metrics, pin=pin, family_id=fam, device="cuda")
+        (seed_dir / "prism_run_manifest.v2.json").write_text(
+            json.dumps(man, indent=2), encoding="utf-8"
+        )
+
+    out = tmp_path / "out"
     report = run_multi_family_lab_gpu_host_compare(
         lab_root,
-        tmp_path,
-        family_ids=families,
+        out,
+        family_ids=ARXIV_FAIR_EVAL_FAMILY_IDS,
         seeds=(LAB_GPU_DEFAULT_SEED,),
         pin=pin,
         allow_partial=True,
@@ -236,16 +273,13 @@ def test_lab_gpu_multi_family_from_real_dual_artifacts(tmp_path: Path) -> None:
     assert report["score_class"] == SCORE_CLASS_LAB_GPU
     assert report["real_provider_tee"] == TEE_CLASS_BLOCKED
     scored_ids = {row["family_id"] for row in report["score_table"]}
-    # Imp baselines should score when prior dual train exists.
     assert "transformer-tiny-1m" in scored_ids
     assert "mamba-tiny-1m" in scored_ids
-    # Novels absent → blocked, not invented rows in the score_table.
     blocked = report["ranking"]["blocked_families"]
     for novel in NOVEL_ARXIV_FAMILY_IDS:
         assert novel in blocked
         assert novel not in scored_ids
         assert "BLOCKED_with_reason" in blocked[novel]
-    # Primary held-out ranks mamba ahead of transformer on this prior LONG K=1 lab.
     table_by_id = {r["family_id"]: r for r in report["score_table"]}
     assert float(table_by_id["mamba-tiny-1m"]["heldout_delta"]) > float(
         table_by_id["transformer-tiny-1m"]["heldout_delta"]
@@ -253,6 +287,22 @@ def test_lab_gpu_multi_family_from_real_dual_artifacts(tmp_path: Path) -> None:
     assert report["ranking"]["winner"] == "mamba-tiny-1m"
     assert Path(report["pin_path"]).is_file()
     assert Path(report["score_table_path"]).is_file()
+
+    # Optional online residual IP: if a readable dual-train root exists, also assert there.
+    real_root = _lab_gpu_dual_artifact_root()
+    if real_root is not None:
+        report_real = run_multi_family_lab_gpu_host_compare(
+            real_root,
+            tmp_path / "out_real",
+            family_ids=IMP_BASELINE_FAMILY_IDS,
+            seeds=(LAB_GPU_DEFAULT_SEED,),
+            pin=pin,
+            allow_partial=True,
+        )
+        assert report_real["score_class"] == SCORE_CLASS_LAB_GPU
+        real_ids = {row["family_id"] for row in report_real["score_table"]}
+        assert "transformer-tiny-1m" in real_ids
+        assert "mamba-tiny-1m" in real_ids
 
 
 def test_records_from_lab_gpu_multi_recomputes_via_official_path(tmp_path: Path) -> None:
