@@ -78,6 +78,20 @@ NOVEL_ARXIV_FAMILY_IDS: tuple[str, ...] = (
 )
 ARXIV_FAIR_EVAL_FAMILY_IDS: tuple[str, ...] = IMP_BASELINE_FAMILY_IDS + NOVEL_ARXIV_FAMILY_IDS
 
+# Frontier fair cup (VAL-FRNTEVAL-004/005): Imp + deeploop prior winner + three
+# frontier-inspired mechanism distillations (MLA / DeepSeekMoE / KDA). Not full V4/K3.
+DEEPLOOP_CONTROL_FAMILY_ID = "deeploop-tiny-1m"
+NOVEL_FRONTIER_FAMILY_IDS: tuple[str, ...] = (
+    "mla-tiny-1m",
+    "ds-moe-tiny-1m",
+    "kda-tiny-1m",
+)
+FRONTIER_FAIR_EVAL_FAMILY_IDS: tuple[str, ...] = (
+    IMP_BASELINE_FAMILY_IDS
+    + (DEEPLOOP_CONTROL_FAMILY_ID,)
+    + NOVEL_FRONTIER_FAMILY_IDS
+)
+
 MULTI_FAMILY_REPORT_SCHEMA = "prism_multi_family_compare_report.v1"
 
 
@@ -206,6 +220,10 @@ def _default_synth_profile(family_id: str) -> FamilySynthProfile:
         "deeploop-tiny-1m": (1.40, 0.70),
         "gated-delta-tiny-1m": (1.25, 0.55),
         "hybrid-attn-ssm-tiny-1m": (1.55, 0.80),
+        # Frontier-inspired mechanism distillations (fixture paths only).
+        "mla-tiny-1m": (1.48, 0.72),
+        "ds-moe-tiny-1m": (1.35, 0.62),
+        "kda-tiny-1m": (1.30, 0.58),
     }
     bpb_base, hd_base = offsets.get(family_id, (1.60, 0.50))
     fam = get_family(family_id)
@@ -741,7 +759,18 @@ def main(argv: list[str] | None = None) -> int:
         "--family",
         action="append",
         default=None,
-        help="Family id (repeatable). Default: Imp baselines + three novels.",
+        help=(
+            "Family id (repeatable). Default: Imp baselines + three arXiv novels. "
+            "Pass frontier ids (mla/ds-moe/kda + controls) or use --frontier-cup."
+        ),
+    )
+    parser.add_argument(
+        "--frontier-cup",
+        action="store_true",
+        help=(
+            "Use FRONTIER_FAIR_EVAL_FAMILY_IDS (Imp + deeploop + mla/ds-moe/kda) "
+            "when --family is omitted."
+        ),
     )
     parser.add_argument(
         "--lab-gpu-artifacts",
@@ -768,7 +797,12 @@ def main(argv: list[str] | None = None) -> int:
         help="Print full report JSON to stdout.",
     )
     args = parser.parse_args(argv)
-    families = tuple(args.family) if args.family else ARXIV_FAIR_EVAL_FAMILY_IDS
+    if args.family:
+        families = tuple(args.family)
+    elif args.frontier_cup:
+        families = FRONTIER_FAIR_EVAL_FAMILY_IDS
+    else:
+        families = ARXIV_FAIR_EVAL_FAMILY_IDS
     seeds = tuple(args.seed) if args.seed else (LAB_GPU_DEFAULT_SEED,)
     pin = explore_protocol_pin(seeds=seeds if args.lab_gpu_artifacts else OFFICIAL_DEFAULT_SEEDS)
 

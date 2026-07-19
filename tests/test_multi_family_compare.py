@@ -10,9 +10,12 @@ import pytest
 
 from prism_challenge.evaluator.multi_family_compare import (
     ARXIV_FAIR_EVAL_FAMILY_IDS,
+    DEEPLOOP_CONTROL_FAMILY_ID,
+    FRONTIER_FAIR_EVAL_FAMILY_IDS,
     IMP_BASELINE_FAMILY_IDS,
     MULTI_FAMILY_REPORT_SCHEMA,
     NOVEL_ARXIV_FAMILY_IDS,
+    NOVEL_FRONTIER_FAMILY_IDS,
     MultiFamilyArtifactsMissingError,
     agnostic_equal_metrics_equal_rank,
     explore_protocol_pin,
@@ -71,6 +74,27 @@ def test_arxiv_family_registry_complete() -> None:
         assert fid in SEED_FAMILIES
 
 
+def test_frontier_family_registry_complete() -> None:
+    """VAL-FRNTEVAL cup: Imp + deeploop winner + three frontier-inspired packs."""
+    assert set(IMP_BASELINE_FAMILY_IDS).issubset(SEED_FAMILIES)
+    assert DEEPLOOP_CONTROL_FAMILY_ID in SEED_FAMILIES
+    assert set(NOVEL_FRONTIER_FAMILY_IDS).issubset(SEED_FAMILIES)
+    assert len(FRONTIER_FAIR_EVAL_FAMILY_IDS) == 6
+    assert FRONTIER_FAIR_EVAL_FAMILY_IDS[:2] == IMP_BASELINE_FAMILY_IDS
+    assert FRONTIER_FAIR_EVAL_FAMILY_IDS[2] == DEEPLOOP_CONTROL_FAMILY_ID
+    for fid in FRONTIER_FAIR_EVAL_FAMILY_IDS:
+        assert fid in SEED_FAMILIES
+    # Shared explore pin fields match prior arxiv fair spirit (500k applied at ops layer).
+    pin = explore_protocol_pin(seeds=(1337,), token_budget=500_000)
+    assert pin.tokenizer == "gpt2"
+    assert pin.param_ladder_stage == OFFICIAL_EXPLORE_STAGE
+    assert pin.param_cap == OFFICIAL_EXPLORE_PARAM_CAP
+    assert pin.token_budget == 500_000
+    assert pin.seeds == (1337,)
+    assert pin.seq_len == 128
+    assert pin.batch_size == 4
+
+
 def test_package_n_families_unknown_style_contract(tmp_path: Path) -> None:
     packed = package_unknown_style_families(tmp_path, ARXIV_FAIR_EVAL_FAMILY_IDS)
     assert set(packed) == set(ARXIV_FAIR_EVAL_FAMILY_IDS)
@@ -97,6 +121,30 @@ def test_architecture_agnostic_equal_metrics_equal_rank_keys() -> None:
     # Compare metric prefix of the key (everything before the label).
     metric_prefixes = [k[:-1] for k in keys]
     assert all(p == metric_prefixes[0] for p in metric_prefixes)
+
+
+def test_frontier_fixture_score_table_under_shared_pin(tmp_path: Path) -> None:
+    """VAL-FRNTEVAL-004 fixture path: one pin for Imp+deeploop+frontier sides."""
+    pin = explore_protocol_pin(seeds=(1337,), token_budget=500_000)
+    report = run_multi_family_official_compare(
+        tmp_path / "frontier",
+        family_ids=FRONTIER_FAIR_EVAL_FAMILY_IDS,
+        pin=pin,
+        device_class="fixture",
+        score_class=SCORE_CLASS_FIXTURE,
+    )
+    assert report["schema"] == MULTI_FAMILY_REPORT_SCHEMA
+    assert report["score_class"] == SCORE_CLASS_FIXTURE
+    assert report["real_provider_tee"] == TEE_CLASS_BLOCKED
+    assert report["protocol_hash"] == protocol_pin_hash(pin)
+    assert report["pin"]["token_budget"] == 500_000
+    assert report["pin"]["seeds"] == [1337]
+    assert set(report["family_ids"]) == set(FRONTIER_FAIR_EVAL_FAMILY_IDS)
+    assert len(report["score_table"]) == len(FRONTIER_FAIR_EVAL_FAMILY_IDS)
+    assert report["validity"]["architecture_agnostic_path"] is True
+    assert report["validity"]["all_sides_same_pin_hash"] is True
+    pin_disk = json.loads(Path(report["pin_path"]).read_text(encoding="utf-8"))
+    assert set(pin_disk["families"]) == set(FRONTIER_FAIR_EVAL_FAMILY_IDS)
 
 
 def test_multi_family_fixture_score_table_under_shared_pin(tmp_path: Path) -> None:
