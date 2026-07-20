@@ -19,6 +19,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
+from . import param_ladder as _param_ladder
 from .complete_view_eff import (
     FamilyEffStability,
     build_complete_view_with_eff_stability,
@@ -43,6 +44,8 @@ from .official_comparison import (
     OFFICIAL_EXPLORE_PARAM_CAP,
     OFFICIAL_EXPLORE_STAGE,
     OFFICIAL_MIN_PUBLIC_SEEDS,
+    OFFICIAL_PROMOTE_PARAM_CAP,
+    OFFICIAL_PROMOTE_STAGE,
     OFFICIAL_WALL_CLOCK_NEVER_RANKS,
     OfficialScoreRecord,
     ProtocolPin,
@@ -75,6 +78,25 @@ SCALE_P1_PARAM_CAP: int = SCALE_P0_PARAM_CAP
 SCALE_P1_CORE_FAMILY_IDS: tuple[str, ...] = SCALE_P0_CORE_FAMILY_IDS
 SCALE_P1_SEQ_LEN_MIN: int = 256
 SCALE_P1_TOKEN_BUDGET_MIN: int = 1_000_000
+
+# P2 promote 350M ladder defaults (VAL-SCALE-011): same matched package pin as P1
+# explore floor, but param_ladder_stage=promote and param_cap=350M. Crown candidates
+# are deeploop + explore runner-up + transformer baseline (kda optional when budget).
+SCALE_P2_SEEDS: tuple[int, ...] = SCALE_P0_SEEDS
+SCALE_P2_SEQ_LEN: int = SCALE_P1_SEQ_LEN  # keep P1 seq floor for fair promote re-eval
+SCALE_P2_TOKEN_BUDGET: int = SCALE_P1_TOKEN_BUDGET
+SCALE_P2_BATCH_SIZE: int = SCALE_P0_BATCH_SIZE
+SCALE_P2_PARAM_STAGE: str = str(OFFICIAL_PROMOTE_STAGE)
+SCALE_P2_PARAM_CAP: int = int(OFFICIAL_PROMOTE_PARAM_CAP)
+# Minimum crown set for promote confirm/revoke (add kda when budget allows).
+SCALE_P2_CROWN_FAMILY_IDS: tuple[str, ...] = (
+    "deeploop-tiny-1m",
+    "mamba-tiny-1m",  # P1 explore crown / best runner relative to deeploop lineage
+    "transformer-tiny-1m",
+)
+SCALE_P2_CORE_FAMILY_IDS: tuple[str, ...] = SCALE_P2_CROWN_FAMILY_IDS + ("kda-tiny-1m",)
+SCALE_P2_SEQ_LEN_MIN: int = SCALE_P1_SEQ_LEN_MIN
+SCALE_P2_TOKEN_BUDGET_MIN: int = SCALE_P1_TOKEN_BUDGET_MIN
 
 DensifyPanel = Literal["long_ctx", "sample_eff", "both"]
 
@@ -172,6 +194,103 @@ def assert_scale_p1_pin_floor(pin: ProtocolPin) -> None:
         reasons.append(f"token_budget={pin.token_budget}<{SCALE_P1_TOKEN_BUDGET_MIN} (P1 floor)")
     if reasons:
         raise ValueError("P1 scale pin floor failed: " + "; ".join(reasons))
+
+
+def promote_protocol_pin(
+    *,
+    seeds: Sequence[int] | None = None,
+    token_budget: int | None = None,
+    seq_len: int | None = None,
+    batch_size: int | None = None,
+    k_label: str | None = None,
+) -> ProtocolPin:
+    """Matched ProtocolPin for promote-stage (350M) scale-eval cups (VAL-SCALE-011).
+
+    Same tokenizer/seeds/budget contract as explore pins, but ``param_ladder_stage``
+    is ``promote`` and ``param_cap`` is the 350M promote ceiling. Does not silently
+    fall back to explore 124M.
+    """
+    del k_label  # report metadata only
+    base = explore_protocol_pin(
+        seeds=seeds,
+        token_budget=token_budget,
+        seq_len=seq_len,
+        batch_size=batch_size,
+    )
+    return ProtocolPin(
+        protocol_id=base.protocol_id,
+        token_budget=int(base.token_budget),
+        seeds=tuple(int(s) for s in base.seeds),
+        param_cap=int(OFFICIAL_PROMOTE_PARAM_CAP),
+        param_ladder_stage=str(OFFICIAL_PROMOTE_STAGE),
+        seq_len=int(base.seq_len),
+        batch_size=int(base.batch_size),
+        tokenizer=str(base.tokenizer),
+        vocab_size=int(base.vocab_size),
+        scored_nproc=int(base.scored_nproc),
+        val_byte_budget=int(base.val_byte_budget),
+        force_iter_train_batches=True,
+        require_trained_state=True,
+        primary_form="heldout_delta",
+        require_train_series=False,
+        wall_clock_seconds=base.wall_clock_seconds,
+        step_budget=base.step_budget,
+        gap_threshold_bpb=base.gap_threshold_bpb,
+    )
+
+
+def scale_p2_protocol_pin(
+    *,
+    seeds: Sequence[int] | None = None,
+    token_budget: int | None = None,
+    seq_len: int | None = None,
+    batch_size: int | None = None,
+    require_public_k: bool = True,
+    require_p2_floor: bool = True,
+) -> ProtocolPin:
+    """Matched promote ProtocolPin for P2 350M cup (VAL-SCALE-011).
+
+    Defaults: K≥3 public seeds, seq=256, token_budget=1_000_000, stage=promote,
+    param_cap=350M. Seq/budget floors match P1 so promote is a ladder-stage raise
+    on the same package pin, not a silent seq=128 trap.
+    """
+    seed_tuple = tuple(int(s) for s in seeds) if seeds is not None else SCALE_P2_SEEDS
+    if require_public_k and len(seed_tuple) < OFFICIAL_MIN_PUBLIC_SEEDS:
+        raise ValueError(
+            f"public scale pin requires K≥{OFFICIAL_MIN_PUBLIC_SEEDS} seeds; "
+            f"got K={len(seed_tuple)} (set require_public_k=False for provisional lab)"
+        )
+    resolved_seq = int(seq_len) if seq_len is not None else SCALE_P2_SEQ_LEN
+    resolved_budget = int(token_budget) if token_budget is not None else SCALE_P2_TOKEN_BUDGET
+    pin = promote_protocol_pin(
+        seeds=seed_tuple,
+        token_budget=resolved_budget,
+        seq_len=resolved_seq,
+        batch_size=int(batch_size) if batch_size is not None else SCALE_P2_BATCH_SIZE,
+    )
+    if require_p2_floor:
+        assert_scale_p2_pin_floor(pin)
+    return pin
+
+
+def assert_scale_p2_pin_floor(pin: ProtocolPin) -> None:
+    """Raise when pin is not a valid P2 promote pin (seq/budget floors + promote stage)."""
+    reasons: list[str] = []
+    if int(pin.seq_len) < SCALE_P2_SEQ_LEN_MIN:
+        reasons.append(f"seq_len={pin.seq_len}<{SCALE_P2_SEQ_LEN_MIN} (P2 floor)")
+    if int(pin.token_budget) < SCALE_P2_TOKEN_BUDGET_MIN:
+        reasons.append(f"token_budget={pin.token_budget}<{SCALE_P2_TOKEN_BUDGET_MIN} (P2 floor)")
+    stage = str(pin.param_ladder_stage).strip().lower()
+    if stage != str(OFFICIAL_PROMOTE_STAGE):
+        reasons.append(f"param_ladder_stage={pin.param_ladder_stage!r} != 'promote'")
+    if int(pin.param_cap) < int(OFFICIAL_PROMOTE_PARAM_CAP):
+        reasons.append(
+            f"param_cap={pin.param_cap}<{OFFICIAL_PROMOTE_PARAM_CAP} (promote 350M ceiling)"
+        )
+    # Coerce stage label via ladder helper (fail-closed on unknown).
+    _param_ladder.normalize_param_ladder_stage(pin.param_ladder_stage)
+    if reasons:
+        raise ValueError("P2 promote pin floor failed: " + "; ".join(reasons))
 
 
 def protocol_pin_context_fields(pin: ProtocolPin) -> dict[str, Any]:
@@ -310,17 +429,24 @@ def densify_entrypoints() -> dict[str, Any]:
             "explore_pin": "explore_protocol_pin",
             "scale_p0_pin": "scale_p0_protocol_pin",
             "scale_p1_pin": "scale_p1_protocol_pin",
+            "scale_p2_pin": "scale_p2_protocol_pin",
+            "promote_pin": "promote_protocol_pin",
             "core_families_p0": list(SCALE_P0_CORE_FAMILY_IDS),
             "core_families_p1": list(SCALE_P1_CORE_FAMILY_IDS),
+            "crown_families_p2": list(SCALE_P2_CROWN_FAMILY_IDS),
+            "core_families_p2": list(SCALE_P2_CORE_FAMILY_IDS),
             "frontier_families": list(FRONTIER_FAIR_EVAL_FAMILY_IDS),
         },
         "scale_helpers": {
             "module": "prism_challenge.evaluator.scale_eval",
             "p0_pin": "scale_p0_protocol_pin",
             "p1_pin": "scale_p1_protocol_pin",
+            "p2_pin": "scale_p2_protocol_pin",
+            "promote_pin": "promote_protocol_pin",
             "pin_fields": "scale_pin_fields",
             "public_ok": "scale_pin_public_ok",
             "p1_floor": "assert_scale_p1_pin_floor",
+            "p2_floor": "assert_scale_p2_pin_floor",
             "context_from_pin": "prism_context_from_protocol_pin",
             "pin_to_context": "protocol_pin_context_fields",
             "densify_pair": "densify_complete_view_pair",
@@ -344,6 +470,18 @@ def densify_entrypoints() -> dict[str, Any]:
             "notes": (
                 "Raise ProtocolPin.seq_len / token_budget and settings.sequence_length / "
                 "token_budget together; no seq=128-only trap on explore/official/lab paths."
+            ),
+        },
+        "p2_ladder": {
+            "param_ladder_stage": SCALE_P2_PARAM_STAGE,
+            "param_cap": SCALE_P2_PARAM_CAP,
+            "seq_len_default": SCALE_P2_SEQ_LEN,
+            "token_budget_default": SCALE_P2_TOKEN_BUDGET,
+            "crown_families": list(SCALE_P2_CROWN_FAMILY_IDS),
+            "core_families": list(SCALE_P2_CORE_FAMILY_IDS),
+            "notes": (
+                "Promote 350M confirm/revoke cup uses matched pin (seq/budget from P1 floors) "
+                "with param_ladder_stage=promote; wall never ranks."
             ),
         },
         "protocol_budget": protocol_budget_constants(),
@@ -477,24 +615,36 @@ def scale_product_snapshot() -> dict[str, Any]:
     """Compact snapshot for evidence packs (no secrets, no spend)."""
     pin = scale_p0_protocol_pin()
     pin_p1 = scale_p1_protocol_pin()
+    pin_p2 = scale_p2_protocol_pin()
     guard = scale_pin_public_ok(pin)
     guard_p1 = scale_pin_public_ok(pin_p1)
+    guard_p2 = scale_pin_public_ok(pin_p2)
     return {
         "schema": "prism_scale_product_snapshot.v1",
         "pin": scale_pin_fields(pin),
         "p1_pin": scale_pin_fields(pin_p1),
+        "p2_pin": scale_pin_fields(pin_p2),
         "public_guard": guard.as_dict(),
         "public_guard_p1": guard_p1.as_dict(),
+        "public_guard_p2": guard_p2.as_dict(),
         "densify_entrypoints": densify_entrypoints(),
         "core_families_p0": list(SCALE_P0_CORE_FAMILY_IDS),
         "core_families_p1": list(SCALE_P1_CORE_FAMILY_IDS),
+        "crown_families_p2": list(SCALE_P2_CROWN_FAMILY_IDS),
+        "core_families_p2": list(SCALE_P2_CORE_FAMILY_IDS),
         "p1_ladder": {
             "seq_len_min": SCALE_P1_SEQ_LEN_MIN,
             "seq_len_default": SCALE_P1_SEQ_LEN,
             "seq_len_target": SCALE_P1_SEQ_LEN_TARGET,
             "token_budget_min": SCALE_P1_TOKEN_BUDGET_MIN,
-            "token_budget_default": SCALE_P1_TOKEN_BUDGET,
+            "token_budget_default": SCALE_P2_TOKEN_BUDGET,
             "token_budget_high": SCALE_P1_TOKEN_BUDGET_HIGH,
+        },
+        "p2_ladder": {
+            "param_ladder_stage": SCALE_P2_PARAM_STAGE,
+            "param_cap": SCALE_P2_PARAM_CAP,
+            "seq_len_default": SCALE_P2_SEQ_LEN,
+            "token_budget_default": SCALE_P2_TOKEN_BUDGET,
         },
         "tee_package_absent": tee_package_absent(),
         "wall_clock_never_ranks": OFFICIAL_WALL_CLOCK_NEVER_RANKS,

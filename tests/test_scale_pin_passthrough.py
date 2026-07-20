@@ -26,13 +26,19 @@ from prism_challenge.evaluator.scale_eval import (
     SCALE_P1_SEQ_LEN_TARGET,
     SCALE_P1_TOKEN_BUDGET,
     SCALE_P1_TOKEN_BUDGET_HIGH,
+    SCALE_P2_CROWN_FAMILY_IDS,
+    SCALE_P2_PARAM_CAP,
+    SCALE_P2_PARAM_STAGE,
     assert_public_multi_seed_pin,
     assert_scale_p1_pin_floor,
+    assert_scale_p2_pin_floor,
     densify_entrypoints,
     prism_context_from_protocol_pin,
+    promote_protocol_pin,
     protocol_pin_context_fields,
     scale_p0_protocol_pin,
     scale_p1_protocol_pin,
+    scale_p2_protocol_pin,
     scale_pin_fields,
     scale_pin_public_ok,
     scale_product_snapshot,
@@ -209,3 +215,52 @@ def test_densify_entrypoints_document_p1_pin_knobs() -> None:
     assert snap.get("p1_ladder") is not None
     assert snap["p1_ladder"]["seq_len_min"] >= 256
     assert snap["p1_ladder"]["token_budget_min"] >= 1_000_000
+
+
+def test_scale_p2_protocol_pin_is_promote_350m() -> None:
+    """P2 cup pin: stage=promote, param_cap=350M, K≥3, P1 seq/budget floors."""
+    pin = scale_p2_protocol_pin()
+    assert pin.param_ladder_stage == "promote"
+    assert pin.param_ladder_stage == SCALE_P2_PARAM_STAGE
+    assert pin.param_cap == 350_000_000
+    assert pin.param_cap == SCALE_P2_PARAM_CAP
+    assert pin.seq_len >= 256
+    assert pin.token_budget >= 1_000_000
+    assert pin.primary_form == "heldout_delta"
+    assert len(pin.seeds) >= 3
+    assert_public_multi_seed_pin(pin)
+    assert_scale_p2_pin_floor(pin)
+    fields = scale_pin_fields(pin)
+    assert fields["param_ladder_stage"] == "promote"
+    assert fields["param_cap"] == 350_000_000
+
+
+def test_promote_protocol_pin_does_not_silent_explore() -> None:
+    pin = promote_protocol_pin(seq_len=256, token_budget=1_000_000, seeds=(1337, 2027, 4242))
+    assert pin.param_ladder_stage == "promote"
+    assert pin.param_cap == 350_000_000
+    explore = explore_protocol_pin(seq_len=256, token_budget=1_000_000, seeds=(1337, 2027, 4242))
+    assert explore.param_ladder_stage == "explore"
+    assert explore.param_cap == 124_000_000
+    assert protocol_pin_hash(pin) != protocol_pin_hash(explore)
+
+
+def test_scale_p2_pin_rejects_explore_stage() -> None:
+    explore = scale_p1_protocol_pin()
+    with pytest.raises(ValueError, match="param_ladder_stage"):
+        assert_scale_p2_pin_floor(explore)
+
+
+def test_scale_p2_crown_families_include_deeploop_runner_transformer() -> None:
+    fams = set(SCALE_P2_CROWN_FAMILY_IDS)
+    assert "deeploop-tiny-1m" in fams
+    assert "transformer-tiny-1m" in fams
+    # P1 explore crown was mamba; crown cup keeps runner-up / crown lineage.
+    assert "mamba-tiny-1m" in fams
+    snap = scale_product_snapshot()
+    assert snap["p2_pin"]["param_ladder_stage"] == "promote"
+    assert snap["p2_ladder"]["param_cap"] == 350_000_000
+    assert "deeploop-tiny-1m" in snap["crown_families_p2"]
+    ep = densify_entrypoints()
+    assert ep["scale_helpers"]["p2_pin"] == "scale_p2_protocol_pin"
+    assert ep["p2_ladder"]["param_ladder_stage"] == "promote"
