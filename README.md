@@ -1,3 +1,11 @@
+> **Source of truth transition:** first-party Prism product now lives in the
+> **BaseIntelligence/base** monorepo at `packages/challenges/prism/`. Prefer that
+> tree for product edits, Docker/GHCR builds, and miner docs
+> (`docs/miner/prism/` on base). Public slug `/challenges/prism` and GHCR name
+> `ghcr.io/baseintelligence/prism` are **unchanged**. This standalone remote is
+> dual-source / archive during cutover — see
+> https://github.com/BaseIntelligence/base/blob/main/docs/SOURCE_OF_TRUTH.md
+
 <div align="center">
 
 # PRISM
