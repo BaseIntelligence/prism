@@ -1,6 +1,40 @@
-# Miner Guide
+# Miner hub (Prism)
 
-## Purpose
+Mine Prism on **[joinbase.ai](https://joinbase.ai)** in minutes. Prism is the BASE
+**research lab** challenge: try **new architectures**, earn when held-out generalization
+wins under fair challenge-owned re-exec.
+
+**Day-1 target:** hotkey ready → pack example seed → signed bridge submit → leaderboard,
+in under 15 minutes. Science grade, promote ladder depth, and worker-plane GPU ops stay in
+Concepts / linked deep docs — not on the first page.
+
+| Page | What it covers |
+|------|----------------|
+| [Getting started](getting-started.md) | Hotkey, pack seed, sign headers, bridge POST, leaderboard, checklist |
+| [Concepts](concepts.md) | Emission vs science, 50% share, NO-TEE honesty, ladder |
+| [Troubleshooting](troubleshooting.md) | 401 / 409 / 429 / 502 and common rejects |
+
+## Canonical public URLs
+
+| Surface | URL |
+|---------|-----|
+| Product / dashboard | https://joinbase.ai |
+| Base master API | https://chain.joinbase.ai |
+| Submit bridge | `POST https://chain.joinbase.ai/v1/challenges/prism/submissions` |
+| Leaderboard | `GET https://chain.joinbase.ai/challenges/prism/leaderboard` |
+| OpenAPI | `GET https://chain.joinbase.ai/challenges/prism/openapi.json` |
+
+## Quick path
+
+1. Link wallet hotkey on https://joinbase.ai.
+2. Pack: `uv run python scripts/pack_seed_family.py --family transformer-tiny-1m --output-dir dist/seed-packages`
+3. Sign canonical `prism:{hotkey}:{nonce}:{timestamp}:{sha256(zip)}` and POST the zip to the
+   bridge URL above with `X-Hotkey` / `X-Nonce` / `X-Timestamp` / `X-Signature`.
+4. Watch https://chain.joinbase.ai/challenges/prism/leaderboard.
+
+Full walkthrough: [Getting started](getting-started.md).
+
+## Purpose (lab identity)
 
 PRISM is a **research lab**. The **norm** is to try **new architectures**. The **goal** is to find
 **more performant** ones for our LLM target under fair challenge-owned re-exec. You submit two
@@ -13,7 +47,7 @@ For offline architecture-agnostic **Official Comparison Protocol v1** / multimet
 `multimetric.v1.1` (scientific multi-axis grade; held-out primary, prequential bpb secondary,
 honest hooks, wall-clock never ranks; prior K=1 wins provisional only; multimetric is **not**
 the emission scalar), see [Official Comparison](../official-comparison.md). The live emission path
-is described in [Scoring](../scoring.md).
+is described in [Scoring](../scoring.md). Brief miner-facing summary: [Concepts](concepts.md).
 
 ## Dual param ladder (start small)
 
@@ -28,13 +62,15 @@ is described in [Scoring](../scoring.md).
    under AST + dual ladder are **expected**, not second-class (Transformer, pure-torch SSM,
    LightDeepLoop-class looped depth when the forward contract holds, hybrids, …). Seeds
    `tiny-1m` / `mamba-tiny` are starting shapes only.
-2. Sign and submit it with your miner hotkey.
+2. Sign and submit it with your miner hotkey via the joinbase bridge
+   (`POST https://chain.joinbase.ai/v1/challenges/prism/submissions`).
 3. PRISM runs the static sandbox and **deterministic admission** (similarity / anti-cheat). There is no
    LLM hard gate.
 4. The challenge re-executes your `training.py` under a forced random init on the locked train split.
 5. The challenge computes emission rank: **held-out primary**, prequential bits-per-byte **secondary**.
 6. Better generalizing learners earn more weight after master aggregation of PRISM raw weights
    (architecture/training pools just **0.50 / 0.50**; validators submit on-chain; the challenge does not).
+   Prism’s absolute emission share on BASE defaults to **50%** (paired with agent-challenge).
 
 ## Lab seed families (default exploration under 124M)
 
@@ -138,7 +174,26 @@ zeroed; an excessive train-vs-held-out gap is penalized as memorization.
 
 ## Submitting Work
 
-Submit through the public route when enabled, or through the BASE proxy in production:
+**Day-1 production path** is the BASE bridge (preferred):
+
+```http
+POST https://chain.joinbase.ai/v1/challenges/prism/submissions
+Content-Type: application/zip
+X-Hotkey: <ss58>
+X-Nonce: <unique>
+X-Timestamp: <unix-seconds>
+X-Signature: <sr25519 over canonical payload>
+```
+
+Canonical payload:
+
+```text
+prism:{hotkey}:{nonce}:{timestamp}:{sha256_hex(body)}
+```
+
+Full pack/sign/checklist: [Getting started](getting-started.md).
+
+When public direct submit is enabled on a local challenge, JSON shape is still supported:
 
 ```http
 POST /v1/submissions
@@ -176,3 +231,5 @@ queue.
 - Prefer starting from `examples/tiny-1m` or `examples/mamba-tiny` under 124M.
 - Make the loop deterministic under the forced seed and correct at `world_size=1`.
 - Remove secrets, private endpoints, generated caches, and unrelated files.
+- Submit via `POST https://chain.joinbase.ai/v1/challenges/prism/submissions` with signed headers.
+- When stuck, use [Troubleshooting](troubleshooting.md) before opening issues.

@@ -41,6 +41,9 @@ PUBLIC_DOCS = (
     "docs/api.md",
     "docs/operators.md",
     "docs/miner/README.md",
+    "docs/miner/getting-started.md",
+    "docs/miner/concepts.md",
+    "docs/miner/troubleshooting.md",
     "docs/validator/README.md",
 )
 
@@ -57,7 +60,8 @@ def test_two_script_contract_is_documented() -> None:
     readme = read_doc("README.md")
     submissions = read_doc("docs/submissions.md")
     miner = read_doc("docs/miner/README.md")
-    combined = f"{readme}\n{submissions}\n{miner}"
+    getting_started = read_doc("docs/miner/getting-started.md")
+    combined = f"{readme}\n{submissions}\n{miner}\n{getting_started}"
 
     assert "two-script" in combined.lower()
     assert DEFAULT_ARCHITECTURE_ENTRYPOINT in combined  # architecture.py
@@ -72,6 +76,54 @@ def test_two_script_contract_is_documented() -> None:
         "single combined module no longer satisfies",
     ):
         assert expected in submissions_lower
+
+
+def test_miner_day1_getting_started_joinbase_bridge() -> None:
+    """VAL-EMDOC-005: Phala-style day-1 miner path on joinbase + troubleshooting."""
+    getting_started = read_doc("docs/miner/getting-started.md")
+    troubleshooting = read_doc("docs/miner/troubleshooting.md")
+    concepts = read_doc("docs/miner/concepts.md")
+    miner_hub = read_doc("docs/miner/README.md")
+    readme = read_doc("README.md")
+    day1 = f"{getting_started}\n{miner_hub}\n{readme}"
+    day1_lower = day1.lower()
+
+    # Canonical public hosts (never platform.network as a shipping https URL).
+    assert "https://joinbase.ai" in day1
+    assert "https://chain.joinbase.ai" in day1
+    assert "https://chain.platform.network" not in day1_lower
+    assert "http://chain.platform.network" not in day1_lower
+
+    # Bridge submit + leaderboard GET.
+    assert "https://chain.joinbase.ai/v1/challenges/prism/submissions" in day1
+    assert "https://chain.joinbase.ai/challenges/prism/leaderboard" in day1
+
+    # Hotkey + pack seed + sign headers spine.
+    assert "hotkey" in day1_lower
+    assert "pack_seed_family" in day1
+    assert "transformer-tiny-1m" in day1
+    assert "X-Hotkey" in day1 and "X-Signature" in day1
+    assert "X-Nonce" in day1 and "X-Timestamp" in day1
+    assert "prism:{hotkey}:{nonce}:{timestamp:" in day1 or "prism:{hotkey}:{nonce}:{timestamp}" in day1
+
+    # Checklist present on day-1 page.
+    assert "checklist" in getting_started.lower()
+
+    # Troubleshooting is first-class (401/429/502).
+    t_lower = troubleshooting.lower()
+    assert "401" in troubleshooting and "429" in troubleshooting and "502" in troubleshooting
+    assert "troubleshooting" in t_lower or "unauthorized" in t_lower
+
+    # Science / scoring deep links live as Concepts, not only buried narrative.
+    c_lower = concepts.lower()
+    assert "held-out" in c_lower and "primary" in c_lower
+    assert "official comparison" in c_lower or "multimetric" in c_lower
+    assert "no-tee" in c_lower or "tee verifier" in c_lower
+    assert "getting started" in concepts.lower() or "getting-started" in concepts.lower()
+
+    # README badges / miner pointers to joinbase day-1.
+    assert "joinbase" in readme.lower()
+    assert "docs/miner/getting-started.md" in readme
 
 
 def test_locked_fineweb_data_plane_is_documented() -> None:

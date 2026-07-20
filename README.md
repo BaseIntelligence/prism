@@ -5,7 +5,7 @@
 **Research lab subnet — try new architectures; find more performant ones under fair challenge-owned re-exec.**
 
 <a href="docs/overview.md">Overview</a> ·
-<a href="docs/miner/README.md">Miners</a> ·
+<a href="docs/miner/getting-started.md">Miners</a> ·
 <a href="docs/validator/README.md">Validators</a> ·
 <a href="docs/architecture.md">Architecture</a> ·
 <a href="docs/scoring.md">Scoring</a> ·
@@ -14,6 +14,9 @@
 [![License](https://img.shields.io/github/license/BaseIntelligence/prism)](LICENSE)
 [![Bittensor](https://img.shields.io/badge/Bittensor-subnet-black.svg)](https://bittensor.com/)
 [![BASE](https://img.shields.io/badge/BASE-v3.1.2-6f42c1.svg)](https://github.com/BaseIntelligence/base/releases/tag/v3.1.2)
+[![joinbase](https://img.shields.io/badge/joinbase.ai-mine-0f766e.svg)](https://joinbase.ai)
+[![Master API](https://img.shields.io/badge/chain.joinbase.ai-API-111827.svg)](https://chain.joinbase.ai/health)
+[![Prism leaderboard](https://img.shields.io/badge/Prism-leaderboard-2563eb.svg)](https://chain.joinbase.ai/challenges/prism/leaderboard)
 
 ![PRISM Banner](assets/banner.png)
 
@@ -131,12 +134,27 @@ and each result carries an `ExecutionProof` (manifest hash + worker sr25519 sign
 image-digest pin for tier-1). Gated behind `worker_plane` (default off). See the
 <a href="https://github.com/BaseIntelligence/base/blob/main/docs/miner/worker-plane.md">worker deployment guide</a>.
 
+## Mine on joinbase (day-1)
+
+Production miners submit through the BASE bridge (not a self-hosted master):
+
+1. Hotkey wallet on [joinbase.ai](https://joinbase.ai)
+2. Pack a seed: `uv run python scripts/pack_seed_family.py --family transformer-tiny-1m --output-dir dist/seed-packages`
+3. Sign and `POST https://chain.joinbase.ai/v1/challenges/prism/submissions`
+4. Watch [Prism leaderboard](https://chain.joinbase.ai/challenges/prism/leaderboard)
+
+Full checklist, signature headers, and troubleshooting:
+<a href="docs/miner/getting-started.md">Miner getting started</a>.
+
 ## Documentation
 
 | Guide | Contents |
 |-------|----------|
 | <a href="docs/overview.md">Overview</a> | Research-lab identity, ladder, emission vs science |
-| <a href="docs/miner/README.md">Miner guide</a> | Build and submit a two-script bundle; tiny-1m / mamba-tiny seeds |
+| <a href="docs/miner/getting-started.md">Miner getting started</a> | Day-1 hotkey → pack seed → joinbase bridge submit → leaderboard |
+| <a href="docs/miner/README.md">Miner hub</a> | Two-script contract, seeds, checklist; links Concepts / Troubleshooting |
+| <a href="docs/miner/concepts.md">Miner concepts</a> | Emission vs science, 50% share, NO-TEE honesty |
+| <a href="docs/miner/troubleshooting.md">Miner troubleshooting</a> | 401 / 409 / 429 / 502 and common rejects |
 | <a href="docs/validator/README.md">Validator guide</a> | Run evaluation on your own broker |
 | <a href="docs/architecture.md">Architecture</a> | Service design and forced-init re-execution |
 | <a href="docs/submissions.md">Submission format</a> | Two-script contract, dual ladder, `PrismContext` |

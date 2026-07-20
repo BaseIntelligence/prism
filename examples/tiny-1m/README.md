@@ -48,6 +48,12 @@ Any value this submission reports and any manifest it writes are ignored; the ch
 
 ## Submit
 
-Submit as a `.zip` bundle of this directory through the public route (when enabled) or the BASE
-proxy. See [docs/submissions.md](../../docs/submissions.md) and the
-[miner guide](../../docs/miner/README.md).
+Day-1 production path: pack this family, sign with your hotkey, and POST the raw zip to the
+joinbase bridge:
+
+```text
+POST https://chain.joinbase.ai/v1/challenges/prism/submissions
+```
+
+See [miner getting started](../../docs/miner/getting-started.md),
+[docs/submissions.md](../../docs/submissions.md), and the [miner hub](../../docs/miner/README.md).

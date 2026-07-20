@@ -159,8 +159,12 @@ launches torchrun, and captures the online loss itself. **Default exploration sh
 
 Package either or both with `scripts/pack_seed_family.py` (shared outer two-script zip shape). Lab
 family knobs (param counting shape, batch/LR step flu, pure-torch SSM caveats, multi-GPU primitives)
-are documented on each seed README and in the [miner guide](miner/README.md#lab-seed-families).
+are documented on each seed README and in the [miner hub](miner/README.md#lab-seed-families).
 Novel architectures beyond these seeds are first-class under the AST + ladder caps.
+
+**Day-1 network submit** (production): pack a seed, sign with your hotkey, and
+`POST https://chain.joinbase.ai/v1/challenges/prism/submissions` with signature headers. Walkthrough:
+[Miner getting started](miner/getting-started.md).
 
 ## ZIP Safety Rules
 
