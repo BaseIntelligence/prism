@@ -440,15 +440,24 @@ Scale ladder P0+ product surface: `prism_challenge.evaluator.scale_eval`.
 | --- | --- |
 | `scale_p0_protocol_pin()` | Explore pin with public **K≥3** seeds `(1337, 2027, 4242)`, seq=128, token_budget=500k; raises if public K required and seeds short |
 | `scale_p1_protocol_pin()` | P1 scaled pin: seq≥**256** (target **512**), token_budget≥**1_000_000** (raise to 2M); floors enforced; no seq=128-only trap |
+| `scale_p2_protocol_pin()` / `promote_protocol_pin()` | Promote **350M** confirm/revoke pin (matched seq/budget floors; stage=`promote`) |
+| `scale_p3_protocol_pin()` | P3 full_scale posture pin (public K≥3; inherits promote floors; no 100BT spend) |
+| `probe_full_scale_readiness(...)` | Dry-run full_scale / **sample-100BT** mount readiness; missing mounts → **BLOCKED_with_reason** (never invents READY scores; `requires_100bt_spend=false`) |
+| `scale_ladder_document()` | Machine ladder **explore → promote → full_scale**; locks public **K≥3**; prior **K=1** labeled **provisional** |
+| `research_protocol_annex()` | Additive research comparison object (`prism_research_protocol_annex.v1`); **`non_emission=true`**, **`emission_weight_crown=false`** (Complete View / multimetric stay research grade) |
 | `explore_protocol_pin(seq_len=, token_budget=)` | Fair multi-family explore pin; **pass-through** for raised seq/budget (defaults stay 128/500k) |
 | `prism_context_from_protocol_pin` / `protocol_pin_context_fields` | Map pin → `PrismContext` (`sequence_length`, `token_budget`) for worker plane / lab harness |
 | `scale_pin_fields` / `scale_pin_public_ok` / `assert_public_multi_seed_pin` / `assert_scale_p1_pin_floor` | Document + guard multi-seed / P1 floor eligibility |
-| `densify_entrypoints()` | Machine map of long_ctx / sample_eff densify APIs + P1 ladder knobs |
+| `densify_entrypoints()` | Machine map of long_ctx / sample_eff densify APIs + P1–P3 ladder knobs + annex |
 | `densify_complete_view_pair(a, b, panel=...)` | One entrypoint → Complete View with long_ctx and/or sample_eff panels (host densify; does **not** rewrite emission) |
 | `run_scale_multi_family_host_compare(...)` | Multi-family host compare under the P0 pin (fixture or LAB-GPU artifacts; missing → `BLOCKED_with_reason`) |
 | `tee_package_absent()` | Confirms Prism `tee` package remains deleted |
 
-**Config knobs (worker plane):** `sequence_length` (default 128; raise to ≥256 for P1), `max_sequence_length` (ceiling, default 512), optional `token_budget` / `PRISM_TOKEN_BUDGET` (unset = runner default; set ≥1_000_000 for P1). `PrismSettings.prism_context_kwargs()` feeds `create_app` so raised values reach `PrismContext` without a hardcoded 128-only path. Emission rank key is unchanged.
+**Public multi-seed protocol lock:** Official public non-provisional claims require clean multi-seed
+**K≥3** under a matched pin. **K=1** (or K_clean &lt; 3) is **provisional only**. Scale ladder stages
+are **explore → promote → full_scale** (see [Scaling](scaling.md) and `scale_ladder_document()`).
+
+**Config knobs (worker plane):** `sequence_length` (default 128; raise to ≥256 for P1), `max_sequence_length` (ceiling, default 512), optional `token_budget` / `PRISM_TOKEN_BUDGET` (unset = runner default; set ≥1_000_000 for P1). `PrismSettings.prism_context_kwargs()` feeds `create_app` so raised values reach `PrismContext` without a hardcoded 128-only path. Emission rank key is unchanged. Full_scale dataset path uses locked FineWeb-Edu mounts (`base_eval_*_data_dir`) plus runtime `execution_mode_targets.full_scale_eval` phase-1 **sample-10BT** / phase-2 **sample-100BT**.
 
 Direct densify modules (prefer host on existing weights before new trains):
 
@@ -458,11 +467,12 @@ Direct densify modules (prefer host on existing weights before new trains):
 
 Rank regression freeze: `tests/test_scale_rank_regression.py` (heldout-primary + anti mem/step0/self-report + K≥3 pin + tee absent).
 P1 pin pass-through: `tests/test_scale_pin_passthrough.py` (VAL-SCALE-006).
+P3 full_scale readiness + annex: `tests/test_scale_fullscale_readiness.py` (VAL-SCALE-015/016/017).
 
 ```bash
 export UV_CACHE_DIR=/var/tmp/uv-cache PRISM_DOCKER_BACKEND=cli
-uv run pytest tests/test_scale_rank_regression.py tests/test_scale_pin_passthrough.py -q
-uv run python -c "from prism_challenge.evaluator.scale_eval import densify_entrypoints, scale_p0_protocol_pin, scale_p1_protocol_pin; print(scale_p0_protocol_pin().seq_len, scale_p1_protocol_pin().seq_len, scale_p1_protocol_pin().token_budget); print(densify_entrypoints()['p1_ladder'])"
+uv run pytest tests/test_scale_rank_regression.py tests/test_scale_pin_passthrough.py tests/test_scale_fullscale_readiness.py -q
+uv run python -c "from prism_challenge.evaluator.scale_eval import densify_entrypoints, scale_p0_protocol_pin, scale_p1_protocol_pin, scale_p3_protocol_pin, probe_full_scale_readiness, research_protocol_annex; print(scale_p0_protocol_pin().seq_len, scale_p1_protocol_pin().seq_len, scale_p3_protocol_pin().param_ladder_stage); print(probe_full_scale_readiness(dry_run=True).status_label); print(research_protocol_annex()['non_emission'])"
 ```
 
 ---

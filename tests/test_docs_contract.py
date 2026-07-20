@@ -194,6 +194,37 @@ def test_emission_vs_research_multimetric_surfaces_are_honest() -> None:
     assert "bpb-primary" not in overview.lower()
 
 
+def test_scale_p3_full_scale_readiness_and_k_ge_3_docs_lock() -> None:
+    """VAL-SCALE-015/016/017: full_scale readiness, public K≥3, research annex non-emission."""
+    scaling = read_doc("docs/scaling.md")
+    protocol = read_doc("docs/official-comparison.md")
+    combined = f"{scaling}\n{protocol}"
+    lower = combined.lower()
+
+    # Full-scale / sample-100BT mode path documented (VAL-SCALE-015).
+    assert "full_scale_eval" in combined or "full_scale" in lower
+    assert "sample-100bt" in lower or "sample-100BT" in combined or "100bt" in lower
+    assert "sample-10bt" in lower or "sample-10BT" in combined
+    assert "probe_full_scale_readiness" in combined
+    assert "blocked_with_reason" in lower or "blocked" in lower
+    assert "dry-run" in lower or "dry run" in lower
+    assert "100bt spend" in lower or "without requiring" in lower or "no 100bt" in lower
+
+    # Public multi-seed K≥3 lock + ladder explore→promote→full_scale (VAL-SCALE-016).
+    assert "k≥3" in lower or "k>=3" in lower or "k≥3" in combined
+    assert "provisional" in lower
+    assert "k=1" in lower or "k = 1" in lower
+    assert "explore" in lower and "promote" in lower and "full_scale" in lower
+    assert "scale_ladder" in lower or "scale ladder" in lower or "explore → promote" in lower
+
+    # Research protocol annex explicitly non-emission (VAL-SCALE-017).
+    assert "research_protocol_annex" in combined or "research protocol annex" in lower
+    assert "non_emission" in lower or "non-emission" in lower
+    assert "emission_weight_crown" in lower or "not silent emission" in lower
+    assert "research grade" in lower
+    assert "scale_p3_protocol_pin" in combined
+
+
 def test_open_arch_norm_is_documented() -> None:
     """VAL-RESLAB-010: novel nn.Module expected; seeds pack; no family emission shortcuts."""
     readme = read_doc("README.md")

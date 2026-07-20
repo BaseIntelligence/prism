@@ -79,8 +79,13 @@ rank and host **Complete View** densify. Product helpers live in
 | --- | --- | --- |
 | P0 | explore, seq=128, token_budget=500k, seeds K≥3 `(1337,2027,4242)` | host long_ctx + sample_eff on trained_state |
 | P1 | `scale_p1_protocol_pin()` — seq **≥256** (target **512**), token_budget **≥1M** (to 2M) | long_ctx T up to 1024 when feasible |
-| P2 | promote 350M confirm/revoke | same multi-axis densify |
-| P3 | full_scale_eval / 100BT readiness | public K≥3 lock + research annex non-emission |
+| P2 | promote 350M confirm/revoke (`scale_p2_protocol_pin`) | same multi-axis densify |
+| P3 | `full_scale_eval` / sample-100BT readiness (`scale_p3_protocol_pin` + probe) | public K≥3 lock + research annex non-emission |
+
+**Scale ladder (explore → promote → full_scale):** public Official posture requires multi-seed
+**K≥3** (default seeds `(1337, 2027, 4242)`). Prior **K=1** cups are **provisional only** (no
+architecture-superiority language). Machine map: `scale_ladder_document()` in
+`prism_challenge.evaluator.scale_eval`.
 
 **P1 product knobs (VAL-SCALE-006):** `ProtocolPin.seq_len` / `token_budget` pass through
 `explore_protocol_pin`, official compare harness, and worker-plane
@@ -88,6 +93,43 @@ rank and host **Complete View** densify. Product helpers live in
 `PrismContext` via `prism_context_kwargs` / `prism_context_from_protocol_pin`. There is no
 hardcoded seq=128-only trap on those paths; Official short-ctx default remains 128/500k when
 knobs are unset. Tests: `tests/test_scale_pin_passthrough.py`.
+
+### P3 full_scale / sample-100BT readiness (VAL-SCALE-015)
+
+`full_scale_eval` is already a first-class `ExecutionMode`. Runtime
+`execution_mode_targets.full_scale_eval` wires phase-1 FineWeb-Edu **sample-10BT** then
+phase-2 **sample-100BT** (100BT token target) without changing the emission rank key.
+
+| Surface | Role |
+| --- | --- |
+| `probe_full_scale_readiness(...)` | Dry-run mount/manifest readiness for train + val + sample-100BT paths |
+| `scale_p3_protocol_pin()` | Matched promote pin (K≥3, seq/budget floors) for full_scale posture |
+| `runtime_policy_defaults()["execution_mode_targets"]["full_scale_eval"]` | Dataset subset + token targets |
+
+**Honest dry-run:** the probe does **not** require 100BT spend. When mounts or manifests are
+missing it returns **`BLOCKED_with_reason`** (never invents READY scores). When locked mounts
+are present it may report **READY** for mode wiring only (`full_scale_train_executed=false`,
+`requires_100bt_spend=false`, `emission_changed=false`).
+
+Default path knobs (operator config / env):
+
+* train mount: `base_eval_train_data_dir` / `PRISM_BASE_EVAL_TRAIN_DATA_DIR` (default `/data/fineweb-edu/train`)
+* secret val (host scorer only): `base_eval_val_data_dir` / `PRISM_BASE_EVAL_VAL_DATA_DIR`
+* phase-2 root: sibling `.../fineweb-edu/sample-100BT` (or pass `phase2_data_dir=` to the probe)
+
+```bash
+export UV_CACHE_DIR=/var/tmp/uv-cache PRISM_DOCKER_BACKEND=cli
+uv run python -c "from prism_challenge.evaluator.scale_eval import probe_full_scale_readiness; print(probe_full_scale_readiness(dry_run=True).as_dict())"
+uv run pytest tests/test_scale_fullscale_readiness.py -q
+```
+
+### Research protocol annex (non-emission, VAL-SCALE-017)
+
+Additive machine object `research_protocol_annex()` (`schema=prism_research_protocol_annex.v1`)
+binds Complete View / multimetric identities and sets **`non_emission=true`**,
+**`emission_weight_crown=false`**, **`silent_emission_rewrite=false`**. Multimetric and Complete
+View stay **published research grade**. A future protocol v2 emission fold needs an explicit
+product feature; this annex never silently rewrites the emission crown.
 
 Emission leaderboard remains heldout primary + bpb secondary. Complete View / multimetric are
 **published research grade**, not silent emission crowns. Wall-clock never ranks. Prefer host

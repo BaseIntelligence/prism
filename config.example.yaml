@@ -24,6 +24,14 @@ max_sequence_length: 512
 sequence_length: 128
 # token_budget: null  # unset = runner/pin default; set e.g. 1000000 for P1 scale cups
 fineweb_sample_count: 128
+# Locked FineWeb-Edu mounts (read-only train; host-only secret val).
+# full_scale_eval phase-1 = sample-10BT; phase-2 = sample-100BT (VAL-SCALE-015).
+# Dry-run readiness: probe_full_scale_readiness() — missing mounts → BLOCKED_with_reason
+# (no 100BT spend required for the probe). Public multi-seed Official posture = K≥3.
+# base_eval_data_dir: /data/fineweb-edu/train
+# base_eval_train_data_dir: /data/fineweb-edu/train
+# base_eval_val_data_dir: /data/fineweb-edu/val
+# Phase-2 sample-100BT root is the sibling .../fineweb-edu/sample-100BT unless overridden.
 execution_backend: base_gpu
 prism_role: challenge
 public_submissions_enabled: true
