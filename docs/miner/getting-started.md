@@ -197,6 +197,15 @@ next seal.
 - Do not invent a Base LLM gateway.
 - Do not run Swarm or call `set_weights` yourself.
 
+## Cross-cut honesty
+
+| Topic | Truth |
+|-------|-------|
+| Emission | BASE absolute shares: **Prism 50%** + **Agent Challenge 50%**. Master aggregates raw weights; validators `set_weights`. |
+| Rank | Held-out primary / bpb secondary inside Prism. **Wall-clock never ranks.** |
+| Gateway | **No Base LLM gateway** on joinbase. |
+| TEE | Prism product is **NO-TEE** (provider trust + IMAGE_PIN). AC Phala/KR is a different challenge. |
+
 ## Next
 
 - [Miner hub](README.md) — nav + two-script summary  
@@ -205,3 +214,5 @@ next seal.
 - [Submission format](../submissions.md) — full contract  
 - [Scoring](../scoring.md) — held-out primary, bpb secondary  
 - BASE miner hub: https://github.com/BaseIntelligence/base/tree/main/docs/miner  
+- Agent Challenge miner hub (sibling): https://github.com/BaseIntelligence/agent-challenge/tree/main/docs/miner  
+

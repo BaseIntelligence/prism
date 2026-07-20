@@ -94,3 +94,7 @@ Architecture pool **0.50** / training-variant pool **0.50** of Prism’s emissio
 - [Troubleshooting](troubleshooting.md)
 - [Miner hub](README.md)
 - [Security](../security.md)
+- BASE miner hub (emission 50/50 + multi-challenge honesty):
+  https://github.com/BaseIntelligence/base/tree/main/docs/miner
+- Sibling challenge (agents, attestation advanced):
+  https://github.com/BaseIntelligence/agent-challenge/tree/main/docs/miner
