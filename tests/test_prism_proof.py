@@ -107,7 +107,8 @@ def test_tier0_when_no_provider_metadata() -> None:
     assert p.tier == 0
     assert p.image_digest is None
     assert p.provider is None
-    assert p.attestation is None
+    # Every proof carries honest attestation_mode (constation wire); no TEE payload.
+    assert p.attestation == {"attestation_mode": proof.ATTESTATION_MODE_V1}
     assert p.manifest_sha256 == digest
 
 
@@ -164,7 +165,7 @@ def test_opaque_nonempty_attestation_does_not_claim_tier2() -> None:
     )
     assert p.tier != 2
     assert p.tier == 1
-    assert p.attestation == attestation
+    assert p.attestation == {**attestation, "attestation_mode": proof.ATTESTATION_MODE_V1}
 
 
 def test_structured_attestation_claims_tier2_but_is_unverified() -> None:
@@ -182,7 +183,7 @@ def test_structured_attestation_claims_tier2_but_is_unverified() -> None:
     )
     # Emission may claim tier 2 for wire compat; effective elevation never exceeds IMAGE_PIN tier-1.
     assert p.tier == 2
-    assert p.attestation == attestation
+    assert p.attestation == {**attestation, "attestation_mode": proof.ATTESTATION_MODE_V1}
 
 
 def test_tier_never_2_without_attestation() -> None:
@@ -190,7 +191,7 @@ def test_tier_never_2_without_attestation() -> None:
     p = build_execution_proof_from_manifest(
         signer=signer, unit_id=UNIT_ID, manifest=MANIFEST_A, env=dict(_FULL_ENV)
     )
-    assert p.attestation is None
+    assert p.attestation == {"attestation_mode": proof.ATTESTATION_MODE_V1}
     assert p.tier != 2
 
 
