@@ -18,7 +18,7 @@ class BaseHttpConstationClient:
         base_url: str,
         token: str,
         timeout_s: float = 10.0,
-        transport: httpx.AsyncBaseTransport | httpx.BaseTransport | None = None,
+        transport: httpx.BaseTransport | None = None,
     ) -> None:
         if not base_url.strip():
             raise ValueError("constation base_url must be non-empty")

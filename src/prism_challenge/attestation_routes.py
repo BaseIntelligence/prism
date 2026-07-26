@@ -51,7 +51,7 @@ try:
     )
 except ImportError:  # pragma: no cover - optional in minimal installs
     AttestationPayload = Any  # type: ignore[misc, assignment]
-    AttestationVerifyReason = None  # type: ignore[assignment]
+    AttestationVerifyReason = None  # type: ignore[misc, assignment]
     SignedAttestation = Any  # type: ignore[misc, assignment]
     verify_attestation_payload = None  # type: ignore[assignment]
 

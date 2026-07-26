@@ -11,12 +11,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import Any, Literal
+from typing import Any, Final, Literal
 
 FaultClass = Literal["miner_fault", "infra_fault"]
 
-MINER_FAULT = "miner_fault"
-INFRA_FAULT = "infra_fault"
+MINER_FAULT: Final[Literal["miner_fault"]] = "miner_fault"
+INFRA_FAULT: Final[Literal["infra_fault"]] = "infra_fault"
 
 
 @dataclass(frozen=True, slots=True)
