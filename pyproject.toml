@@ -7,7 +7,7 @@ dependencies = [
   "aiosqlite>=0.20",
   "fastapi>=0.115",
   "httpx>=0.27",
-  "base @ git+https://github.com/BaseIntelligence/base.git@e6951699d7842d9eaa70e2dcfc700a11c78dc270",
+  "base @ https://github.com/BaseIntelligence/base/releases/download/v3.2.0/base-3.2.0-py3-none-any.whl#sha256=0fdd79b8eacda77132d01173df2057730350f3e82fb5a8a4478e7a53e61852c3",
   "pydantic>=2.8",
   "pydantic-settings>=2.4",
   "PyYAML>=6.0",
