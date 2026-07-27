@@ -15,9 +15,11 @@ then by recomputed prequential **bits-per-byte**. The challenge owns every numbe
 > wins remain **provisional only**. Challenge-owned **`prism_train_series.v1`** is visibility + residual
 > densify for sample-eff/stability only — **never sole primary** over held-out/bpb. When an Official
 > grade pin **requires** the series and it is missing/corrupt, Official grade **fail-closes** (not
-> silent PASS); miner dashboards remain non-authoritative. Provider trust + **IMAGE_PIN** govern
-> worker integrity; **REAL-PROVIDER TEE** is **retired** for Prism product (historical tables may
-> still say BLOCKED; never a production scoring gate).
+> silent PASS); miner dashboards remain non-authoritative. Worker-plane integrity uses
+> **constation** (`constation_ok` over the six-mechanism bundle). **REAL-PROVIDER TEE** is
+> **retired** for Prism product (historical tables may still say BLOCKED; never a production
+> scoring gate). Under P1, a missing or failed constation bundle means **no score row at all**,
+> so attestation is **decisive for score presence** (not a soft label orthogonal to ranking).
 ```mermaid
 flowchart LR
     Loss[Single-pass online loss stream] --> Bpb[Prequential bits-per-byte]
@@ -155,10 +157,28 @@ Every number above is recomputed by the challenge from the challenge-authored
 raw-loss term and the v1-NAS architecture/training ownership pools are retired from the score.
 
 Miner self-reports remain non-authoritative on both the emission path and Official Comparison mode
-(including scorecard v1.1, Complete View, and train series). Provider-trust / IMAGE_PIN / LAB-GPU
-labels are orthogonal to ranking; **REAL-PROVIDER TEE** is a retired product goal (historical
-non-claims only): see [Official Comparison](official-comparison.md) §17 train series telemetry,
-scorecard honesty, and [Security](security.md).
+(including scorecard v1.1, Complete View, and train series).
+
+## Constation and score presence (P1 fail-closed)
+
+Worker-plane Lium runs are admitted to the emission path only when Prism accepts a full
+constation bundle and `constation_ok` is true. That predicate is the sole route to
+`effective_tier == 1` (ceiling **1**; no TEE). Self-reported image digests and historical
+"IMAGE_PIN match" labels do **not** elevate tier alone and do **not** create a score row
+when the bundle is missing or fails.
+
+| Outcome | Score row? | Ranking impact |
+| --- | --- | --- |
+| Valid bundle, `constation_ok` | Yes (then held-out/bpb ranking applies) | Eligible for emission crown |
+| Missing bundle | **No** (`miner_fault:missing_constation_bundle`) | Not ranked |
+| Failed mechanism(s) | **No** (`miner_fault:<code>`) | Not ranked |
+| Infra outage after retries | **No** (`infra_fault:*`) unless audited break-glass | Break-glass admits at tier 0 only |
+
+So constation is **not orthogonal to ranking**: without a score row there is nothing to rank.
+Among admitted rows, ranking remains held-out primary / bpb secondary as above. Trust model
+detail and the six mechanisms with honest limitations: [Security](security.md) and
+[prism-recipe security](../../prism-recipe/docs/security.md). Official Comparison notes:
+[Official Comparison](official-comparison.md) §17 train series telemetry and scorecard honesty.
 
 ## Reference Studies
 

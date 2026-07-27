@@ -96,10 +96,15 @@ def test_prism_wheel_contains_no_vendored_sdk(tmp_path: Path) -> None:
 def test_prism_service_build_uses_only_the_immutable_base_wheel() -> None:
     repository = Path(__file__).resolve().parents[1]
     dockerfile = (repository / "Dockerfile").read_text(encoding="utf-8")
-    assert "base @ https://github.com/BaseIntelligence/base/releases/download/v3.1.2/" in (
-        repository / "pyproject.toml"
-    ).read_text(encoding="utf-8")
-    assert "git" not in dockerfile.lower()
+    pyproject = (repository / "pyproject.toml").read_text(encoding="utf-8")
+    # Immutable release wheel ships attestation modules (DigestAllowlist,
+    # AttestationNonceService, payload) from base v3.2.0+.
+    release_pin_prefix = (
+        "base @ https://github.com/BaseIntelligence/base/releases/download/"
+    )
+    assert release_pin_prefix in pyproject
+    # Dockerfile must not clone arbitrary git; dependency resolution stays in pyproject.
+    assert "git clone" not in dockerfile.lower()
 
 
 def test_clean_artifacts_resolve_one_base_sdk(tmp_path: Path) -> None:
@@ -172,9 +177,10 @@ def test_clean_artifacts_resolve_one_base_sdk(tmp_path: Path) -> None:
     assert evidence["base_version"] == evidence["manifest"]["artifact_version"]
     assert evidence["sdk_version"] == evidence["manifest"]["sdk_contract_version"]
     assert evidence["prism_sdk"] is None
+    release_pin_prefix = (
+        "base @ https://github.com/BaseIntelligence/base/releases/download/"
+    )
     assert any(
-        requirement.startswith(
-            "base @ https://github.com/BaseIntelligence/base/releases/download/v3.1.2/"
-        )
+        requirement.startswith(release_pin_prefix)
         for requirement in evidence["base_requirement"]
     )

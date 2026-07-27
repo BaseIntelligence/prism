@@ -65,23 +65,63 @@ or legacy reduced bodies fail closed with a 422 before scoring or persistence. P
 plausibility gates run before finalization; duplicate deliveries are idempotent and conflicts refuse
 mutation of sealed scores.
 
-## Provider Trust And IMAGE_PIN
+## Worker-plane integrity: constation (tamper-evidence only)
 
-Prism does **not** ship a TEE-attestation verifier and does **not** require TEE evidence to finalize
-production scores. Integrity for miner-funded GPU work rests on:
+### Threat model (binding)
 
-- **PROVIDER_TRUST** — operators trust **Lium/Targon** as compute providers (no Prism crypto TEE path).
-- **IMAGE_PIN** — `worker_plane.pinned_image_digest` match grants audit effective tier **1** (maximum);
-  pin mismatch yields an honest non-elevated downgrade (not silent ignore).
-- **DEPLOY SMOKE** — paid provider lifecycle proofs are reachability/infra only; always terminate pods.
-- **LAB-GPU** — remote CUDA lab scores under Official Comparison; scientific only.
-- Ordinary ExecutionProof envelope + worker signature checks on the worker-plane path.
+- The miner **rents and controls** the Lium pod, including **root**.
+- Integrity checks are **tamper-evidence**, not tamper-prevention. A determined root miner can
+  defeat all six mechanisms below.
+- Prism does **not** ship a TEE verifier and does **not** require TEE evidence to finalize scores.
+- `effective_tier` **ceiling is 1**. Claimed tier ≥ 2 always collapses to 0. Opaque
+  `tdx_quote_b64` / `gpu_eat_jwt` fields never imply tier 2 by presence alone.
+- Lium TDX (or similar host quotes), if present in the wild, attest **executor infrastructure**,
+  not the renter workload inside the pod.
+- The Lium API image/template digest is **declared configuration**, not a runtime measurement of
+  the container rootfs.
 
-**REAL-PROVIDER TEE** (cryptographic provider attestation PASS as a Prism product goal) is
-**retired**. Historical lab tables and reports may still show `real_provider_tee=BLOCKED` as honesty
-history; do not implement or document a TEE production scoring gate as the live path. Opaque
-non-empty `tdx_quote_b64` / `gpu_eat_jwt` fields never imply tier 2 by presence alone (max effective
-tier is 1 via image pin).
+### Sole elevation and score gate
+
+| Predicate | Role |
+| --- | --- |
+| `constation_ok(bundle)` | **Only** path that can grant `effective_tier == 1` |
+| Self-reported `PRISM_IMAGE_DIGEST` / pin string match | Telemetry only; **never** elevates alone |
+| Missing or failed constation bundle | **No score row written** (P1 fail-closed) |
+| Operator break-glass | May admit **infra_fault** runs only; never `miner_fault`; score at tier 0 |
+
+Historical label **IMAGE_PIN** meant "digest pin matched." Under P1 that label is **not** a soft
+orthogonal badge: without a valid constation bundle there is no score to rank. See
+[scoring.md](scoring.md).
+
+`attestation_mode` on proofs is `miner_rent_image_pin_evidence_v1` (evidence under miner-rent pods).
+Forbidden modes include any TEE-implying string (`tee`, `tdx`, `sev`, …).
+
+### Six mechanisms (each with honest limitation)
+
+1. **Nonce-bound attestation** — BASE per-run nonce; sidecar signs bound fields; defeats replay.
+   *Limit:* live root with the build secret can still answer fresh challenges.
+2. **Same-account corroboration** — Lium API declared digest must agree with sidecar report.
+   *Limit:* **never independent**; miner supplies the API key and owns the pod. Agreement alone
+   never elevates if another check fails.
+3. **Continuous constation** — start / end / randomized polls; gap or drift fails the bundle.
+   *Limit:* shrinks swap windows; does not seal the kernel against a twin process.
+4. **BASE-built digest allowlist** — only BASE-produced digests for a registered commit score.
+   *Limit:* proves build provenance, not that the pod still runs that digest after deploy.
+5. **In-image self-measurement** — sidecar hashes sealed harness / rules / data-window at runtime.
+   *Limit:* software on a miner-controlled host; root can patch the measurer.
+6. **Build-time per-build secret** — unique BASE-injected secret required in signed responses.
+   *Limit:* root on the pod can extract `/run/prism/attestation_hmac_key`.
+
+Full recipe-side narrative: [prism-recipe security](../../prism-recipe/docs/security.md).
+
+### Provider trust (operational, not crypto)
+
+Operators still choose which GPU providers to enable (e.g. Lium). That is operational trust in
+billing and reachability, **not** a cryptographic claim that the renter workload is honest.
+Deploy smoke checks are reachability/infra only; always terminate pods.
+
+**REAL-PROVIDER TEE** as a Prism product goal is **retired**. Historical lab tables may still show
+`real_provider_tee=BLOCKED` as honesty history; do not implement a TEE production scoring gate.
 
 ## Locked Data, No Network
 
@@ -105,6 +145,10 @@ Host-side static instantiation and held-out scoring run in bounded child process
 `weights_only=True` for any deserialization. Application code does **not** create ephemeral evaluator
 containers; evaluation is the long-lived challenge runtime (or external worker-plane GPUs on trusted
 providers when enabled).
+
+On the **miner-rent Lium** path, isolation is weaker by design: the miner is root on their pod.
+Constation is the evidence layer for that path, not a substitute for container isolation on BASE-owned
+evaluators.
 
 ## ZIP Hardening
 
@@ -132,5 +176,7 @@ their own wallets. The challenge and master never write weights on-chain.
 - Keep public submissions disabled when PRISM is deployed only behind BASE.
 - Keep the eval container on `network=none` and the rootfs read-only except `artifacts_dir`.
 - Do **not** configure LLM gateway URL/token fields; those surfaces are gone and residual knobs fail closed.
-- Prefer `worker_plane.pinned_image_digest` for IMAGE_PIN tier-1; do not enable any removed TEE production scoring path.
+- Require a full constation bundle for Lium worker-plane scores; do not treat pin string match as tier 1.
+- Do not enable any removed TEE production scoring path.
 - Monitor rejected, failed, and completed submissions separately (legacy held is not a live path).
+- Attribute rejects with `miner_fault:*` vs `infra_fault:*`; break-glass only for infra with operator audit.
