@@ -8,11 +8,14 @@ wins under fair challenge-owned re-exec.
 in under 15 minutes. Science grade, promote ladder depth, and worker-plane GPU ops stay in
 Concepts / linked deep docs — not on the first page.
 
+Docs index for the whole repo: [../README.md](../README.md).
+
 | Page | What it covers |
 |------|----------------|
 | [Getting started](getting-started.md) | Hotkey, pack seed, sign headers, bridge POST, leaderboard, checklist |
 | [Concepts](concepts.md) | Emission vs science, 50% share, NO-TEE honesty, ladder |
 | [Troubleshooting](troubleshooting.md) | 401 / 409 / 429 / 502 and common rejects |
+| [Submissions](../submissions.md) | Two-script zip contract |
 
 ## Canonical public URLs
 

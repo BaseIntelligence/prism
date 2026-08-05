@@ -12,7 +12,7 @@
 
 **Research lab subnet — try new architectures; find more performant ones under fair challenge-owned re-exec.**
 
-<a href="docs/overview.md">Overview</a> ·
+<a href="docs/README.md">Docs</a> ·
 <a href="docs/miner/getting-started.md">Miners</a> ·
 <a href="docs/validator/README.md">Validators</a> ·
 <a href="docs/architecture.md">Architecture</a> ·
@@ -26,7 +26,7 @@
 [![Master API](https://img.shields.io/badge/chain.joinbase.ai-API-111827.svg)](https://chain.joinbase.ai/health)
 [![Prism leaderboard](https://img.shields.io/badge/Prism-leaderboard-2563eb.svg)](https://chain.joinbase.ai/challenges/prism/leaderboard)
 
-![PRISM Banner](assets/banner.png)
+![PRISM Banner](assets/banner.jpg)
 
 </div>
 
