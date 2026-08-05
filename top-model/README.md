@@ -6,10 +6,10 @@ directory always mirrors the current champion; history lives in git.
 | field | value |
 |---|---|
 | arch_id | `arch_d50dcfef6eaf5f04` |
-| owner_hotkey | `343d50f1222b…` |
-| bpb | `3.560000` |
+| owner_hotkey | `b27b6d5c24d4…` |
+| bpb | `1.096000` |
 | n_params | 12000000 |
-| submission | `25818834e2e9a127e72300ab2d5d3fa0572ec059e5788ee80c162ba84e92d309` |
+| submission | `c0458255d42c52c835bb612a99727e0c1d12f6ab86f394bc756b66c525ac740d` |
 | telemetry points | 5 |
 | finish reason | `finish_evaluation` |
 
