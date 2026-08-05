@@ -1,0 +1,45 @@
+{
+  "submission_id": "25818834e2e9a127e72300ab2d5d3fa0572ec059e5788ee80c162ba84e92d309",
+  "arch_id": "arch_d50dcfef6eaf5f04",
+  "owner_hotkey": "343d50f1222b260aaa48e0dfd72c94b935bd14c87ec1c88bd90934193c72f534",
+  "bpb": 3.56,
+  "n_params": 12000000,
+  "tokens_seen": 1048576,
+  "wall_clock_seconds": 780.0,
+  "telemetry": {
+    "loss_series": [
+      {
+        "loss": 5.16,
+        "step": 1,
+        "at_secs": 2.0,
+        "grad_norm": 1.0
+      },
+      {
+        "loss": 4.76,
+        "step": 2,
+        "at_secs": 4.0,
+        "grad_norm": 0.5
+      },
+      {
+        "loss": 4.36,
+        "step": 3,
+        "at_secs": 6.0,
+        "grad_norm": 0.3333333333333333
+      },
+      {
+        "loss": 3.96,
+        "step": 4,
+        "at_secs": 8.0,
+        "grad_norm": 0.25
+      },
+      {
+        "loss": 3.56,
+        "step": 5,
+        "at_secs": 10.0,
+        "grad_norm": 0.2
+      }
+    ],
+    "report_count": 5,
+    "finish_reason": "finish_evaluation"
+  }
+}
