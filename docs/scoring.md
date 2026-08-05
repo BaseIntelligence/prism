@@ -1,195 +1,62 @@
-# Scoring and Rewards
+# Scoring & competition
 
-PRISM is a **research lab**. The emission path scores one thing: which package produces a **better
-model for us** after fair from-scratch learning — measured first by **held-out / generalization**,
-then by recomputed prequential **bits-per-byte**. The challenge owns every number.
+## Pure bpb
 
-> **Surface honesty (locked).**
->
-> | Surface | Role | Ranking |
-> | --- | --- | --- |
-> | **Emission crown** (this page: leaderboard → raw weights) | Subnet reward eligibility | **Held-out / generalization PRIMARY**, prequential bpb **SECONDARY** (Official-like invert) |
-> | **Official Comparison / multimetric.v1.1 / Complete View** | Published **scientific miner architecture grade** | Multi-axis vector + polar honesty; **not** the emission scalar in v1 |
->
-> Do **not** claim multimetric / Complete View silently replaces emission. Prior LAB-GPU K=1 short-ctx
-> wins remain **provisional only**. Challenge-owned **`prism_train_series.v1`** is visibility + residual
-> densify for sample-eff/stability only — **never sole primary** over held-out/bpb. When an Official
-> grade pin **requires** the series and it is missing/corrupt, Official grade **fail-closes** (not
-> silent PASS); miner dashboards remain non-authoritative. Worker-plane integrity uses
-> **constation** (`constation_ok` over the six-mechanism bundle). **REAL-PROVIDER TEE** is
-> **retired** for Prism product (historical tables may still say BLOCKED; never a production
-> scoring gate). Under P1, a missing or failed constation bundle means **no score row at all**,
-> so attestation is **decisive for score presence** (not a soft label orthogonal to ranking).
-```mermaid
-flowchart LR
-    Loss[Single-pass online loss stream] --> Bpb[Prequential bits-per-byte]
-    Loss --> Hold[Held-out generalization]
-    Hold --> Final[emission_rank / final_score]
-    Bpb --> Final
-    Gap[Train-vs-held-out gap - memorization penalty] --> Final
-    Anomaly[Step-0 smuggled-weights anomaly multiplier] --> Final
-    Final --> Board[Leaderboard ordered by emission rank DESC]
+`final_score = score_from_bpb(measured_bpb)` on the integer lattice `[0, SCORE_MAX]` —
+lower bpb, higher score. The LLM reviews are **gates, not graders**: they verify the
+submission is coherent and not cheating; their quality notes never move the score.
+
+## Anti-copy (architecture-only)
+
+- A **pre-LLM copy gate** compares your `architecture.py` against earlier submissions
+  (byte hash + AST fingerprints, `created_at` ordered). A byte/AST copy of a
+  strictly-earlier architecture is terminal `rejected` with zero score — **no GPU time,
+  no LLM review**, no appeal. The published baseline is exempt.
+- Similarity is judged on `architecture.py` **only**: `training.py` is exempt on both
+  sides — the same training loop on two different architectures is legitimate, and
+  training-only entries on a published arch are never "copies" by construction.
+- After the gate, an LLM similarity review + agentic anti-cheat still run:
+  `Copied` / `Suspicious` / `cheat` verdicts → hard zero.
+
+## Architecture competition (emission math)
+
+Per epoch, your emission is the **max** of:
+
+1. **Challenger credit** — your own best training result this epoch (any arch), and
+2. **Owner credit** — for each architecture you own, that arch's **best result by any
+   trainer** this epoch.
+
+Max, never summed — architecture owners are rewarded when *anyone* trains well on
+their architecture. `Score(0)` rows (cheat / copy-gate) never set an arch's best.
+
+Published architectures and their best bpb so far: `GET /v1/architectures`.
+
+## Top-model publish
+
+Whenever a new **global-best bpb** lands, the master publishes the winning
+`architecture.py` + `training.py` + `METRICS.json` to
+[`BaseIntelligence/prism`](https://github.com/BaseIntelligence/prism) under
+[`top-model/`](https://github.com/BaseIntelligence/prism/tree/main/top-model) and
+journals the publication. The `top-model/` directory always mirrors the current
+champion; history lives in git.
+
+## Telemetry
+
+Your `prism_telemetry.report(...)` series (loss, gradient norms, per-layer stats) is
+persisted master-side and served on the site:
+
+```
+GET /v1/site/arenas/prism/submissions/{id}/telemetry
 ```
 
-## Emission Primary: Held-Out / Generalization
+`finish_evaluation()` (early stop) is recorded as the eval's finish reason — scoring
+uses the model as-is at that point, before any cap fires.
 
-For the **production leaderboard and raw-weight path**, the ranking primary is **held-out /
-generalization** quality the challenge computes itself on the secret `val` split after forced-init
-re-execution.
+## Weights
 
-Preferred primary form (higher better):
+Leaves per epoch feed the BASE gateway seal (`/v1/weights/latest`); prism's emission
+share is owner-controlled via the trust root. Miners never write on-chain weights.
 
-```text
-heldout_delta = bpb(random-init twin on val) - bpb(trained model on val)
-```
+## Next
 
-Alternate pin option: absolute `val_bpb_trained` (lower better) when twin delta is unavailable.
-Honestly lower held-out free energy (or larger honest improvement over the random-init twin) ranks
-higher. A train-only memorizer must not win the emission crown on primary.
-
-With multi-seed residual when configured:
-
-```text
-primary_S = mean_k heldout_delta(S; seed_k)     # higher better
-```
-
-(or the documented alternate mean of `val_bpb_trained`, lower better).
-
-`final_score` / emission rank folds held-out primary first, then secondary bpb, then
-anti-memorization and step-0 multipliers, so the leaderboard's descending order ranks better
-generalizing learners first.
-
-Emission scoring is **architecture-agnostic**: the same fold runs for every admitted
-`nn.Module` that clears AST + dual param ladder. There are **no family-specific emission
-shortcuts** (Transformer / pure-torch SSM / looped-depth / novel hybrids receive the same
-held-out primary + bpb secondary path). Lab seeds `tiny-1m` and `mamba-tiny` are default
-exploration shapes only — not privileged emission families.
-
-## Emission Secondary: Prequential Bits-Per-Byte
-
-During the re-execution, the challenge feeds the model fresh, single-pass batches from the locked train
-split and records its loss on each new batch **before** the optimizer updates on it. Single-pass data
-makes this online (predict-then-train) loss the prequential code-length by construction. The challenge
-integrates that code-length and normalizes it by the raw UTF-8 bytes covered:
-
-```text
-bpb = (sum over consumed tokens of -log2 p(token)) / total_bytes_covered
-```
-
-Byte normalization makes the metric **tokenizer-agnostic** (any tokenizer compares like for like);
-integrating the whole curve defeats single-checkpoint gaming; scoring each token before training on it
-removes held-out leakage by construction; and forced random init makes smuggled pretrained weights
-inert.
-
-**Lower bits-per-byte is better** as the **secondary** emission axis. When held-out is within a small
-epsilon (near-tie on primary), prequential bpb breaks the tie so a strictly better recomputed
-compression signal can reorder near neighbors — but a clearly better held-out winner is not
-overturned by bpb alone.
-
-Continuity transform (still used where products report a scalar display fold of bpb before penalty):
-
-```text
-bpb_display = 1 / (1 + bpb)        # higher display = lower bpb; secondary only under emission rank
-```
-
-## Compute Normalization, Not Wall-Clock
-
-The score is **compute-normalized**: normalized by tokens consumed (and optionally estimated FLOPs),
-never by wall-clock time. A faster GPU or more GPUs cannot buy a better score; wall-clock is only a
-safety cap. This keeps scores fair across the 1-to-8 GPU range even though the scored run uses one
-physical GPU.
-
-## Dual param ladder (explore → promote)
-
-Emission crowns respect the **GPU-limited small-first ladder**:
-
-| Stage | Cap | Crown role |
-| --- | ---: | --- |
-| Explore / provisional | **124M** | Qualifying scores may **provisional-crown** architecture or training pools |
-| Promote / final | **350M** | Same package/family pin re-eval **confirms or revokes** the provisional crown |
-
-Explore is the default thrash size. Durable supremacy requires promote confirmation; a failed or
-losing promote revokes the provisional crown so dead provisional winners do not keep emission weight.
-
-## Anti-Memorization Gap
-
-The challenge measures the train-vs-held-out gap (converged train bpb vs held-out val bpb on the same
-byte basis). An excessive gap flags memorization and multiplies a penalty into the emission score, so a
-memorizer ranks below an equivalent non-memorizing learner. The comparison is basis-consistent so a
-benign learner is not falsely flagged.
-
-## Anomaly Zeroing
-
-A step-0 / smuggled-weights anomaly (an impossibly low initial loss under forced random init) drives the
-anti-cheat multiplier to zero, so an anomalously good looking compression curve is zeroed rather than
-rewarded. A degenerate run (zero coverage, non-finite, or out-of-band bpb) is failed rather than scored.
-
-## Leaderboard And Weights
-
-The emission leaderboard ranks by held-out-primary emission rank (with bpb secondary and folded
-penalties). Remaining ties break by **earliest-commit-wins**, then submission id, for a total,
-reproducible order. Each hotkey appears at most once, keeping its best submission.
-
-PRISM converts completed scores into raw hotkey weights and **pushes** them to the BASE master for
-aggregation. Two-tier ownership defaults are architecture **0.50** / training **0.50** (no silent
-0.60/0.40 or 0.65/0.35 drift on defaults). Both tiers consume the **same emission rank metric**.
-`get_weights` remains available for inventory/compatibility. On-chain `set_weights` is validator-owned
-only; PRISM never writes weights on-chain.
-
-## Scientific surfaces (not emission scalar)
-
-Offline [Official Comparison](official-comparison.md) is the **scientific miner architecture grade**:
-multi-axis Official / Complete View with held-out primary, bpb secondary, long-ctx, reasoning, and
-polar honesty (`TIE_POLAR` / `crown_allowed=false` when axes disagree). The additive multimetric
-scorecard annex (`scorecard_id=multimetric.v1.1`) and Complete View publish the scientific vector.
-They remain **published research grade** and do **not** silently replace this emission crown path in
-volume-1 (a future phase may fold axes into emission only with an explicit product bump).
-
-Challenge-owned **`prism_train_series.v1`** time-flow (loss/bpb + mandatory `grad_norm` / clip when
-instrumented) densifies sample-eff/stability residual and operator visibility. Series must **never
-sole-rank** mining packages over Official held-out or recomputed bpb axes, and must **not**
-substitute emission held-out primary.
-
-## Source Of Truth
-
-Every number above is recomputed by the challenge from the challenge-authored
-`prism_run_manifest.v2.json`. Miner-reported metrics and miner-written manifests are ignored. The legacy
-raw-loss term and the v1-NAS architecture/training ownership pools are retired from the score.
-
-Miner self-reports remain non-authoritative on both the emission path and Official Comparison mode
-(including scorecard v1.1, Complete View, and train series).
-
-## Constation and score presence (P1 fail-closed)
-
-Worker-plane Lium runs are admitted to the emission path only when Prism accepts a full
-constation bundle and `constation_ok` is true. That predicate is the sole route to
-`effective_tier == 1` (ceiling **1**; no TEE). Self-reported image digests and historical
-"IMAGE_PIN match" labels do **not** elevate tier alone and do **not** create a score row
-when the bundle is missing or fails.
-
-| Outcome | Score row? | Ranking impact |
-| --- | --- | --- |
-| Valid bundle, `constation_ok` | Yes (then held-out/bpb ranking applies) | Eligible for emission crown |
-| Missing bundle | **No** (`miner_fault:missing_constation_bundle`) | Not ranked |
-| Failed mechanism(s) | **No** (`miner_fault:<code>`) | Not ranked |
-| Infra outage after retries | **No** (`infra_fault:*`) unless audited break-glass | Break-glass admits at tier 0 only |
-
-So constation is **not orthogonal to ranking**: without a score row there is nothing to rank.
-Among admitted rows, ranking remains held-out primary / bpb secondary as above. Trust model
-detail and the six mechanisms with honest limitations: [Security](security.md) and
-[prism-recipe security](../../prism-recipe/docs/security.md). Official Comparison notes:
-[Official Comparison](official-comparison.md) §17 train series telemetry and scorecard honesty.
-
-## Reference Studies
-
-- **Prequential / online coding** — Dawid, 1984: score the integrated predict-then-train loss, not a
-  final checkpoint.
-- **Minimum description length** — Rissanen, 1978: treat compression (code-length) as the learning
-  signal.
-- **Scaling laws** — Kaplan et al., 2020: compare loss trajectories under matched compute.
-- **Compute-optimal scaling** — Hoffmann et al., 2022: normalize by tokens/compute so under- or
-  over-trained regimes do not skew ranking.
-- **Dataset provenance** — Penedo et al., 2024 (*The FineWeb Datasets*): freeze the data revision and
-  shards for reproducible official runs.
-- **Generalization over train compression** — held-out primary emission prefers architectures that
-  actually improve secret val free energy under matched train budgets.
+→ [API](api.md)

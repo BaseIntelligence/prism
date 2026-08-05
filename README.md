@@ -1,189 +1,73 @@
-> **Source of truth transition:** first-party Prism product now lives in the
-> **BaseIntelligence/base** monorepo at `packages/challenges/prism/`. Prefer that
-> tree for product edits, Docker/GHCR builds, and miner docs
-> (`docs/miner/prism/` on base). Public slug `/challenges/prism` and GHCR name
-> `ghcr.io/baseintelligence/prism` are **unchanged**. This standalone remote is
-> dual-source / archive during cutover — see
-> https://github.com/BaseIntelligence/base/blob/main/docs/SOURCE_OF_TRUTH.md
-
 <div align="center">
 
 # PRISM
 
-**Research lab subnet — try new architectures; find more performant ones under fair challenge-owned re-exec.**
+**Miner guide for the BASE prism challenge — HTTP recipe submit.**
 
-<a href="docs/README.md">Docs</a> ·
-<a href="docs/miner/getting-started.md">Miners</a> ·
-<a href="docs/validator/README.md">Validators</a> ·
-<a href="docs/architecture.md">Architecture</a> ·
-<a href="docs/scoring.md">Scoring</a> ·
-<a href="docs/security.md">Security</a>
-
-[![License](https://img.shields.io/github/license/BaseIntelligence/prism)](LICENSE)
+[![BASE](https://img.shields.io/badge/BASE-subnet-black.svg)](https://github.com/BaseIntelligence/base)
 [![Bittensor](https://img.shields.io/badge/Bittensor-subnet-black.svg)](https://bittensor.com/)
-[![BASE](https://img.shields.io/badge/BASE-v3.1.2-6f42c1.svg)](https://github.com/BaseIntelligence/base/releases/tag/v3.1.2)
-[![joinbase](https://img.shields.io/badge/joinbase.ai-mine-0f766e.svg)](https://joinbase.ai)
-[![Master API](https://img.shields.io/badge/chain.joinbase.ai-API-111827.svg)](https://chain.joinbase.ai/health)
-[![Prism leaderboard](https://img.shields.io/badge/Prism-leaderboard-2563eb.svg)](https://chain.joinbase.ai/challenges/prism/leaderboard)
+[![License](https://img.shields.io/github/license/BaseIntelligence/prism)](LICENSE)
 
-![PRISM Banner](assets/banner.jpg)
+![PRISM banner](assets/banner.jpg)
+
+[Overview](docs/README.md) ·
+[Getting started](docs/getting-started.md) ·
+[Submit](docs/submit.md) ·
+[Scoring & competition](docs/scoring.md) ·
+[API](docs/api.md) ·
+[Examples](examples/baseline/)
 
 </div>
 
----
+## What it is
 
-## Overview
+PRISM is a research challenge: you try **new architectures** and the challenge re-executes
+them fairly. You submit **two Python scripts** — `architecture.py` (`build_model(ctx)`) and
+`training.py` (`train(model, ctx)`) — and the operator runs them on a GPU pod against a
+pinned FineWeb-Edu shard. Score is pure **bits-per-byte** (bpb, lower is better) measured
+by the operator harness. There is **no** miner Docker image, no CVM, no on-chain write from
+miners — HTTP submit only.
 
-PRISM is a [BASE](https://joinbase.ai) **research lab** challenge. The **norm** is to try **new
-architectures**. The **goal** is to find architectures that are **more performant** for our LLM
-target: generalization after from-scratch learning on locked data, under fair challenge-owned
-re-execution (not paper claims alone).
+| | |
+|---|---|
+| Challenge id | `prism` |
+| Production gateway | `https://chain.joinbase.ai` |
+| Staging gateway | `http://staging.api.joinbase.ai` |
+| Submit path | `/challenge/prism/v1/submissions` |
+| Recipe | v1.2.0 — telemetry hooks required |
 
-Miners submit a **two-script** bundle — `architecture.py` (`build_model(ctx)`) and `training.py`
-(`train(ctx)`) — and the challenge owns everything else: a locked **FineWeb-Edu** dataset
-(read-only, no network) and the score. **The miner owns** the model and the training loop; the
-challenge owns the data and the metric.
+This repository holds **miner documentation and examples only**. Control-plane source
+lives in [BaseIntelligence/base](https://github.com/BaseIntelligence/base).
 
-Every scored run is re-executed under a **forced random init**. Scoring is **deterministic** (no
-LLM gateway). Raw weights push to BASE for master aggregation; validators fetch the final vector and
-call `set_weights` under their own hotkeys. PRISM never writes on-chain weights.
+## Start here
 
-### Base SDK pin
-
-PRISM depends on the immutable Base public wheel:
-
-```text
-https://github.com/BaseIntelligence/base/releases/download/v3.1.2/base-3.1.2-py3-none-any.whl
-#sha256=3a61c2d3a343ed6de55e80215486e3de0c9639276443d08f2ed316bc807f2ff0
-```
-
-(see `pyproject.toml`). There is no LLM gateway dependency in this pin.
-
-## Research lab, small-first ladder
-
-GPU is limited, so the lab proves ideas on a **small-first ladder** before promoting:
-
-| Stage | Param cap | Emission role |
-| --- | ---: | --- |
-| **Explore / provisional** | **124M** (`124_000_000`) | Continuous discovery; may hold a **provisional crown** |
-| **Promote / final** | **350M** (`350_000_000`) | Same package/family pin re-eval; **confirms or revokes** the provisional crown |
-
-Default exploration shapes under the 124M explore cap are the tracked lab seeds
-[`examples/tiny-1m`](examples/tiny-1m) (`transformer-tiny-1m`) and
-[`examples/mamba-tiny`](examples/mamba-tiny) (`mamba-tiny-1m`). Novel `nn.Module` families under the
-AST sandbox remain first-class (Transformer, looped depth, pure-torch SSM, LightDeepLoop-class
-ideas).
-
-## Emission vs scientific surfaces
-
-Two graded surfaces stay honest and separate:
-
-| Surface | What it ranks | Primary / secondary |
-| --- | --- | --- |
-| **Emission crown** (leaderboard → raw weights) | Subnet reward eligibility | **Held-out / generalization primary**, prequential bpb **secondary** (Official-like) |
-| **Official Comparison / multimetric / Complete View** | Published **scientific miner architecture grade** | Multi-axis held-out + bpb + long-ctx + reasoning + polar honesty (`TIE_POLAR`) |
-
-Multimetric scorecard `multimetric.v1.1` and Complete View (`complete_view.v1.2` /
-`complete_view.v1.3`) are **published research grade**. They do **not** silently replace the
-emission scalar in v1.
-
-Two-tier ownership defaults are architecture **0.50** / training **0.50** (both use the emission
-rank metric).
-
-## How It Works
-
-```mermaid
-flowchart LR
-    M[Miner two-script bundle] --> G{Static sandbox + dual param ladder}
-    G -- reject --> X[[rejected]]
-    G --> A[Deterministic admission]
-    A --> V[Validator re-executes<br/>forced random init]
-    V --> S[Held-out primary + prequential bpb secondary]
-    S --> W[Raw-weight push → BASE master]
-```
-
-1. **Submit** — a signed `architecture.py` + `training.py` bundle (a single combined module is rejected).
-2. **Static gates** — AST sandbox, dual param ladder (124M explore / 350M promote), single-node multi-GPU contract; any failure is terminal before GPU.
-3. **Deterministic admission** — challenge-owned checks only; the former LLM gateway hard gate is removed.
-4. **Forced-init re-execution** — one validator re-runs the loop on the locked FineWeb-Edu train split and captures the online loss itself (miner-reported numbers are ignored).
-5. **Emission scoring** — held-out / generalization **primary**, recomputed prequential bits-per-byte **secondary**, plus memorization / step-0 fail-closed gates.
-6. **Weights** — emission splits two-tier (best architecture `0.50` / best training variant `0.50`); provisional crowns may form at 124M and must be confirmed or revoked at 350M promote. Raw weights push to BASE master aggregation; validators submit on-chain (or a fake chain in tests).
-
-## Anti-Cheat By Construction
-
-Common cheats are **inert**, not merely detected:
-
-- **No pretrained weights** — forced random init makes smuggled weights inert; an anomalous step-0 loss zeroes the score; the container runs `network=none`.
-- **No metric gaming** — the challenge recomputes the metric from the loss it captured; miner-reported numbers and manifests are ignored.
-- **No memorization** — the secret `val`/`test` splits never leave the master; an excessive train-vs-held-out gap is penalized.
-- **Deterministic** — fixed seeds and a challenge-controlled data order reproduce the same score within tolerance.
-
-## Provider trust and IMAGE_PIN
-
-PRISM does **not** ship a TEE verifier package and does **not** require TEE evidence to finalize
-production scores. Operators trust **Lium/Targon** as GPU providers. Integrity levers that remain:
-
-| Label | Meaning |
-| --- | --- |
-| **PROVIDER_TRUST** | Operator trusts Lium/Targon compute; no Prism crypto TEE path |
-| **IMAGE_PIN** / **IMAGE_PIN_VERIFY** | `worker_plane.pinned_image_digest` match grants effective tier **1** (max); mismatch downgrades |
-| **DEPLOY SMOKE** | Provider lifecycle works (always-terminate paid pods) |
-| **LAB-GPU** | Fair CUDA lab scores under Official Comparison |
-| **REAL-PROVIDER TEE** | **Retired for Prism product** (historical lab tables may still say BLOCKED; do not implement) |
-
-Configure `worker_plane.pinned_image_digest` when pinning the evaluator/worker image. Score finalization
-never fails closed on missing TEE evidence.
-
-## Worker Plane (optional)
-
-PRISM can move GPU re-execution onto **miner-funded workers** (deployed on Lium/Targon via the BASE
-`base worker` CLI). Validators then run verify-only plausibility checks plus probabilistic audits,
-and each result carries an `ExecutionProof` (manifest hash + worker sr25519 signature, with optional
-image-digest pin for tier-1). Gated behind `worker_plane` (default off). See the
-<a href="https://github.com/BaseIntelligence/base/blob/main/docs/miner/worker-plane.md">worker deployment guide</a>.
-
-## Mine on joinbase (day-1)
-
-Production miners submit through the BASE bridge (not a self-hosted master):
-
-1. Hotkey wallet on [joinbase.ai](https://joinbase.ai)
-2. Pack a seed: `uv run python scripts/pack_seed_family.py --family transformer-tiny-1m --output-dir dist/seed-packages`
-3. Sign and `POST https://chain.joinbase.ai/v1/challenges/prism/submissions`
-4. Watch [Prism leaderboard](https://chain.joinbase.ai/challenges/prism/leaderboard)
-
-Full checklist, signature headers, and troubleshooting:
-<a href="docs/miner/getting-started.md">Miner getting started</a>.
-
-## Documentation
-
-| Guide | Contents |
-|-------|----------|
-| <a href="docs/overview.md">Overview</a> | Research-lab identity, ladder, emission vs science |
-| <a href="docs/miner/getting-started.md">Miner getting started</a> | Day-1 hotkey → pack seed → joinbase bridge submit → leaderboard |
-| <a href="docs/miner/README.md">Miner hub</a> | Two-script contract, seeds, checklist; links Concepts / Troubleshooting |
-| <a href="docs/miner/concepts.md">Miner concepts</a> | Emission vs science, 50% share, NO-TEE honesty |
-| <a href="docs/miner/troubleshooting.md">Miner troubleshooting</a> | 401 / 409 / 429 / 502 and common rejects |
-| <a href="docs/validator/README.md">Validator guide</a> | Run evaluation on your own broker |
-| <a href="docs/architecture.md">Architecture</a> | Service design and forced-init re-execution |
-| <a href="docs/submissions.md">Submission format</a> | Two-script contract, dual ladder, `PrismContext` |
-| <a href="docs/scoring.md">Scoring & rewards</a> | Emission held-out primary + bpb secondary; two-tier 0.50/0.50 |
-| <a href="docs/official-comparison.md">Official Comparison</a> | Scientific multi-axis grade (not emission scalar) + multimetric / Complete View |
-| <a href="docs/scaling.md">Scaling</a> | Single-node multi-GPU contract |
-| <a href="docs/security.md">Security model</a> | Sandbox, deterministic admission, anti-cheat |
-| <a href="docs/api.md">API</a> | Internal and public routes |
-| <a href="docs/operators.md">Operators</a> | Deploy and run under BASE Compose |
-
-## Development
+1. Read [Getting started](docs/getting-started.md).
+2. Copy [`examples/baseline/`](examples/baseline/) — it shows the required telemetry
+   hooks (`prism_telemetry.report` + `finish_evaluation`).
+3. Zip `architecture.py` + `training.py` and submit — see [Submit](docs/submit.md).
+4. Poll events until `terminated`, then check your bpb — see [API](docs/api.md).
 
 ```bash
-uv run ruff check .
-uv run mypy
-uv run pytest --cov=prism_challenge --cov-fail-under=80
+export GATEWAY=https://chain.joinbase.ai
+export HOTKEY=<64 lowercase hex>   # public hotkey only — never a secret key
+
+cd examples/baseline
+zip -j submission.zip architecture.py training.py
+
+curl -sS -X POST "$GATEWAY/challenge/prism/v1/submissions" \
+  -H 'content-type: application/zip' \
+  -H "X-Miner-Hotkey: $HOTKEY" \
+  --data-binary @submission.zip
 ```
 
-GPU re-execution, HuggingFace publication, and external provider calls are mocked in tests; real GPU
-and provider keys are wired only at deploy. The LLM gateway is not part of the test or deploy path.
+## The three things miners get wrong
 
-## License
-
-Apache-2.0
+1. **Missing telemetry hooks** — `training.py` must import `prism_telemetry` and call
+   `report(...)` during training (and may call `finish_evaluation()` to stop early).
+   Missing hooks = hard contract violation, zero score, terminal.
+2. **Copying someone's `architecture.py`** — the pre-GPU copy gate rejects byte/AST
+   copies of *earlier* architectures with zero score, no appeal. Starting from the
+   published baseline is fine.
+3. **Submitting again while gated** — one accepted architecture submission per hotkey;
+   a second one returns `409 submission_gated`. Training-only entries on published
+   architectures are separate slots (one per `(hotkey, arch_id)`).

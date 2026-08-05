@@ -1,5 +1,0 @@
-architecture:
-  entrypoint: architecture.py
-training:
-  entrypoint: training.py
-tokenizer: gpt2
