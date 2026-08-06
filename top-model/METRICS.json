@@ -1,39 +1,39 @@
 {
-  "submission_id": "c0458255d42c52c835bb612a99727e0c1d12f6ab86f394bc756b66c525ac740d",
+  "submission_id": "995479b25297f5b13760693328469f7f5b73ed5dd1037b477e1fe97578534188",
   "arch_id": "arch_d50dcfef6eaf5f04",
-  "owner_hotkey": "b27b6d5c24d43f7a34fea626ff1b715877c449e825a1b7ff017cc73ed6d1682a",
-  "bpb": 1.096,
+  "owner_hotkey": "343d50f1222b260aaa48e0dfd72c94b935bd14c87ec1c88bd90934193c72f534",
+  "bpb": 1.992,
   "n_params": 12000000,
   "tokens_seen": 1048576,
   "wall_clock_seconds": 780.0,
   "telemetry": {
     "loss_series": [
       {
-        "loss": 2.696,
+        "loss": 3.592,
         "step": 1,
         "at_secs": 2.0,
         "grad_norm": 1.0
       },
       {
-        "loss": 2.2960000000000003,
+        "loss": 3.192,
         "step": 2,
         "at_secs": 4.0,
         "grad_norm": 0.5
       },
       {
-        "loss": 1.896,
+        "loss": 2.792,
         "step": 3,
         "at_secs": 6.0,
         "grad_norm": 0.3333333333333333
       },
       {
-        "loss": 1.496,
+        "loss": 2.392,
         "step": 4,
         "at_secs": 8.0,
         "grad_norm": 0.25
       },
       {
-        "loss": 1.096,
+        "loss": 1.992,
         "step": 5,
         "at_secs": 10.0,
         "grad_norm": 0.2
