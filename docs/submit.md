@@ -25,6 +25,23 @@ curl -sS -X POST "$GATEWAY/challenge/prism/v1/submissions" \
   --data-binary @submission.zip
 ```
 
+## Source-tree ZIP (recipe ≥ 1.3.0)
+
+Instead of only two scripts you may submit a full **source tree**: the two seam files
+plus optional `prism.toml` (entry point), `count_params.py`, a `kernels/` directory of
+custom ops (pure Python + torch, per `KERNEL_INTERFACE.md` — no prebuilt binaries, no
+`ctypes`, no I/O or threads), and a `vendor.lock`. Trees are validated at intake
+(size budgets, banned-pattern scan, canonical hash) and re-audited in-pod by the
+harness cheatguard. Send tree ZIPs via the JSON `zip_base64` field (the raw-zip path
+rejects them with a pointer to `zip_base64` so the full tree is validated and
+retained):
+
+```bash
+curl -sS -X POST "$GATEWAY/challenge/prism/v1/submissions" \
+  -H 'content-type: application/json' \
+  -d '{"miner_hotkey":"<hex>","zip_base64":"<base64 of tree.zip>"}'
+```
+
 ## JSON (local / scripting)
 
 ```bash
