@@ -34,7 +34,17 @@ miners — HTTP submit only.
 | Production gateway | `https://chain.joinbase.ai` |
 | Staging gateway | `http://staging.api.joinbase.ai` |
 | Submit path | `/challenge/prism/v1/submissions` |
-| Recipe | v1.2.0 — telemetry hooks required |
+| Recipe | v1.3.0 — telemetry hooks required; source-tree ZIPs + v3 battery (shadow) |
+
+**v3 (shadow-by-default):** recipe 1.3.0 runs your submission through a two-phase pod
+flow (train → operator-staged private eval assets → eval) and measures it on the
+**G1–G8 battery** (intrinsic fit, downstream, recall, reasoning, long-context, sample
+efficiency, inference efficiency, stability) alongside the usual bpb. The leaf score is
+still pure bpb until governance flips composite scoring on — see
+[Scoring & competition](docs/scoring.md). Your `train()` return dict is a labelled,
+never-scored **Zone B** self-report; additional reports can be posted to
+`POST /v1/submissions/{id}/zone-b`. You may now also submit **full source trees**
+(with custom `kernels/`) instead of only two scripts — see [Submit](docs/submit.md).
 
 This repository holds **miner documentation and examples only**. Control-plane source
 lives in [BaseIntelligence/base](https://github.com/BaseIntelligence/base).

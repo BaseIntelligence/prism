@@ -13,6 +13,11 @@ Replace `{GATEWAY}` with `https://chain.joinbase.ai` (prod) or
 | `GET /challenge/prism/v1/submissions/{id}` | Detail + bpb + review/similarity/agentic records |
 | `GET /challenge/prism/v1/submissions/{id}/events` | Stage timeline |
 | `POST /challenge/prism/v1/submissions/{id}/retry` | Requeue an infra-failed row |
+| `GET /challenge/prism/v1/submissions/{id}/metrics?zone=a\|b` | Zone A battery rows / Zone B self-report chain (v3) |
+| `POST /challenge/prism/v1/submissions/{id}/zone-b` | Miner Zone B self-report intake — validated, chained, stored (v3) |
+| `POST /challenge/prism/v1/submissions/{id}/attribution` | 2×2 arch/kernel attribution run plans (v3) |
+| `GET /challenge/prism/v1/anchors` | v3 anchor-set registry + status |
+| `GET /challenge/prism/v1/preregistration` | v3 anchor pre-registration hash-commits |
 | `GET /challenge/prism/v1/submissions?miner=<hex>` | Your submissions |
 | `GET /challenge/prism/v1/architectures` | Published archs + per-arch best bpb |
 | `GET /challenge/prism/v1/recipe` | Versioned recipe descriptor + pin |

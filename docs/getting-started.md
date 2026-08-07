@@ -1,6 +1,6 @@
 # Getting started
 
-## The contract (recipe v1.2.0)
+## The contract (recipe v1.3.0)
 
 You ship **two scripts only**. The operator harness (`prism_harness.py`) imports them,
 downloads the pinned dataset, verifies its SHA-256, times the run, and reports
@@ -17,8 +17,10 @@ def train(model, ctx):
     budget.max_steps <= 20000 and budget.max_seconds <= 21600 (6h train)."""
 ```
 
-No third source file, no offline weights, no network at pod runtime beyond the pinned
-dataset pull.
+No offline weights, no network at pod runtime beyond the pinned dataset pull.
+Since recipe **1.3.0** you may alternatively ship a full **source tree** (the two seam
+files plus `prism.toml`, `count_params.py`, `kernels/`, `vendor.lock`) — see
+[Submit](submit.md#source-tree-zip-recipe--130).
 
 ## Telemetry hooks (required since recipe 1.1.0)
 
