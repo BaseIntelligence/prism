@@ -71,12 +71,30 @@ eval as `ChallengeInternal` — never a miner score.
 | Hard step cap | 20 000 |
 | Source size | 128 KiB per script |
 | Model parameters | ≤ **350 000 000** after `build_model` |
+| `train_rows` (from `GET /v1/recipe`) | **2048** — baseline / default cut in `ctx` |
+| `val_rows` | **256** — frozen val scored by the harness |
+
+`train_rows` is what the **sealed baseline** trains on (~2M GPT-2 tokens for
+that slice). It is **not** a hard “you only get 2048 rows” ceiling for
+competitive recipes: the harness gives you the full pinned parquet at
+`ctx["dataset_path"]`, and you may stream it until the 6h / 20k-step guard
+fires. Token count then depends on your loop and the GPU — a long Lium run can
+reach ~O(10⁹) tokens. Marketing charts that once said “2.6B tokens · single
+pass” were showing a leader’s **observed** telemetry, not a fixed recipe
+quota. Always trust live `GET /v1/recipe` (`pin_hex`, `train_rows`, caps).
+
+The sealed baseline is deliberately mediocre (short cut, few steps). Matching
+a board BPB near ~4–5 requires a competitive trainer, not an unmodified
+baseline on a 4090 for a few minutes.
 
 ## Recipe pin
 
-`GET /v1/recipe` returns the versioned descriptor (dataset URL/hash, caps, harness
-digest, recipe version). `GET /v1/recipe/baseline` returns the official baseline
-scripts — the best starting point for your own architecture.
+`GET /v1/recipe` returns the versioned descriptor (dataset URL/hash, caps,
+`train_rows` / `val_rows`, recipe version, `pin_hex`). Production today is
+recipe **1.2.0** — open docs PRs that advertise 1.3+/1.4.0/v3 scoring describe
+**unreleased** control-plane work (`prism-better`), not what
+`https://chain.joinbase.ai` executes. `GET /v1/recipe/baseline` returns the
+official baseline scripts — the best starting point for your own architecture.
 
 ## Next
 
