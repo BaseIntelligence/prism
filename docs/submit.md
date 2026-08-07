@@ -2,7 +2,7 @@
 
 Preferred path: a **ZIP** through the production or staging gateway.
 
-## ZIP (preferred)
+## ZIP (two-script, preferred for simple entries)
 
 | Header / body | Value |
 |---------------|--------|
@@ -24,6 +24,37 @@ curl -sS -X POST "$GATEWAY/challenge/prism/v1/submissions" \
   -H "X-Miner-Hotkey: $HOTKEY" \
   --data-binary @submission.zip
 ```
+
+## Source-tree ZIP (recipe ≥ 1.3.0)
+
+Full trees (helpers, `kernels/`, `tokenizer/`, …) should go through the JSON
+intake with `zip_base64` so the tree is validated and retained. Raw
+`application/zip` accepts the classic two-script layout; a multi-file tree on
+that path is rejected with a pointer to `zip_base64`.
+
+```bash
+# pack the tree (paths relative to project root)
+cd my-submission
+zip -r ../tree.zip . -x '*.pyc' -x '__pycache__/*' -x '.git/*'
+
+python3 - <<'PY'
+import base64, json, pathlib
+raw = pathlib.Path("tree.zip").read_bytes()
+print(json.dumps({
+    "miner_hotkey": "<64 lowercase hex>",
+    "zip_base64": base64.b64encode(raw).decode(),
+    "label": "optional",
+}))
+PY
+
+curl -sS -X POST "$GATEWAY/challenge/prism/v1/submissions" \
+  -H 'content-type: application/json' \
+  -d @submission.json
+```
+
+Caps: ≤ 128 files, ≤ 4 MiB/file, ≤ 16 MiB total uncompressed; `tokenizer/` ≤ 12
+files / ≤ 8 MiB. The validated tree is staged on the pod under `submission/`.
+See [Getting started](getting-started.md#source-tree-submissions-recipe--130).
 
 ## JSON (local / scripting)
 
@@ -62,6 +93,7 @@ swapped), the watcher reopens your slot automatically.
 
 Training-only entries are **separate slots**: one accepted entry per `(hotkey, arch_id)`
 — you may train on many published architectures, one script per arch.
+Training-only intake accepts the **two-script** layout only (not a full source tree).
 
 ```bash
 # JSON
@@ -85,8 +117,8 @@ from the registry (miner-sent architecture is rejected on these rows). Unknown
 
 - Infra failures (pod provisioning, review/similarity/LLM infra) **auto-retry up to 3
   times**. Retry budget exhausted → `failed`, slot `blocked`.
-- Cheat / rejected verdicts are **terminal** — no auto-retry. Manual retry for
-  infra-class failures: `POST /v1/submissions/{id}/retry`.
+- Cheat / rejected / `CAP_EXCEEDED` verdicts are **terminal** — no auto-retry. Manual
+  retry for infra-class failures: `POST /v1/submissions/{id}/retry`.
 
 ## Gateways
 
@@ -96,6 +128,13 @@ from the registry (miner-sent architecture is rejected on these rows). Unknown
 | Staging | `http://staging.api.joinbase.ai` |
 
 Always use the `/challenge/prism/...` prefix on those hosts.
+
+Inspect recipe pins before coding:
+
+```bash
+curl -sS "$GATEWAY/challenge/prism/v1/recipe"
+curl -sS "$GATEWAY/challenge/prism/v1/recipe/baseline"
+```
 
 ## Next
 

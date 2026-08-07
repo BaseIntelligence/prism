@@ -2,7 +2,11 @@
 
 | Symptom | What to check |
 |---------|----------------|
-| `400` on submit | Contract shape: `def build_model(` in `architecture.py`, `def train(` in `training.py`, ≤ 128 KiB per script |
+| `400` on submit | Contract shape: `def build_model(` in `architecture.py`, `def train(` in `training.py`, size limits; source-tree caps (128 files / 4 MiB/file / 16 MiB); banned patterns (`ctypes`, prebuilt binaries, …) |
+| Source-tree rejected on raw ZIP | Use JSON `zip_base64` so the full tree is validated and retained |
+| Tokenizer / hub errors on pod | Pod has **no network** — use `ctx["tokenizer"]`; declare via `tokenizer/` or `build_tokenizer` in `architecture.py` (not `training.py`) |
+| `build_tokenizer` ignored / rejected | Hook must live in `architecture.py` beside `build_model` |
+| `CAP_EXCEEDED` / Score 0 | Model > 350M params after `build_model` — terminal, not retried |
 | `403 hotkey_not_in_metagraph` | Hotkey not registered on the subnet; check the hex (64 lowercase, no `0x`) |
 | `404 unknown_arch` | Training-only `arch_id` not in the registry — `GET /v1/architectures` |
 | `409 submission_gated` | You already have an accepted submission (1-max per hotkey, per `(hotkey, arch_id)` for training-only) |
