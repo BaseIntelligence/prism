@@ -1,7 +1,13 @@
 # PRISM baseline recipe (example)
 
 The official baseline submission — a tiny GPT-style causal transformer (~12M params)
-plus an AdamW training loop that demonstrates the **required telemetry hooks**.
+plus an AdamW training loop that demonstrates the **required telemetry hooks** and
+the **`ctx["tokenizer"]`** contract (recipe ≥ 1.4.0).
+
+This baseline does **not** ship `build_tokenizer` or a `tokenizer/` directory —
+the harness falls back to the pinned **gpt2** tokenizer. That is a baseline
+*choice*, not a challenge rule. Competitive entries may train or vendor their
+own tokenizer (see [getting started](../../docs/getting-started.md#tokenizer-yours--recipe--140)).
 
 Starting from this baseline is always allowed (the anti-copy gate exempts it). To be
 competitive, ship your **own** architecture — see
@@ -11,8 +17,8 @@ competitive, ship your **own** architecture — see
 
 | File | Role |
 |------|------|
-| `architecture.py` | `build_model(ctx)` → TinyGPT (tied embeddings, causal mask, block=512) |
-| `training.py` | `train(model, ctx)` → AdamW loop with `prism_telemetry.report(...)` + `finish_evaluation()` |
+| `architecture.py` | `build_model(ctx)` → TinyGPT sized from `ctx["vocab_size"]` |
+| `training.py` | `train(model, ctx)` → AdamW loop with `ctx["tokenizer"]`, `prism_telemetry.report(...)` + `finish_evaluation()` |
 
 ## Hook pattern (required since recipe 1.1.0)
 
@@ -41,6 +47,15 @@ Inside the operator harness the real module captures your series into
   in-memory model as-is. It raises a `BaseException` through `train()`, so it cannot be
   swallowed by your own `except Exception` blocks.
 
+## Tokenizer pattern (recipe ≥ 1.4.0)
+
+On the pod, always use the harness-injected tokenizer:
+
+```python
+tok = ctx["tokenizer"]          # never from_pretrained("<hub id>") — pod has no network
+vocab = int(ctx["vocab_size"])  # size embeddings / head from this
+```
+
 ## Submit
 
 ```bash
@@ -52,3 +67,5 @@ curl -sS -X POST "$GATEWAY/challenge/prism/v1/submissions" \
 ```
 
 The same sources are always available live at `GET /v1/recipe/baseline`.
+For a multi-file source tree (`kernels/`, `tokenizer/`, …), see
+[Submit — source-tree ZIP](../../docs/submit.md#source-tree-zip-recipe--130).

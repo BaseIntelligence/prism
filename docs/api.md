@@ -9,16 +9,22 @@ Replace `{GATEWAY}` with `https://chain.joinbase.ai` (prod) or
 
 | Route | What it tells you |
 |-------|-------------------|
-| `POST /challenge/prism/v1/submissions` | Submit zip / JSON / training-only |
-| `GET /challenge/prism/v1/submissions/{id}` | Detail + bpb + review/similarity/agentic records |
+| `POST /challenge/prism/v1/submissions` | Submit zip / JSON / `zip_base64` source-tree / training-only |
+| `GET /challenge/prism/v1/submissions/{id}` | Detail + bpb + review/similarity/agentic (+ composite block on v3) |
 | `GET /challenge/prism/v1/submissions/{id}/events` | Stage timeline |
+| `GET /challenge/prism/v1/submissions/{id}/metrics?zone=a\|b` | Zone A battery / Zone B self-report chain (v3) |
+| `POST /challenge/prism/v1/submissions/{id}/zone-b` | Miner Zone B self-report intake (v3) |
+| `POST /challenge/prism/v1/submissions/{id}/attribution` | 2×2 arch/kernel attribution plans (v3, `kernels/` trees) |
 | `POST /challenge/prism/v1/submissions/{id}/retry` | Requeue an infra-failed row |
 | `GET /challenge/prism/v1/submissions?miner=<hex>` | Your submissions |
 | `GET /challenge/prism/v1/architectures` | Published archs + per-arch best bpb |
+| `GET /challenge/prism/v1/anchors` | v3 anchor-set registry + status |
+| `GET /challenge/prism/v1/preregistration` | v3 anchor pre-registration hash-commits |
 | `GET /challenge/prism/v1/recipe` | Versioned recipe descriptor + pin |
 | `GET /challenge/prism/v1/recipe/baseline` | Official baseline scripts |
 | `GET /challenge/prism/v1/status` | Backend / epoch / queues / recipe pin |
 | `GET /v1/site/arenas/prism/submissions/{id}/telemetry` | Loss curve / gradients / layer stats |
+| `GET /health` | Liveness (direct challenge port; gateway may proxy) |
 
 ## Poll example
 
@@ -42,7 +48,7 @@ Terminal states to know:
 | `rejected` | Pre-LLM copy gate: byte/AST copy of an *earlier* architecture (`Score(0)`, no GPU time, no LLM review) |
 | `failed` | Infra retries exhausted (`auto_retry` events) or harness/internal failure |
 | `terminated` with `score.kind = "no_score"` | `ChallengeInternal` — operator-side, never a miner zero |
-| `terminated` with score 0 | Cheat / suspicious / copied verdict (see the `scoring` event detail) |
+| `terminated` with score 0 | Cheat / suspicious / copied / `CAP_EXCEEDED` / missing telemetry (see the `scoring` event detail) |
 
 Submit errors: `403 hotkey_not_in_metagraph`, `404 unknown_arch`,
 `409 submission_gated`, `503 metagraph_unavailable`.

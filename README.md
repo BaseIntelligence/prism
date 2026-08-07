@@ -21,12 +21,14 @@
 
 ## What it is
 
-PRISM is a research challenge: you try **new architectures** and the challenge re-executes
-them fairly. You submit **two Python scripts** — `architecture.py` (`build_model(ctx)`) and
-`training.py` (`train(model, ctx)`) — and the operator runs them on a GPU pod against a
-pinned FineWeb-Edu shard. Score is pure **bits-per-byte** (bpb, lower is better) measured
-by the operator harness. There is **no** miner Docker image, no CVM, no on-chain write from
-miners — HTTP submit only.
+PRISM is a research challenge: you try **new architectures** (and optionally
+training recipes / tokenizers) and the challenge re-executes them fairly. You
+submit a ZIP — either the classic two scripts (`architecture.py` +
+`training.py`) or a **source-tree** with helpers, `kernels/`, and optional
+`tokenizer/` — and the operator runs them on a GPU pod against a pinned
+FineWeb-Edu shard. Live leaf score is pure **bits-per-byte** (bpb, lower is
+better); v3 also measures a G1–G8 battery in shadow mode. There is **no** miner
+Docker image, no CVM, no on-chain write from miners — HTTP submit only.
 
 | | |
 |---|---|
@@ -34,17 +36,18 @@ miners — HTTP submit only.
 | Production gateway | `https://chain.joinbase.ai` |
 | Staging gateway | `http://staging.api.joinbase.ai` |
 | Submit path | `/challenge/prism/v1/submissions` |
-| Recipe | v1.2.0 — telemetry hooks required |
+| Recipe | **v1.4.0** — miner-chosen tokenizer; G5 = RULER + BABILong + natural docs (**pretrain-only**) |
 
-This repository holds **miner documentation and examples only**. Control-plane source
-lives in [BaseIntelligence/base](https://github.com/BaseIntelligence/base).
+This repository holds **miner documentation and examples only**. Control-plane
+source lives in [BaseIntelligence/base](https://github.com/BaseIntelligence/base).
 
 ## Start here
 
-1. Read [Getting started](docs/getting-started.md).
-2. Copy [`examples/baseline/`](examples/baseline/) — it shows the required telemetry
-   hooks (`prism_telemetry.report` + `finish_evaluation`).
-3. Zip `architecture.py` + `training.py` and submit — see [Submit](docs/submit.md).
+1. Read [Getting started](docs/getting-started.md) — tokenizer + source-tree
+   contracts matter from recipe **1.3.0 / 1.4.0**.
+2. Copy [`examples/baseline/`](examples/baseline/) — required telemetry hooks
+   (`prism_telemetry.report` + `finish_evaluation`) and `ctx["tokenizer"]`.
+3. Zip and submit — see [Submit](docs/submit.md).
 4. Poll events until `terminated`, then check your bpb — see [API](docs/api.md).
 
 ```bash
@@ -68,6 +71,8 @@ curl -sS -X POST "$GATEWAY/challenge/prism/v1/submissions" \
 2. **Copying someone's `architecture.py`** — the pre-GPU copy gate rejects byte/AST
    copies of *earlier* architectures with zero score, no appeal. Starting from the
    published baseline is fine.
-3. **Submitting again while gated** — one accepted architecture submission per hotkey;
-   a second one returns `409 submission_gated`. Training-only entries on published
-   architectures are separate slots (one per `(hotkey, arch_id)`).
+3. **Hub downloads / hardcoded GPT-2** — the pod has **no network**. Use
+   `ctx["tokenizer"]` (and size embeddings from `ctx["vocab_size"]`). GPT-2 is
+   only the harness **fallback** when you declare nothing — not a challenge rule.
+   A second architecture submit while gated returns `409 submission_gated`;
+   training-only entries on published archs are separate slots.

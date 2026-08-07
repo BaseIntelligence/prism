@@ -1,4 +1,4 @@
-"""PRISM baseline training (recipe v1).
+"""PRISM baseline training (recipe v1.4.0).
 
 Reads `ctx["train_rows"]` texts from the pinned shard, runs AdamW at a modest
 LR for a small fixed step budget (baseline is deliberately mediocre: it is
@@ -9,13 +9,19 @@ Telemetry hook contract (recipe >= 1.1.0): the harness provides a
 `report(loss=..., step=..., grad_norm=..., layer_stats=...)`
 periodically and `finish_evaluation()` to end the eval early — the harness
 scores the in-memory model either way.
+
+Tokenizer contract (recipe >= 1.4.0): use `ctx["tokenizer"]`. It is the
+tokenizer *this submission* declared (`tokenizer/` files or a
+`build_tokenizer(ctx)` hook) or the pinned gpt2 fallback when it declares
+none, as here. Never `from_pretrained` a hub id yourself on the pod: the
+training subprocess has no network, and the eval phase re-resolves the same
+tokenizer from the submission.
 """
 
 import time
 
 import pyarrow.parquet as pq
 import torch
-from transformers import GPT2TokenizerFast
 
 try:
     import prism_telemetry
@@ -39,16 +45,31 @@ def _texts(path, n):
     return xs[:n]
 
 
+def _tokenizer(ctx):
+    """Prefer harness-injected `ctx["tokenizer"]`.
+
+    Local/dev fallback loads gpt2 only when the harness is absent — that is
+    *this baseline's* tokenizer choice, not a challenge rule. On the pod the
+    harness always injects `ctx["tokenizer"]` (and has already warmed the
+    fallback cache when you declare none).
+    """
+    tok = ctx.get("tokenizer")
+    if tok is None:
+        from transformers import GPT2TokenizerFast
+
+        tok = GPT2TokenizerFast.from_pretrained("gpt2")
+    if getattr(tok, "pad_token", None) is None and getattr(tok, "eos_token", None) is not None:
+        tok.pad_token = tok.eos_token
+    return tok
+
+
 def train(model, ctx):
     """Recipe contract entrypoint: returns a metrics dict (val is harness-side)."""
     device = ctx["device"]
     torch.manual_seed(int(ctx["seed"]))
     guard = ctx.get("guard", lambda: None)
 
-    tok = GPT2TokenizerFast.from_pretrained("gpt2")
-    if tok.pad_token is None:
-        tok.pad_token = tok.eos_token
-
+    tok = _tokenizer(ctx)
     texts = _texts(ctx["dataset_path"], int(ctx.get("train_rows", 2048)))
     block = model.block if hasattr(model, "block") else 512
 
@@ -70,8 +91,11 @@ def train(model, ctx):
         ids = enc.input_ids
         out = model(ids[:, :-1])
         logits = out.logits if hasattr(out, "logits") else out
+        pad_id = getattr(tok, "pad_token_id", None)
+        if pad_id is None:
+            pad_id = -100
         loss = torch.nn.functional.cross_entropy(
-            logits.reshape(-1, logits.shape[-1]), ids[:, 1:].reshape(-1), ignore_index=tok.pad_token_id
+            logits.reshape(-1, logits.shape[-1]), ids[:, 1:].reshape(-1), ignore_index=pad_id
         )
         opt.zero_grad(set_to_none=True)
         loss.backward()
