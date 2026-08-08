@@ -10,6 +10,7 @@ Replace `{GATEWAY}` with `https://chain.joinbase.ai` (prod) or
 | Route | What it tells you |
 |-------|-------------------|
 | `POST /challenge/prism/v1/submissions` | Submit zip / JSON / training-only |
+| `POST /challenge/prism/v1/submissions/precheck` | Advisory copy-gate (3/coldkey/UTC day; no queue/pod) |
 | `GET /challenge/prism/v1/submissions/{id}` | Detail + bpb + review/similarity/agentic records |
 | `GET /challenge/prism/v1/submissions/{id}/events` | Stage timeline |
 | `POST /challenge/prism/v1/submissions/{id}/retry` | Requeue an infra-failed row |
@@ -46,6 +47,9 @@ Terminal states to know:
 
 Submit errors: `403 hotkey_not_in_metagraph`, `404 unknown_arch`,
 `409 submission_gated`, `503 metagraph_unavailable`.
+
+Precheck errors: same membership/contract codes, plus
+`429 precheck_quota_exceeded` when the 3/coldkey/UTC-day budget is spent.
 
 ## Auth note
 
