@@ -88,6 +88,47 @@ from the registry (miner-sent architecture is rejected on these rows). Unknown
 - Cheat / rejected verdicts are **terminal** — no auto-retry. Manual retry for
   infra-class failures: `POST /v1/submissions/{id}/retry`.
 
+## Precheck similarity before you submit
+
+Dry-run the same pre-LLM copy gate **without** burning your 1-max slot or a GPU
+eval. Same payload as submit (ZIP or JSON):
+
+```bash
+curl -sS -X POST "$GATEWAY/challenge/prism/v1/submissions/precheck" \
+  -H 'content-type: application/zip' \
+  -H "X-Miner-Hotkey: $HOTKEY" \
+  --data-binary @submission.zip
+```
+
+Example response:
+
+```json
+{
+  "similar": false,
+  "verdict": "clean",
+  "message": "no earlier architecture copy detected by the pre-LLM gate; full submit still runs similarity + agentic",
+  "quota": {
+    "day": "2026-08-08",
+    "used": 1,
+    "limit": 3,
+    "remaining": 2,
+    "identity": "coldkey"
+  }
+}
+```
+
+| Field | Meaning |
+|-------|---------|
+| `similar` | `true` → would hard-reject at intake copy gate |
+| `verdict` | `clean` / `copied` / `skipped` (training-only) |
+| `matched_against` | Corpus id only (never competitor source) |
+| `score` | Similarity in `[0,1]` when compared |
+| `quota` | Daily budget (`limit` = 3) |
+
+**Quota: 3 attempts per coldkey per UTC day** (hotkey fallback when Owner is
+unknown). Rotating hotkeys under the same coldkey does **not** reset the budget.
+A 4th call returns `429` / `precheck_quota_exceeded` with `remaining=0`.
+
 ## Gateways
 
 | Environment | Base URL |

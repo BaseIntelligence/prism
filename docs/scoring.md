@@ -17,6 +17,8 @@ submission is coherent and not cheating; their quality notes never move the scor
   training-only entries on a published arch are never "copies" by construction.
 - After the gate, an LLM similarity review + agentic anti-cheat still run:
   `Copied` / `Suspicious` / `cheat` verdicts → hard zero.
+- Probe the cheap gate first with `POST /v1/submissions/precheck` (3/coldkey/UTC
+  day) — see [Submit](submit.md#precheck-similarity-before-you-submit).
 
 ## Architecture competition (emission math)
 
