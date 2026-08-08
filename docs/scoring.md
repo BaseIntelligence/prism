@@ -20,6 +20,17 @@ submission is coherent and not cheating; their quality notes never move the scor
 - Probe the cheap gate first with `POST /v1/submissions/precheck` (3/coldkey/UTC
   day) — see [Submit](submit.md#precheck-similarity-before-you-submit).
 
+
+## Causal LM contract (banned: non-causal label leak)
+
+Prism scores **next-token** cross-entropy → BPB. Architectures must not let
+position `t` read tokens `t+1…` (including the label). Dense sequence mixers —
+MLP-Mixer-style `TokenMix` / `t_mix` / `nn.Linear` over the full time axis after
+`transpose(1, 2)` — **without** a causal mask (`triu` / `tril` / `is_causal` /
+attention mask) are a hard ban (`non_causal_label_leak`, `Score(0)`, terminal,
+often caught **before** GPU rent). Channel mixing and causal attention / causal
+conv are fine; bidirectional full-sequence mixes used as a next-token LM are not.
+
 ## Architecture competition (emission math)
 
 Per epoch, your emission is the **max** of:
