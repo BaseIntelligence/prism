@@ -1,13 +1,18 @@
 # PRISM miner docs
 
+Live recipe is **2.0.0**: submit an AutoModel pin id + unified git diff
+(`automodel.base` + `automodel.patch`), not a free-form two-script ZIP.
+
 | Page | What it covers |
 |------|----------------|
-| [Getting started](getting-started.md) | Contract, hooks, dataset, budgets |
-| [Submit](submit.md) | ZIP/JSON submit, gating, retries, training-only entries |
-| [Scoring & competition](scoring.md) | bpb lattice, anti-copy, architecture competition, top-model |
-| [API](api.md) | Routes, statuses, telemetry |
-| [Troubleshooting](troubleshooting.md) | Common failures |
-| [`examples/baseline/`](../examples/baseline/) | Reference recipe with hooks |
+| [Getting started](getting-started.md) | Fork pin → edit → `git diff` → pack ZIP |
+| [Submit](submit.md) | ZIP/JSON, BYOK Lium key, gating, precheck, retries |
+| [Scoring & competition](scoring.md) | bpb lattice, patch anti-copy, causal ban, top-model |
+| [API](api.md) | Routes, statuses, diff + telemetry |
+| [Troubleshooting](troubleshooting.md) | `unsupported_layout`, pin/patch failures, Lium |
+| [Full guide](prism.md) | Complete miner guide (mirrors BASE `docs/external-miner/prism.md`) |
 
-Normative sources (BASE monorepo): `docs/PRISM.md`, `docs/PRISM_RECIPE.md`,
-`docs/external-miner/prism.md`.
+Normative sources (BASE monorepo):
+[`docs/PRISM.md`](https://github.com/BaseIntelligence/base/blob/main/docs/PRISM.md),
+[`docs/PRISM_RECIPE.md`](https://github.com/BaseIntelligence/base/blob/main/docs/PRISM_RECIPE.md),
+[`docs/external-miner/prism.md`](https://github.com/BaseIntelligence/base/blob/main/docs/external-miner/prism.md).

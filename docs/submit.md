@@ -1,6 +1,7 @@
 # Submit
 
-Preferred path: a **ZIP** through the production or staging gateway.
+Preferred path: a **ZIP** through the production or staging gateway with
+`automodel.base` + `automodel.patch` (+ optional `prism.toml`).
 
 ## ZIP (preferred)
 
@@ -9,41 +10,39 @@ Preferred path: a **ZIP** through the production or staging gateway.
 | Method / URL | `POST {GATEWAY}/challenge/prism/v1/submissions` |
 | `Content-Type` | `application/zip` |
 | `X-Miner-Hotkey` | 64 lowercase hex |
-| `X-Prism-Arch-Id` | training-only entries: published `arch_id` (zip then contains `training.py` only) |
-| Body | raw zip bytes (`architecture.py` + `training.py` at the root) |
+| `X-Lium-Api-Key` | your Lium API key (required on live) |
+| Body | raw zip bytes (`automodel.base` + `automodel.patch` at the root) |
 
 ```bash
 export GATEWAY=https://chain.joinbase.ai
 export HOTKEY=<64 lowercase hex>
+export LIUM_API_KEY=<your Lium API key>
 
-cd examples/baseline
-zip -j submission.zip architecture.py training.py
+# automodel.base = single line equal to recipe automodel_pin_id (automodel@v0.5.0)
+# automodel.patch = git diff <automodel_git_commit>
+zip -j submission.zip automodel.base automodel.patch   # + prism.toml if used
 
 curl -sS -X POST "$GATEWAY/challenge/prism/v1/submissions" \
   -H 'content-type: application/zip' \
   -H "X-Miner-Hotkey: $HOTKEY" \
+  -H "X-Lium-Api-Key: $LIUM_API_KEY" \
   --data-binary @submission.zip
 ```
 
 ## JSON (local / scripting)
 
+Same members as the ZIP (or `zip_base64`). Prefer ZIP on live.
+
 ```bash
 curl -sS -X POST "$GATEWAY/challenge/prism/v1/submissions" \
   -H 'content-type: application/json' \
+  -H "X-Lium-Api-Key: $LIUM_API_KEY" \
   -d @submission.json
 ```
 
-```json
-{
-  "miner_hotkey": "<64 lowercase hex>",
-  "architecture_py": "<contents of architecture.py>",
-  "training_py": "<contents of training.py>",
-  "label": "optional human label"
-}
-```
-
-`POST /v1/submissions` is **idempotent** by `submission_id` (digest of hotkey + sources):
-re-POSTing identical sources returns `200 {"status":"already-queued"}`.
+`POST /v1/submissions` is **idempotent** by `submission_id` (hash of **pin id ‖
+`0x00` ‖ patch bytes**): re-POSTing the identical pin+patch returns
+`200 {"status":"already-queued"}`.
 
 ## Registration and 1-max gating
 
@@ -51,47 +50,29 @@ re-POSTing identical sources returns `200 {"status":"already-queued"}`.
 |-----------|----------|
 | Hotkey not in the subnet metagraph | `403 hotkey_not_in_metagraph` |
 | Metagraph snapshot not ready yet | `503 metagraph_unavailable` (retry shortly) |
-| You already have an accepted architecture submission | `409 submission_gated` |
+| You already have an accepted patch submission | `409 submission_gated` |
+| Missing Lium key on live | `400 missing_lium_api_key` |
 
-**One accepted architecture submission per hotkey.** While yours is
-`registered` / `blocked` / `rejected`, a *different* architecture submission gets
-`409 submission_gated`. If your hotkey **leaves the metagraph** (uid deregistered or
-swapped), the watcher reopens your slot automatically.
+**One accepted patch submission per hotkey.** While yours is `registered` /
+`rejected`, or `blocked` **outside** the infra recovery window, a *different*
+patch submission gets `409 submission_gated`. Re-POSTing the **identical**
+pin+patch is always safe (idempotent).
 
-## Training-only entries
-
-Training-only entries are **separate slots**: one accepted entry per `(hotkey, arch_id)`
-— you may train on many published architectures, one script per arch.
-
-```bash
-# JSON
-curl -sS -X POST "$GATEWAY/challenge/prism/v1/submissions" \
-  -H 'content-type: application/json' \
-  -d '{"miner_hotkey":"<hex>","arch_id":"<arch_…>","training_py":"<contents>"}'
-
-# ZIP (training.py only) + header
-curl -sS -X POST "$GATEWAY/challenge/prism/v1/submissions" \
-  -H 'content-type: application/zip' \
-  -H "X-Miner-Hotkey: $HOTKEY" \
-  -H "X-Prism-Arch-Id: <arch_id>" \
-  --data-binary @training-only.zip
-```
-
-Do **not** include `architecture.py` in a training-only entry — the source is pulled
-from the registry (miner-sent architecture is rejected on these rows). Unknown
-`arch_id` → `404 unknown_arch`.
+If your hotkey **leaves the metagraph**, the watcher reopens your slot(s)
+automatically — resubmit under your new uid.
 
 ## Retries and terminal states
 
-- Infra failures (pod provisioning, review/similarity/LLM infra) **auto-retry up to 3
-  times**. Retry budget exhausted → `failed`, slot `blocked`.
-- Cheat / rejected verdicts are **terminal** — no auto-retry. Manual retry for
-  infra-class failures: `POST /v1/submissions/{id}/retry`.
+- Infra failures (Lium pod, review/similarity/LLM infra) **auto-retry up to 3
+  times**. Cheat / rejected verdicts are terminal.
+- After an infra failure (`ChallengeInternal`), you may **resubmit within 30
+  minutes** (new POST or `POST /v1/submissions/{id}/retry`). After 30 minutes
+  the slot stays blocked until your hotkey leaves the metagraph.
 
 ## Precheck similarity before you submit
 
-Dry-run the same pre-LLM copy gate **without** burning your 1-max slot or a GPU
-eval. Same payload as submit (ZIP or JSON):
+Dry-run the copy / layout gate **without** burning your 1-max slot or a GPU
+eval (send the same AutoModel ZIP you would submit):
 
 ```bash
 curl -sS -X POST "$GATEWAY/challenge/prism/v1/submissions/precheck" \
@@ -100,34 +81,30 @@ curl -sS -X POST "$GATEWAY/challenge/prism/v1/submissions/precheck" \
   --data-binary @submission.zip
 ```
 
-Example response:
-
-```json
-{
-  "similar": false,
-  "verdict": "clean",
-  "message": "no earlier architecture copy detected by the pre-LLM gate; full submit still runs similarity + agentic",
-  "quota": {
-    "day": "2026-08-08",
-    "used": 1,
-    "limit": 3,
-    "remaining": 2,
-    "identity": "coldkey"
-  }
-}
-```
-
 | Field | Meaning |
 |-------|---------|
 | `similar` | `true` → would hard-reject at intake copy gate |
-| `verdict` | `clean` / `copied` / `skipped` (training-only) |
+| `verdict` | `clean` / `copied` / `skipped` |
 | `matched_against` | Corpus id only (never competitor source) |
 | `score` | Similarity in `[0,1]` when compared |
-| `quota` | Daily budget (`limit` = 3) |
+| `quota` | `{ day, used, limit: 3, remaining, identity }` |
 
-**Quota: 3 attempts per coldkey per UTC day** (hotkey fallback when Owner is
-unknown). Rotating hotkeys under the same coldkey does **not** reset the budget.
-A 4th call returns `429` / `precheck_quota_exceeded` with `remaining=0`.
+**Quota: 3 attempts per coldkey per UTC day** (falls back to hotkey when the
+metagraph Owner coldkey is unknown). Rotating hotkeys under the same coldkey
+does **not** reset the budget. A 4th call returns `429` /
+`precheck_quota_exceeded` with `remaining=0`. Precheck never creates a scored
+submission and never rents a Lium pod.
+
+## Inspect your applied diff
+
+After intake:
+
+```bash
+curl -sS "$GATEWAY/challenge/prism/v1/submissions/$SUB/diff"
+```
+
+Returns the full unified diff plus diffstat / classification
+(`arch` / `trainer` / `data` / `other`).
 
 ## Gateways
 
