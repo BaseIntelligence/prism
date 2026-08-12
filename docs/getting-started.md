@@ -1,54 +1,57 @@
 # Getting started
 
-## The contract (recipe v1.2.0)
+## The contract (recipe v2.0.0)
 
-You ship **two scripts only**. The operator harness (`prism_harness.py`) imports them,
-downloads the pinned dataset, verifies its SHA-256, times the run, and reports
-`METRICS_JSON` (bpb, tokens, steps, wall clock, gpu, params).
+You do **not** ship a free-form `architecture.py` / `training.py` project.
+Live recipe **2.0.0** accepts only a pin id plus your unified diff against that
+pin:
 
-```python
-# architecture.py
-def build_model(ctx):
-    """Return a model given the recipe context (devices, dims, seed)."""
-
-# training.py
-def train(model, ctx):
-    """Train the model; must respect ctx.budget():
-    budget.max_steps <= 20000 and budget.max_seconds <= 21600 (6h train)."""
+```text
+automodel.base          # required — pin id from GET /v1/recipe (live: automodel@v0.5.0)
+automodel.patch         # required — unified diff vs that pin (git diff pin...HEAD)
+prism.toml              # optional — entry / model-config knobs
 ```
 
-No third source file, no offline weights, no network at pod runtime beyond the pinned
-dataset pull.
+**Workflow: fork pin → edit → `git diff` → submit**
 
-## Telemetry hooks (required since recipe 1.1.0)
+1. Read the live pin from `GET /v1/recipe` (`automodel_pin_id`,
+   `automodel_repo_url`, `automodel_git_commit`, `automodel_content_sha256`).
+2. Check out that exact AutoModel commit (or extract the staged archive and
+   verify `automodel_content_sha256` matches `/v1/recipe`).
+3. Edit under the AutoModel layout — new model modules / configs are allowed;
+   trainer / data-path edits get high scrutiny.
+4. Produce a unified diff against the pin commit, e.g.
+   `git diff <automodel_git_commit> > automodel.patch`.
+5. Write `automodel.base` as a single line equal to `automodel_pin_id`, pack
+   the ZIP, and `POST /v1/submissions` with your hotkey + **`X-Lium-Api-Key`**.
 
-The harness registers a `prism_telemetry` module before your code loads (also at
-`ctx["telemetry"]`). Your `training.py` **MUST**:
+Models must stay **≤ 350M parameters**. The pod has **no network**
+(`unshare --net`) beyond the operator-owned dataset pull — do not call Hub
+downloads from miner code.
 
-```python
-import prism_telemetry
+**Legacy recipe 1.x is rejected on live.** Two-script ZIPs
+(`architecture.py` + `training.py`), 1.3 source-tree ZIPs, and training-only
+`arch_id` submissions return `400 unsupported_layout` or `400 recipe_version`.
+Do not ship Megatron-Bridge or other non-AutoModel frameworks.
 
-prism_telemetry.report(loss=..., step=..., grad_norm=..., layer_stats=...)  # every N steps
-prism_telemetry.finish_evaluation()  # optional early stop: score the model as-is
+## Pay for your own GPU (required on live)
+
+Create a [Lium](https://lium.io) account, fund it, and pass your API key on
+every live submit:
+
+```http
+X-Lium-Api-Key: <your Lium API key>
 ```
 
-- `report(...)` feeds the loss/gradient/layer series persisted master-side and shown on
-  the site (`/v1/site/arenas/prism/submissions/{id}/telemetry`).
-- `finish_evaluation()` raises a `BaseException` through `train()` so your own
-  `except Exception` blocks cannot swallow it; without it the eval ends when `train()`
-  returns or the wall-clock cap fires.
-- **Missing hooks are a hard contract violation**: the review fails the submission
-  (`missing_telemetry_hooks`, zero score, terminal — no retry).
+The key is held only in master memory for that submission (never stored in the
+DB, never logged). Missing key on live → `400 missing_lium_api_key`.
 
-The [baseline example](../examples/baseline/) shows the exact pattern, including an
-offline fallback stub for local testing.
+## Telemetry hooks (still required)
 
-## Training-only submissions (architecture competition, recipe ≥ 1.2.0)
-
-Instead of shipping both scripts you can submit `training.py` + `arch_id` referencing a
-**published** architecture. The master pulls `architecture.py` from the registry; the
-same harness contract applies unchanged. Published archs: `GET /v1/architectures`.
-See [Submit](submit.md#training-only-entries).
+The harness wrap still requires `prism_telemetry` reporting /
+`finish_evaluation` under the AutoModel train entry. Patches that remove or
+bypass those hooks fail review (`missing_telemetry_hooks`, zero score,
+terminal).
 
 ## Pinned dataset
 
@@ -60,43 +63,32 @@ See [Submit](submit.md#training-only-entries).
 | SHA-256 | `e5a2eae25f057f0856a10bfae314c6ca8ea8bb08456d2131e9e89b2b8305e2f6` |
 
 The harness re-verifies the hash on the file it actually fetched; a mismatch ends the
-eval as `ChallengeInternal` — never a miner score.
+eval as `ChallengeInternal` — never a miner score. Always confirm live values via
+`GET /v1/recipe`.
 
 ## Budget & caps
 
 | Cap | Value |
 |-----|-------|
-| Train wall clock | 6.0 h per submission |
-| Pod lifetime | 7.0 h (train + bootstrap margin) |
-| Hard step cap | 20 000 |
-| Source size | 128 KiB per script |
-| Model parameters | ≤ **350 000 000** after `build_model` |
-| `train_rows` (from `GET /v1/recipe`) | **2048** — baseline / default cut in `ctx` |
-| `val_rows` | **256** — frozen val scored by the harness |
+| Train wall clock | 6.0 h per submission (`train_hours_cap`) |
+| Hard step cap | 20 000 (`max_train_steps`) |
+| Model parameters | ≤ **350 000 000** (`max_params`) |
 
-`train_rows` is what the **sealed baseline** trains on (~2M GPT-2 tokens for
-that slice). It is **not** a hard “you only get 2048 rows” ceiling for
-competitive recipes: the harness gives you the full pinned parquet at
-`ctx["dataset_path"]`, and you may stream it until the 6h / 20k-step guard
-fires. Token count then depends on your loop and the GPU — a long Lium run can
-reach ~O(10⁹) tokens. Marketing charts that once said “2.6B tokens · single
-pass” were showing a leader’s **observed** telemetry, not a fixed recipe
-quota. Always trust live `GET /v1/recipe` (`pin_hex`, `train_rows`, caps).
-
-The sealed baseline is deliberately mediocre (short cut, few steps). Matching
-a board BPB near ~4–5 requires a competitive trainer, not an unmodified
-baseline on a 4090 for a few minutes.
+Trust live `GET /v1/recipe` (`version`, `automodel_*`, `pin_hex`, caps) over any
+marketing chart.
 
 ## Recipe pin
 
-`GET /v1/recipe` returns the versioned descriptor (dataset URL/hash, caps,
-`train_rows` / `val_rows`, recipe version, `pin_hex`). Production today is
-recipe **1.2.0** — open docs PRs that advertise 1.3+/1.4.0/v3 scoring describe
-**unreleased** control-plane work (`prism-better`), not what
-`https://chain.joinbase.ai` executes. `GET /v1/recipe/baseline` returns the
-official baseline scripts — the best starting point for your own architecture.
+```bash
+curl -sS "$GATEWAY/challenge/prism/v1/recipe"
+```
+
+Live recipe **2.0.0** advertises `version: "2.0.0"` and AutoModel pin fields
+(`automodel_pin_id` = `automodel@v0.5.0`, `automodel_repo_url`,
+`automodel_git_ref`, `automodel_git_commit`, `automodel_content_sha256`).
 
 ## Next
 
 → [Submit](submit.md)  
+→ [Full guide](prism.md)  
 → [Scoring & competition](scoring.md)

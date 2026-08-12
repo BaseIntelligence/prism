@@ -2,7 +2,7 @@
 
 # PRISM
 
-**Miner guide for the BASE prism challenge — HTTP recipe submit.**
+**Miner guide for the BASE prism challenge — HTTP AutoModel patch submit.**
 
 [![BASE](https://img.shields.io/badge/BASE-subnet-black.svg)](https://github.com/BaseIntelligence/base)
 [![Bittensor](https://img.shields.io/badge/Bittensor-subnet-black.svg)](https://bittensor.com/)
@@ -15,18 +15,19 @@
 [Submit](docs/submit.md) ·
 [Scoring & competition](docs/scoring.md) ·
 [API](docs/api.md) ·
-[Examples](examples/baseline/)
+[Full guide](docs/prism.md)
 
 </div>
 
 ## What it is
 
-PRISM is a research challenge: you try **new architectures** and the challenge re-executes
-them fairly. You submit **two Python scripts** — `architecture.py` (`build_model(ctx)`) and
-`training.py` (`train(model, ctx)`) — and the operator runs them on a GPU pod against a
-pinned FineWeb-Edu shard. Score is pure **bits-per-byte** (bpb, lower is better) measured
-by the operator harness. There is **no** miner Docker image, no CVM, no on-chain write from
-miners — HTTP submit only.
+PRISM is a research challenge on a pinned
+[NeMo AutoModel](https://github.com/NVIDIA-NeMo/Automodel) base: you fork the
+operator pin, edit under that tree, and submit a **unified git diff**. The
+operator applies your patch fail-closed, then re-executes training on a
+miner-funded Lium GPU pod against a pinned FineWeb-Edu shard. Score is pure
+**bits-per-byte** (bpb, lower is better). There is **no** miner Docker image,
+no CVM, no on-chain write from miners — HTTP submit only.
 
 | | |
 |---|---|
@@ -34,40 +35,43 @@ miners — HTTP submit only.
 | Production gateway | `https://chain.joinbase.ai` |
 | Staging gateway | `http://staging.api.joinbase.ai` |
 | Submit path | `/challenge/prism/v1/submissions` |
-| Recipe | v1.2.0 — telemetry hooks required |
+| Recipe | **2.0.0** — AutoModel pin + patch (`automodel@v0.5.0`) |
+| Live GPU | Miner-funded Lium — pass `X-Lium-Api-Key` |
 
-This repository holds **miner documentation and examples only**. Control-plane source
-lives in [BaseIntelligence/base](https://github.com/BaseIntelligence/base).
+This repository holds **miner documentation and examples only**. Control-plane
+source lives in [BaseIntelligence/base](https://github.com/BaseIntelligence/base).
 
 ## Start here
 
-1. Read [Getting started](docs/getting-started.md).
-2. Copy [`examples/baseline/`](examples/baseline/) — it shows the required telemetry
-   hooks (`prism_telemetry.report` + `finish_evaluation`).
-3. Zip `architecture.py` + `training.py` and submit — see [Submit](docs/submit.md).
-4. Poll events until `terminated`, then check your bpb — see [API](docs/api.md).
+1. Read [Getting started](docs/getting-started.md) (or the [full guide](docs/prism.md)).
+2. `GET /v1/recipe` — copy `automodel_pin_id`, `automodel_git_commit`, and caps.
+3. Checkout that AutoModel commit → edit → `git diff <commit> > automodel.patch`.
+4. Pack `automodel.base` + `automodel.patch` (+ optional `prism.toml`) and submit
+   with your hotkey + **`X-Lium-Api-Key`** — see [Submit](docs/submit.md).
+5. Poll events until `terminated`, then check your bpb — see [API](docs/api.md).
 
 ```bash
 export GATEWAY=https://chain.joinbase.ai
 export HOTKEY=<64 lowercase hex>   # public hotkey only — never a secret key
+export LIUM_API_KEY=<your Lium API key>
 
-cd examples/baseline
-zip -j submission.zip architecture.py training.py
+# After forking the pin and producing automodel.base + automodel.patch:
+zip -j submission.zip automodel.base automodel.patch   # + prism.toml if used
 
 curl -sS -X POST "$GATEWAY/challenge/prism/v1/submissions" \
   -H 'content-type: application/zip' \
   -H "X-Miner-Hotkey: $HOTKEY" \
+  -H "X-Lium-Api-Key: $LIUM_API_KEY" \
   --data-binary @submission.zip
 ```
 
 ## The three things miners get wrong
 
-1. **Missing telemetry hooks** — `training.py` must import `prism_telemetry` and call
-   `report(...)` during training (and may call `finish_evaluation()` to stop early).
-   Missing hooks = hard contract violation, zero score, terminal.
-2. **Copying someone's `architecture.py`** — the pre-GPU copy gate rejects byte/AST
-   copies of *earlier* architectures with zero score, no appeal. Starting from the
-   published baseline is fine.
-3. **Submitting again while gated** — one accepted architecture submission per hotkey;
-   a second one returns `409 submission_gated`. Training-only entries on published
-   architectures are separate slots (one per `(hotkey, arch_id)`).
+1. **Legacy 1.x ZIPs** — `architecture.py` + `training.py` (or training-only
+   `arch_id`) return `400 unsupported_layout` / `recipe_version` on live 2.0.
+   Ship `automodel.base` + `automodel.patch` only.
+2. **Wrong pin / stale diff** — `automodel.base` must equal live
+   `automodel_pin_id` (`automodel@v0.5.0`); regenerate the patch against the
+   exact `automodel_git_commit` from `/v1/recipe`.
+3. **Missing `X-Lium-Api-Key`** — live eval runs on **your** Lium account.
+   Missing key → `400 missing_lium_api_key`.
