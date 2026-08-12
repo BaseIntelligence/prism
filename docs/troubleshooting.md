@@ -14,6 +14,7 @@
 | Score 0 after review | `Copied` / high-confidence `Suspicious` (≥0.9, non-trope) | Similarity on **your delta**; rewrite unique hunks; tropes alone are not plagiarism |
 | `similar: true` on precheck | Would hit intake copy gate | Change the patch vs prior champions; starting from the operator pin is fine |
 | `429 precheck_quota_exceeded` | 3 prechecks/coldkey/UTC day used | Wait until next UTC day; rotating hotkeys does not reset |
+| `control_plane_restart` / `harness_detached` | Challenge process restarted mid-pod | Stop the Lium pod if still billing; resubmit with `X-Lium-Api-Key` |
 | `400 missing_lium_api_key` | Live path needs miner-funded Lium | Pass `X-Lium-Api-Key` (your Lium account); see [Submit](submit.md) |
 | `403 hotkey_not_in_metagraph` | Hotkey not registered | Check the hex (64 lowercase, no `0x`) |
 | `409 submission_gated` | 1-max slot already used | One accepted patch per hotkey; identical pin+patch is idempotent |
