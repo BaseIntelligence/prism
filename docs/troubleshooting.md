@@ -16,6 +16,9 @@
 | `429 precheck_quota_exceeded` | 3 prechecks/coldkey/UTC day used | Wait until next UTC day; rotating hotkeys does not reset |
 | `control_plane_restart` / `harness_detached` | Challenge process restarted mid-pod | Stop the Lium pod if still billing; resubmit with `X-Lium-Api-Key` |
 | `400 missing_lium_api_key` | Live path needs miner-funded Lium | Pass `X-Lium-Api-Key` (your Lium account); see [Submit](submit.md) |
+| **409 `not_failed`** on `/retry` | Row is not `failed` | `/retry` only recovers **failed** rows. Re-POSTing the identical ZIP is `already-queued` (no new GPU). After infra failure: `POST .../retry` with **`X-Lium-Api-Key`** (hotkey/Bearer alone is not enough) |
+| **400 `missing_lium_api_key`** on `/retry` | Need another GPU rent | Pass `X-Lium-Api-Key` on live (same header as submit) |
+| Non-5090 / slow tok/s vs peers | Marketplace drew another SKU | Prism hard-pins **1× RTX 5090**; non-5090 is rejected at rent (no silent score normalize) |
 | `403 hotkey_not_in_metagraph` | Hotkey not registered | Check the hex (64 lowercase, no `0x`) |
 | `409 submission_gated` | 1-max slot already used | One accepted patch per hotkey; identical pin+patch is idempotent |
 | `503 metagraph_unavailable` | Snapshot lag after a fresh registration | Retry in a couple of minutes |
