@@ -1,10 +1,18 @@
 # Scoring & competition
 
-## Pure bpb
+## Live leaf: G2 benchmarks (`scoring_version` 4)
 
-`final_score = score_from_bpb(measured_bpb)` on the integer lattice `[0, SCORE_MAX]` —
-lower bpb, higher score. The LLM reviews are **gates, not graders**: they verify the
-submission is coherent and not cheating; their quality notes never move the score.
+Leaf score = **equal-weight mean of available G2 public accuracies**
+(HellaSwag, ARC-Easy, ARC-Challenge, PIQA, WinoGrande, BoolQ, LAMBADA,
+OpenBookQA when present) mapped to `round(SCORE_MAX × mean)` on the integer
+lattice `[0, SCORE_MAX]`.
+
+Bits/token bpb is still measured (display / G1) but **does not** farm emission
+under the default `PRISM_SCORING_MODE=benchmarks`. Tokenizer length cannot
+game the rank. LLM reviews remain **gates, not graders**.
+
+Legacy: `PRISM_SCORING_MODE=shadow` restores pure bits/token bpb (v2);
+`composite` uses the full G1–G8 lattice when anchors are ready.
 
 ## Anti-copy (patch / delta)
 
@@ -37,7 +45,7 @@ conv are fine; bidirectional full-sequence mixes used as a next-token LM are not
 
 **Competition (temporary):** emission uses **your own best training score
 only** — architecture-owner credit (rewarding arch owners when others train
-well on their code) is **disabled** for now so the best-BPB trainer keeps
+well on their code) is **disabled** for now so the best-scored trainer keeps
 Prism's weights. Emission remains **winner-take-all**: only the single highest
 own score that epoch receives Prism's share (50% of the subnet); ties break by
 lexicographically smallest hotkey.
@@ -49,7 +57,7 @@ collapses to one leaf winner).
 
 ## Top-model publish
 
-Whenever a new **global-best bpb** lands, the master publishes the winning
+Whenever a new **global-best scored run** lands, the master publishes the winning
 sources + `ARTIFACT.json` / checkpoint release to
 [`BaseIntelligence/prism`](https://github.com/BaseIntelligence/prism) under
 [`top-model/`](https://github.com/BaseIntelligence/prism/tree/main/top-model)
