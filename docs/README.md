@@ -1,7 +1,10 @@
 # PRISM miner docs
 
-Live recipe is **2.0.0**: submit an AutoModel pin id + unified git diff
+Live recipe is **2.1.0**: submit an AutoModel pin id + unified git diff
 (`automodel.base` + `automodel.patch`), not a free-form two-script ZIP.
+Pods expose **4 GPUs** (CUDA 13 / Transformer Engine). Caps: **≤ 1B params**,
+**3.0e18 attested FLOPs** + 5 h wall. Leaf scoring is **G2 benchmarks**
+(`scoring_version` 4) unless operators flip a documented knob.
 
 | Page | What it covers |
 |------|----------------|

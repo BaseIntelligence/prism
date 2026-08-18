@@ -43,12 +43,12 @@ conv are fine; bidirectional full-sequence mixes used as a next-token LM are not
 
 ## Competition (emission)
 
-**Competition (temporary):** emission uses **your own best training score
-only** — architecture-owner credit (rewarding arch owners when others train
-well on their code) is **disabled** for now so the best-scored trainer keeps
-Prism's weights. Emission remains **winner-take-all**: only the single highest
-own score that epoch receives Prism's share (50% of the subnet); ties break by
-lexicographically smallest hotkey.
+**Competition (live default):** emission is **winner-take-all** on
+weight-eligible AutoModel rows (`PRISM_EMISSION_MODE=wta`). Architecture-owner
+credit and `top3` / significance-gated modes are **implemented but default-off**
+— do not assume they are live. Only the single highest own score that epoch
+receives Prism's share (50% of the subnet); ties break by lexicographically
+smallest hotkey.
 
 Scores first land in the leaf set emitted at the first chain-epoch boundary
 **after** your run finalizes. Positive scores then keep participating in later

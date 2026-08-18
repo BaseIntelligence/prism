@@ -1,9 +1,9 @@
 # Getting started
 
-## The contract (recipe v2.0.0)
+## The contract (recipe v2.1.0)
 
 You do **not** ship a free-form `architecture.py` / `training.py` project.
-Live recipe **2.0.0** accepts only a pin id plus your unified diff against that
+Live recipe **2.1.0** accepts only a pin id plus your unified diff against that
 pin:
 
 ```text
@@ -25,9 +25,12 @@ prism.toml              # optional — entry / model-config knobs
 5. Write `automodel.base` as a single line equal to `automodel_pin_id`, pack
    the ZIP, and `POST /v1/submissions` with your hotkey + **`X-Lium-Api-Key`**.
 
-Models must stay **≤ 350M parameters**. The pod has **no network**
-(`unshare --net`) beyond the operator-owned dataset pull — do not call Hub
-downloads from miner code.
+Models must stay **≤ 1B parameters**. Recipe-v10 pods expose four GPUs;
+train from `ctx["train_stream"]` (rank 0 owns the stream under DDP). Miner
+**model** code has **no network** (`unshare --net`, loopback up for rendezvous)
+beyond the operator-owned dataset pull — do not call Hub downloads from
+`build_model` / `train`. You may ship `requirements.txt` or `pyproject.toml`
+for a network-on install phase before that sandbox.
 
 **Legacy recipe 1.x is rejected on live.** Two-script ZIPs
 (`architecture.py` + `training.py`), 1.3 source-tree ZIPs, and training-only
