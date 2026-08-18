@@ -3,8 +3,8 @@
 # Prism challenge — HTTP AutoModel patch submit
 
 **challenge_id:** `prism`  
-**scoring_version:** `2` live (bpb-only; LLM review is an anti-cheat gate, not a grader). **v3 (opt-in, shadow-by-default):** composite scoring runs alongside — your run is also measured on the G1–G8 battery; see *v3 scoring* below.  
-**recipe_version:** `2.0.0` (pinned [NeMo AutoModel](https://github.com/NVIDIA-NeMo/Automodel) base + miner unified diff; legacy 1.x layouts rejected on live)  
+**scoring_version:** `4` live (equal-weight G2 public accuracies; LLM review is an anti-cheat gate, not a grader). **v3 harness:** every run also measures the complete G1–G8 battery; composite remains governance-gated.
+**recipe_version:** `2.1.0` (AutoModel diff + 4-GPU CUDA 13/TE pod + attested dual cap; legacy 1.x layouts rejected)
 **Path:** HTTP only — **no Phala/CVM**
 
 Normative docs (BASE monorepo):
@@ -14,7 +14,7 @@ Normative docs (BASE monorepo):
 ## What you submit
 
 A **ZIP** (preferred) — or JSON with the same members / `zip_base64` — that is
-**not** a free-form `architecture.py` / `training.py` project. Recipe **2.0.0**
+**not** a free-form `architecture.py` / `training.py` project. Recipe **2.1.0**
 accepts only an AutoModel pin id plus your git diff against that pin:
 
 ```text
@@ -36,9 +36,14 @@ prism.toml              # optional — entry / model-config knobs
 5. Write `automodel.base` as a single line equal to `automodel_pin_id`, pack
    the ZIP, and `POST /v1/submissions` with your hotkey + **`X-Lium-Api-Key`**.
 
-Models must stay **≤ 350M parameters**. The pod has **no network**
-(`unshare --net`) beyond the operator-owned dataset pull — do not call Hub
-downloads from miner code.
+Models must stay **≤ 1B parameters**. The CUDA 13 pod exposes four RTX 5090
+GPUs and includes Transformer Engine/NVFP4. Add `requirements.txt` or
+`pyproject.toml` at the repo root for the pre-sandbox install phase; model
+train/eval is offline.
+
+Training must consume global batches from `ctx["train_stream"]`. For DDP,
+rank 0 owns and scatters each batch; independent worker streams bypass
+attested FLOPs/G6 and are rejected.
 
 **Legacy recipe 1.x rejected on live.** Two-script ZIPs
 (`architecture.py` + `training.py`), 1.3 source-tree ZIPs, and training-only
@@ -110,12 +115,13 @@ Inspect recipe + AutoModel pin before coding:
 curl -sS "$BASE_GATEWAY/challenge/prism/v1/recipe"
 ```
 
-Live recipe **2.0.0** advertises `version: "2.0.0"` and AutoModel pin fields
+Live recipe **2.1.0** advertises `version: "2.1.0"` and AutoModel pin fields
 (`automodel_pin_id` = `automodel@v0.5.0`, `automodel_repo_url`,
 `automodel_git_ref`, `automodel_git_commit`, `automodel_content_sha256`),
-plus caps such as `train_hours_cap: 6.0`, `max_train_steps: 20000`,
-`max_params: 350000000`, FineWeb dataset pin, and `pin_hex` (sha over the
-versioned descriptor). Trust `/v1/recipe`, not marketing chart labels.
+plus `train_flops_cap: 3.0e18`, `train_hours_cap: 5.0`,
+`min_spend_fraction: 0.5` (voluntary only; protocol caps exempt),
+`max_train_steps: 20000`, `max_params: 1000000000`, the FineWeb pin, and
+`pin_hex`. Trust `/v1/recipe`, not marketing chart labels.
 
 `POST /v1/submissions` is idempotent by `submission_id` (hash of **pin id ‖
 `0x00` ‖ patch bytes**).
@@ -186,7 +192,8 @@ submission and never rents a Lium pod.
 
 ## Scoring (summary)
 
-Final leaf score is pure bits-per-byte (bpb) on the lattice `[0, SCORE_MAX]`.
+Final leaf score is the equal-weight mean of available G2 public accuracies,
+mapped onto `[0, SCORE_MAX]`. Bits/token bpb remains telemetry/G1 input.
 The shared **agentic** gate (AST + metrics/receipt) hard-zeros `cheat` /
 `suspicious`. Cheap LLM similarity hard-zeros `Copied`, and `Suspicious` only
 when confidence `≥ 0.9` with non-generic evidence (below that — e.g. 0.7 citing
@@ -199,7 +206,7 @@ quality is coherence-only, not a grader.
 Public gallery/leaderboard show champions only.
 **Competition (temporary):** emission uses **your own best training score
 only** — architecture-owner credit (rewarding arch owners when others train
-well on their code) is **disabled** for now so the best-BPB trainer keeps
+well on their code) is **disabled** for now so the best-scoring trainer keeps
 Prism's weights. Emission remains **winner-take-all**: only the single highest
 own score that epoch receives Prism's share (50% of the subnet); ties break by
 lexicographically smallest hotkey. Scores first land in the leaf
@@ -212,7 +219,7 @@ published to
 [`BaseIntelligence/prism`](https://github.com/BaseIntelligence/prism)
 `top-model/`.
 
-## v3 scoring (shadow-by-default)
+## v3 scoring (measured, composite default-off)
 
 Recipe ≥ 1.3.0 harnesses run a **two-phase pod flow**: your code trains
 (`phase=train`), checkpoints, and only then does the operator stage private
@@ -223,6 +230,11 @@ long-context (G5), sample efficiency from the train probe curve (G6),
 inference efficiency (G7), and training stability/µP (G8). Everything the
 battery reports is organizer-measured (**Zone A**, `org.*`) and is computed
 inside the harness — your code never emits it.
+
+Recipe 2.1 emits the whole anchored surface: G1 prose/math/fresh crawl, v3
+byte/compute G6, measured-or-censored 32k G7 + reasoning throughput, and G8
+µP. Unsupported/OOM telemetry fails closed to explicit worst-case values
+rather than disappearing.
 
 **G5 is pretrain-only (recipe ≥ 1.4.0).** The long-context group scores a
 **base LM**, not an instruction-tuned chat model: completion-style /
@@ -252,10 +264,11 @@ terminal-loss band) and the cross-miner cohort, and land a stored verdict
 (`ok` / `flagged` / `quarantined`) — verdicts are evidence, never an
 auto-zero. Malformed or over-cap envelopes reject `422` and store nothing.
 
-While `PRISM_SCORING_MODE=shadow` (default) the leaf score stays pure bpb,
-bit-identical to v2. After the reference baselines are measured and the
+While `PRISM_SCORING_MODE=benchmarks` (default) the leaf is the G2 accuracy
+lattice. `shadow` is the legacy bpb mode. After references are measured and the
 anchor set is pre-registered, governance may flip to `composite`: group
-scores are anchor-normalized, gate-filtered (`g3 ≥ 0.25`, `g8 ≥ 0.5`,
+scores are anchor-normalized, gate-filtered (G3 hard floor currently disarmed;
+`g8 ≥ 0.5`,
 budget + CI gates), combined as a weighted geometric mean, and ranked by
 the bootstrap lower-confidence bound
 (`lattice = round(SCORE_MAX × max(0, C − 1.645·SE))`). Inspect the anchor

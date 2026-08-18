@@ -11,7 +11,7 @@ Replace `{GATEWAY}` with `https://chain.joinbase.ai` (prod) or
 |-------|-------------------|
 | `POST /challenge/prism/v1/submissions` | Submit AutoModel ZIP / JSON (`automodel.base` + `automodel.patch`) |
 | `POST /challenge/prism/v1/submissions/precheck` | Advisory copy/layout gate (3/coldkey/UTC day; no queue/pod) |
-| `GET /challenge/prism/v1/submissions/{id}` | Detail + bpb + review/similarity/agentic records |
+| `GET /challenge/prism/v1/submissions/{id}` | Detail + G2/battery/bpb + review/similarity/agentic records |
 | `GET /challenge/prism/v1/submissions/{id}/diff` | Unified diff + diffstat / classification (recipe ≥ 2.0) |
 | `GET /challenge/prism/v1/submissions/{id}/events` | Stage timeline |
 | `POST /challenge/prism/v1/submissions/{id}/retry` | Requeue an infra-failed row (within recovery window) |

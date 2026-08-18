@@ -25,8 +25,9 @@ PRISM is a research challenge on a pinned
 [NeMo AutoModel](https://github.com/NVIDIA-NeMo/Automodel) base: you fork the
 operator pin, edit under that tree, and submit a **unified git diff**. The
 operator applies your patch fail-closed, then re-executes training on a
-miner-funded Lium GPU pod against a pinned FineWeb-Edu shard. Score is pure
-**bits-per-byte** (bpb, lower is better). There is **no** miner Docker image,
+miner-funded Lium GPU pod against a pinned FineWeb-Edu shard. The live leaf is
+the equal-weight **G2 benchmark accuracy** lattice; the v3 harness also records
+the complete G1–G8 battery. There is **no** miner Docker image,
 no CVM, no on-chain write from miners — HTTP submit only.
 
 | | |
@@ -35,8 +36,8 @@ no CVM, no on-chain write from miners — HTTP submit only.
 | Production gateway | `https://chain.joinbase.ai` |
 | Staging gateway | `http://staging.api.joinbase.ai` |
 | Submit path | `/challenge/prism/v1/submissions` |
-| Recipe | **2.0.0** — AutoModel pin + patch (`automodel@v0.5.0`) |
-| Live GPU | Miner-funded Lium — pass `X-Lium-Api-Key` |
+| Recipe | **2.1.0** — AutoModel patch + attested dual cap |
+| Live GPU | Miner-funded four-GPU RTX 5090 pod — pass `X-Lium-Api-Key` |
 
 This repository holds **miner documentation and examples only**. Control-plane
 source lives in [BaseIntelligence/base](https://github.com/BaseIntelligence/base).
@@ -48,7 +49,13 @@ source lives in [BaseIntelligence/base](https://github.com/BaseIntelligence/base
 3. Checkout that AutoModel commit → edit → `git diff <commit> > automodel.patch`.
 4. Pack `automodel.base` + `automodel.patch` (+ optional `prism.toml`) and submit
    with your hotkey + **`X-Lium-Api-Key`** — see [Submit](docs/submit.md).
-5. Poll events until `terminated`, then check your bpb — see [API](docs/api.md).
+5. Poll events until `terminated`, then inspect G2 + battery metrics — see [API](docs/api.md).
+
+Recipe 2.1's CUDA 13 pod includes Transformer Engine/NVFP4 and a compiler
+toolchain. Add `requirements.txt` or `pyproject.toml` at the AutoModel repo
+root in your patch for a network-on install before the offline train/eval.
+Training must consume `ctx["train_stream"]`; for DDP, rank 0 owns and
+scatters each global batch so FLOPs/tokens/bytes remain attested.
 
 ```bash
 export GATEWAY=https://chain.joinbase.ai
@@ -68,7 +75,7 @@ curl -sS -X POST "$GATEWAY/challenge/prism/v1/submissions" \
 ## The three things miners get wrong
 
 1. **Legacy 1.x ZIPs** — `architecture.py` + `training.py` (or training-only
-   `arch_id`) return `400 unsupported_layout` / `recipe_version` on live 2.0.
+   `arch_id`) return `400 unsupported_layout` / `recipe_version` on live 2.1.
    Ship `automodel.base` + `automodel.patch` only.
 2. **Wrong pin / stale diff** — `automodel.base` must equal live
    `automodel_pin_id` (`automodel@v0.5.0`); regenerate the patch against the
