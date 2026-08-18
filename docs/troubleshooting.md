@@ -2,14 +2,16 @@
 
 | Symptom | Likely cause | What to check |
 |---------|--------------|---------------|
-| Rejected submit | Recipe contract | `GET /v1/recipe` (`automodel_pin_id` + caps); follow recipe **2.0** |
-| `400 unsupported_layout` | Legacy 1.x ZIP or missing AutoModel members | Ship `automodel.base` + `automodel.patch` (+ optional `prism.toml`). Two-script / source-tree / `arch_id` layouts are rejected on live 2.0 |
+| Rejected submit | Recipe contract | `GET /v1/recipe` (`automodel_pin_id` + caps); follow recipe **2.1** |
+| `400 unsupported_layout` | Legacy 1.x ZIP or missing AutoModel members | Ship `automodel.base` + `automodel.patch` (+ optional `prism.toml`). Two-script / source-tree / `arch_id` layouts are rejected on live |
 | `400 recipe_version` | Payload implies recipe 1.x while live advertises ≥ 2.0 | Re-pack as AutoModel patch ZIP; do not send `architecture.py`/`training.py` |
 | Patch apply failure / conflict | Diff not against the live pin, or stale rebase | Checkout exact `automodel_git_commit` from `/v1/recipe`; regenerate `git diff <commit>`; ensure `automodel.base` == `automodel_pin_id` |
 | Wrong / unknown pin id | `automodel.base` ≠ recipe `automodel_pin_id` | Copy `automodel_pin_id` (live: `automodel@v0.5.0`) byte-identical from `/v1/recipe` |
 | Binary / path-escape / oversized patch | Fail-closed apply rules | Text-only unified diff; no path escape outside allowlisted roots; keep diff within intake budgets |
 | Tokenizer / hub errors on pod | No network; Hub download from miner code | Stay offline; use pin/harness tokenizer paths — do not `from_pretrained("<hub id>")` |
-| `CAP_EXCEEDED` / Score 0 | Model > 350M params | Terminal — resize model config in your patch; not auto-retried |
+| `CAP_EXCEEDED` / Score 0 | Model > 1B params | Terminal — resize model config in your patch; not auto-retried |
+| v3 train fails with zero accounted tokens | Trainer bypassed `ctx["train_stream"]` | Rank 0 must consume/scatter harness batches; do not create an independent DDP dataset |
+| FLOPs probe batch reduced | Full-row probe OOM | Expected safe degradation; inspect `probe_rows_reduced`, then reduce train geometry if the one-row probe still fails |
 | `missing_telemetry_hooks` | Patch removed / bypassed harness telemetry | Keep `prism_telemetry.report` (+ optional `finish_evaluation`) under the AutoModel train entry |
 | Score 0 after review | `Copied` / high-confidence `Suspicious` (≥0.9, non-trope) | Similarity on **your delta**; rewrite unique hunks; tropes alone are not plagiarism |
 | `similar: true` on precheck | Would hit intake copy gate | Change the patch vs prior champions; starting from the operator pin is fine |
@@ -18,7 +20,7 @@
 | `400 missing_lium_api_key` | Live path needs miner-funded Lium | Pass `X-Lium-Api-Key` (your Lium account); see [Submit](submit.md) |
 | **409 `not_failed`** on `/retry` | Row is not `failed` | `/retry` only recovers **failed** rows. Re-POSTing the identical ZIP is `already-queued` (no new GPU). After infra failure: `POST .../retry` with **`X-Lium-Api-Key`** (hotkey/Bearer alone is not enough) |
 | **400 `missing_lium_api_key`** on `/retry` | Need another GPU rent | Pass `X-Lium-Api-Key` on live (same header as submit) |
-| Non-5090 / slow tok/s vs peers | Marketplace drew another SKU | Prism hard-pins **1× RTX 5090**; non-5090 is rejected at rent (no silent score normalize) |
+| Wrong GPU width / non-5090 | Marketplace mismatch | Recipe 2.1 requests **4× RTX 5090** by default; non-5090 and undersized offers are rejected |
 | `403 hotkey_not_in_metagraph` | Hotkey not registered | Check the hex (64 lowercase, no `0x`) |
 | `409 submission_gated` | 1-max slot already used | One accepted patch per hotkey; identical pin+patch is idempotent |
 | `503 metagraph_unavailable` | Snapshot lag after a fresh registration | Retry in a couple of minutes |

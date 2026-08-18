@@ -1,9 +1,9 @@
 # Getting started
 
-## The contract (recipe v2.0.0)
+## The contract (recipe v2.1.0)
 
 You do **not** ship a free-form `architecture.py` / `training.py` project.
-Live recipe **2.0.0** accepts only a pin id plus your unified diff against that
+Live recipe **2.1.0** accepts only a pin id plus your unified diff against that
 pin:
 
 ```text
@@ -25,9 +25,14 @@ prism.toml              # optional — entry / model-config knobs
 5. Write `automodel.base` as a single line equal to `automodel_pin_id`, pack
    the ZIP, and `POST /v1/submissions` with your hotkey + **`X-Lium-Api-Key`**.
 
-Models must stay **≤ 350M parameters**. The pod has **no network**
-(`unshare --net`) beyond the operator-owned dataset pull — do not call Hub
-downloads from miner code.
+Models must stay **≤ 1B parameters**. The CUDA 13 pod exposes four RTX 5090
+GPUs by default and includes Transformer Engine/NVFP4. Add a repo-root
+`requirements.txt` or `pyproject.toml` in your patch for a network-on install
+phase; model train/eval then runs offline under `unshare --net`.
+
+Training must consume `ctx["train_stream"]`, which owns the attested FLOPs,
+token/byte counters, and hard caps. For DDP, rank 0 consumes and scatters each
+global batch; independent per-worker dataset streams fail the v3 contract.
 
 **Legacy recipe 1.x is rejected on live.** Two-script ZIPs
 (`architecture.py` + `training.py`), 1.3 source-tree ZIPs, and training-only
@@ -48,9 +53,10 @@ The key is held in master memory for that submission and may also land in a
 logged) so a control-plane restart can still stop your pod. Missing key on
 live → `400 missing_lium_api_key`.
 
-If the challenge process restarts mid-run, your submission is marked failed
-promptly with `control_plane_restart` / `harness_detached`. Stop the Lium pod
-if it is still billing, then resubmit with `X-Lium-Api-Key`. Poll
+If the challenge process restarts mid-run, healthy pods resume from the
+durable short-TTL payer seal; unrecoverable runs surface
+`control_plane_restart` / `harness_detached`. Stop only a pod tied to one of
+those failed rows, then retry with `X-Lium-Api-Key`. Poll
 `GET /v1/submissions/{id}/events` and `GET /v1/submissions/{id}/logs?since=`.
 
 ## Telemetry hooks (still required)
@@ -77,9 +83,11 @@ eval as `ChallengeInternal` — never a miner score. Always confirm live values 
 
 | Cap | Value |
 |-----|-------|
-| Train wall clock | 6.0 h per submission (`train_hours_cap`) |
+| Attested compute | `3.0e18` FLOPs (`train_flops_cap`) |
+| Train wall clock | 5.0 h anti-DoS bound (`train_hours_cap`) |
 | Hard step cap | 20 000 (`max_train_steps`) |
-| Model parameters | ≤ **350 000 000** (`max_params`) |
+| Model parameters | ≤ **1 000 000 000** (`max_params`) |
+| Minimum voluntary spend | `0.5`; step/wall/FLOPs stops are exempt |
 
 Trust live `GET /v1/recipe` (`version`, `automodel_*`, `pin_hex`, caps) over any
 marketing chart.
@@ -90,7 +98,7 @@ marketing chart.
 curl -sS "$GATEWAY/challenge/prism/v1/recipe"
 ```
 
-Live recipe **2.0.0** advertises `version: "2.0.0"` and AutoModel pin fields
+Live recipe **2.1.0** advertises `version: "2.1.0"` and AutoModel pin fields
 (`automodel_pin_id` = `automodel@v0.5.0`, `automodel_repo_url`,
 `automodel_git_ref`, `automodel_git_commit`, `automodel_content_sha256`).
 

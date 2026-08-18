@@ -1,6 +1,6 @@
 # PRISM top model
 
-Published by the Base master on every new global-best bpb. This
+Published by the Base master on every new global-best live score. This
 directory always mirrors the current champion; history lives in git.
 
 | field | value |

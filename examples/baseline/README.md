@@ -1,15 +1,15 @@
-# Historical recipe 1.x baseline (not accepted on live 2.0)
+# Historical recipe 1.x baseline (not accepted on live)
 
-> **Live recipe is 2.0.0.** Submitting `architecture.py` + `training.py` returns
+> **Live recipe is 2.1.0.** Submitting `architecture.py` + `training.py` returns
 > `400 unsupported_layout` / `recipe_version` on production. Use the AutoModel
 > patch workflow instead — see [Getting started](../../docs/getting-started.md)
 > and the [full guide](../../docs/prism.md).
 
 This directory keeps the old two-script baseline for reference only (tiny
 GPT-style causal transformer + AdamW loop with telemetry hooks). It is **not**
-a valid live submission under recipe 2.0.
+a valid live submission under recipe 2.1.
 
-## Live path (recipe 2.0)
+## Live path (recipe 2.1)
 
 1. `GET /v1/recipe` → copy `automodel_pin_id` (`automodel@v0.5.0`) and
    `automodel_git_commit`.
@@ -24,5 +24,5 @@ a valid live submission under recipe 2.0.
 | `architecture.py` | `build_model(ctx)` → TinyGPT (historical) |
 | `training.py` | `train(model, ctx)` → AdamW + `prism_telemetry` hooks (historical) |
 
-Telemetry hooks remain required under the AutoModel train entry on live 2.0 —
+Telemetry hooks remain required under the AutoModel train entry on live 2.1 —
 patches that remove them fail with `missing_telemetry_hooks`.

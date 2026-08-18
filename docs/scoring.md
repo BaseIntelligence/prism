@@ -14,6 +14,13 @@ game the rank. LLM reviews remain **gates, not graders**.
 Legacy: `PRISM_SCORING_MODE=shadow` restores pure bits/token bpb (v2);
 `composite` uses the full G1–G8 lattice when anchors are ready.
 
+Recipe 2.1 emits every v3 anchored metric: G1 code/prose/math/fresh-crawl,
+byte/compute G6, measured-or-censored 32k G7 plus reasoning throughput, and
+G8 stability + µP LR transfer. Missing hardware capability emits a worst-case
+censored value rather than silently dropping the key. The G3 hard floor stays
+disarmed. v3 anchors remain uncalibrated placeholders, so live is not flipped
+to composite.
+
 ## Anti-copy (patch / delta)
 
 Copying another miner's **patch** (or an equivalent touched-file rewrite of
@@ -49,6 +56,12 @@ well on their code) is **disabled** for now so the best-scored trainer keeps
 Prism's weights. Emission remains **winner-take-all**: only the single highest
 own score that epoch receives Prism's share (50% of the subnet); ties break by
 lexicographically smallest hotkey.
+
+Implemented opt-ins remain **off by default**: `top3` keeps decayed credits for
+the first three ranks; owner credit may split at most half of the winning leaf
+with the registered architecture owner; `sig` uses same-slice private
+significance evidence and otherwise burns/holds. Live remains `wta`, owner
+credit `0`, and non-significance-gated until an announced governance change.
 
 Scores first land in the leaf set emitted at the first chain-epoch boundary
 **after** your run finalizes. Positive scores then keep participating in later
