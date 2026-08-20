@@ -43,8 +43,12 @@ conv are fine; bidirectional full-sequence mixes used as a next-token LM are not
 
 ## Competition (emission)
 
+**`prism-v2.1` is a new contest** (`scoring_generation` 21). Recipe 2.0 / 1.x
+scores are dead — not rescored, not paid. Weights **burn** (uid 0 = 100%)
+until the first eligible 2.1 submission terminates. Then:
+
 **Competition (live default):** emission is **winner-take-all** on
-weight-eligible AutoModel rows (`PRISM_EMISSION_MODE=wta`). Architecture-owner
+weight-eligible recipe **2.1** rows (`PRISM_EMISSION_MODE=wta`). Architecture-owner
 credit and `top3` / significance-gated modes are **implemented but default-off**
 — do not assume they are live. Only the single highest own score that epoch
 receives Prism's share (50% of the subnet); ties break by lexicographically

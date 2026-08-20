@@ -4,6 +4,8 @@
 
 **Miner guide for the BASE prism challenge — HTTP AutoModel patch submit.**
 
+Recipe **2.1.0** is a **new competition** (`prism-v2.1`). Old 2.0 scores do not pay; weights burn until the first eligible 2.1 run.
+
 [![BASE](https://img.shields.io/badge/BASE-subnet-black.svg)](https://github.com/BaseIntelligence/base)
 [![Bittensor](https://img.shields.io/badge/Bittensor-subnet-black.svg)](https://bittensor.com/)
 [![License](https://img.shields.io/github/license/BaseIntelligence/prism)](LICENSE)
