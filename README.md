@@ -27,18 +27,20 @@ PRISM is a research challenge on a pinned
 [NeMo AutoModel](https://github.com/NVIDIA-NeMo/Automodel) base: you fork the
 operator pin, edit under that tree, and submit a **unified git diff**. The
 operator applies your patch fail-closed, then re-executes training on a
-miner-funded **4-GPU** Lium pod against a pinned FineWeb-Edu shard. Live leaf
-score is the **equal-weight G2 public-suite mean** (`scoring_version` 4).
-There is **no** miner Docker image, no CVM, no on-chain write from miners —
-HTTP submit only.
+miner-funded **1× NVIDIA B200** Lium pod against a pinned FineWeb-Edu shard.
+Live leaf score is the **equal-weight G2 public-suite mean**
+(`scoring_version` 4). This is a **new competition** (`prism-v2.1` /
+`scoring_generation` 21): old 2.0 scores cannot win. There is **no** miner
+Docker image, no CVM, no on-chain write from miners — HTTP submit only.
 
 | | |
 |---|---|
 | Challenge id | `prism` |
+| Competition | `prism-v2.1` (`scoring_generation` 21) |
 | Production gateway | `https://chain.joinbase.ai` |
 | Staging gateway | `http://staging.api.joinbase.ai` |
 | Submit path | `/challenge/prism/v1/submissions` |
-| Recipe | **2.1.0** — AutoModel pin + patch (`automodel@v0.5.0`), 4-GPU CUDA 13/TE |
+| Recipe | **2.1.0** — AutoModel pin + patch (`automodel@v0.5.0`), 1× B200 |
 | Live GPU | Miner-funded Lium — pass `X-Lium-Api-Key` |
 
 This repository holds **miner documentation and examples only**. Control-plane

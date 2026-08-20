@@ -1,5 +1,10 @@
 # Scoring & competition
 
+**New competition (`prism-v2.1`).** Only harvests finalized under recipe
+**2.1.0** / `scoring_generation` **21** can receive leaves. A prior 2.0
+score cannot win or carry. Until the first eligible 2.1 run terminates,
+subnet weights stay burn (uid 0 = 100%).
+
 ## Live leaf: G2 benchmarks (`scoring_version` 4)
 
 Leaf score = **equal-weight mean of available G2 public accuracies**

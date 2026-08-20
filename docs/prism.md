@@ -5,10 +5,10 @@
 **challenge_id:** `prism`  
 **competition_id:** `prism-v2.1` (`scoring_generation` `21`) — **new competition**. Old recipe `2.0.0` / 1.x scores are dead: they are not rescored and cannot win weights. Until the first eligible 2.1 submission terminates, subnet weights stay **burn** (uid 0 = 100%).  
 **scoring_version:** `4` live (equal-weight G2 public-suite accuracies → lattice; LLM review is an anti-cheat gate, not a grader). **v3 harness (default):** every scored run executes the **G1–G8 battery**; the leaf uses G2 benches while `PRISM_SCORING_MODE=benchmarks` (default). Legacy `shadow` = bits/token bpb; `composite` = full G1–G8 lattice when anchors are ready.  
-**recipe_version:** `2.1.0` (pinned [NeMo AutoModel](https://github.com/NVIDIA-NeMo/Automodel) diff + 4-GPU CUDA 13/TE pod + attested dual cap; legacy 1.x layouts rejected)
+**recipe_version:** `2.1.0` (pinned [NeMo AutoModel](https://github.com/NVIDIA-NeMo/Automodel) diff + 1× B200 CUDA 13/TE pod + attested dual cap; legacy 1.x layouts rejected)
 **Path:** HTTP only — **no Phala/CVM**
 
-Normative docs (BASE monorepo): [`PRISM.md`](https://github.com/BaseIntelligence/base/blob/prism-v2.1-scoring/docs/PRISM.md), recipe [`PRISM_RECIPE.md`](https://github.com/BaseIntelligence/base/blob/prism-v2.1-scoring/docs/PRISM_RECIPE.md).
+Normative docs (BASE monorepo): [`PRISM.md`](https://github.com/BaseIntelligence/base/blob/main/docs/PRISM.md), recipe [`PRISM_RECIPE.md`](https://github.com/BaseIntelligence/base/blob/main/docs/PRISM_RECIPE.md).
 
 ## What you submit
 
@@ -320,7 +320,7 @@ checkpoint release) is published to
 [`BaseIntelligence/prism`](https://github.com/BaseIntelligence/prism)
 `top-model/` and (when configured) a HuggingFace model repo
 `BaseIntelligence/top-prism-architecture` (custom-arch / AutoModel novelty +
-weights, `trust_remote_code`). See [`PRISM.md`](https://github.com/BaseIntelligence/base/blob/prism-v2.1-scoring/docs/PRISM.md).
+weights, `trust_remote_code`). See [`PRISM.md`](https://github.com/BaseIntelligence/base/blob/main/docs/PRISM.md).
 
 ## What Prism does and does not claim about your architecture
 
@@ -589,5 +589,5 @@ score instead of being washed out.
 
 Emission share for prism is owner-controlled via the trust root. Current split is
 `5000` bps prism / `5000` bps design (50/50) — see
-[prism Lium/emission runbook](https://github.com/BaseIntelligence/base/blob/prism-v2.1-scoring/docs/runbooks/prism-enable-lium-and-emission.md)
-and [design emission runbook](https://github.com/BaseIntelligence/base/blob/prism-v2.1-scoring/docs/runbooks/design-enable-and-emission.md).
+[prism Lium/emission runbook](https://github.com/BaseIntelligence/base/blob/main/docs/runbooks/prism-enable-lium-and-emission.md)
+and [design emission runbook](https://github.com/BaseIntelligence/base/blob/main/docs/runbooks/design-enable-and-emission.md).

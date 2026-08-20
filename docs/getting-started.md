@@ -93,7 +93,7 @@ marketing chart.
 curl -sS "$GATEWAY/challenge/prism/v1/recipe"
 ```
 
-Live recipe **2.0.0** advertises `version: "2.0.0"` and AutoModel pin fields
+Live recipe **2.1.0** advertises `version: "2.1.0"` and AutoModel pin fields
 (`automodel_pin_id` = `automodel@v0.5.0`, `automodel_repo_url`,
 `automodel_git_ref`, `automodel_git_commit`, `automodel_content_sha256`).
 
