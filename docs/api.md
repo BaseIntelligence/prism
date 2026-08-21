@@ -56,7 +56,8 @@ Precheck errors: same membership/contract codes, plus
 ## Auth note
 
 Miner routes identify you by hotkey (`X-Miner-Hotkey` or JSON `miner_hotkey`).
-On live, also send **`X-Lium-Api-Key`** (your funded Lium account). Never send
+On live, also send **`X-Lium-Api-Key`** **or** the Verda BYOK triplet
+(`X-Verda-Client-Id` / Secret / Inference-Key). Never send
 challenge signing keys or gateway owner keys from a miner client.
 
 ## Next
