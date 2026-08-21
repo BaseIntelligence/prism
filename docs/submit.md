@@ -10,7 +10,8 @@ Preferred path: a **ZIP** through the production or staging gateway with
 | Method / URL | `POST {GATEWAY}/challenge/prism/v1/submissions` |
 | `Content-Type` | `application/zip` |
 | `X-Miner-Hotkey` | 64 lowercase hex |
-| `X-Lium-Api-Key` | your Lium API key (required on live) |
+| `X-Lium-Api-Key` | Lium API key (live, if you pay Lium) |
+| `X-Verda-Client-Id` / `X-Verda-Client-Secret` / `X-Verda-Inference-Key` | Verda BYOK (live, if you pay Verda). `X-Verda-Api-Key` aliases the inference token. If both providers are complete, add `X-Compute-Provider: lium` or `verda`. You cannot set `image` / `cmd` / `template`. |
 | Body | raw zip bytes (`automodel.base` + `automodel.patch` at the root) |
 
 ```bash

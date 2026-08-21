@@ -15,9 +15,12 @@
 | `similar: true` on precheck | Would hit intake copy gate | Change the patch vs prior champions; starting from the operator pin is fine |
 | `429 precheck_quota_exceeded` | 3 prechecks/coldkey/UTC day used | Wait until next UTC day; rotating hotkeys does not reset |
 | `control_plane_restart` / `harness_detached` | Challenge process restarted mid-pod | Stop the Lium pod if still billing; resubmit with `X-Lium-Api-Key` |
-| `400 missing_lium_api_key` | Live path needs miner-funded Lium | Pass `X-Lium-Api-Key` (your Lium account); see [Submit](submit.md) |
+| `400 missing_lium_api_key` | Live path needs miner-funded Lium or Verda | Pass `X-Lium-Api-Key` or the Verda header triplet; see [Submit](submit.md) |
+| `400 missing_verda_credentials` | Verda headers incomplete | Send client id, secret, and inference key |
+| `400 ambiguous_compute_provider` | Both Lium and Verda complete | Add `X-Compute-Provider: lium` or `verda` |
+| `400 miner_image_override` | JSON set image/cmd/template | Remove those fields — operator pins the container |
 | **409 `not_failed`** on `/retry` | Row is not `failed` | `/retry` only recovers **failed** rows. Re-POSTing the identical ZIP is `already-queued` (no new GPU). After infra failure: `POST .../retry` with **`X-Lium-Api-Key`** (hotkey/Bearer alone is not enough) |
-| **400 `missing_lium_api_key`** on `/retry` | Need another GPU rent | Pass `X-Lium-Api-Key` on live (same header as submit) |
+| **400 `missing_lium_api_key`** on `/retry` | Need another GPU rent | Pass `X-Lium-Api-Key` or Verda BYOK on live |
 | Non-5090 / slow tok/s vs peers | Marketplace drew another SKU | Prism hard-pins **1× RTX 5090**; non-5090 is rejected at rent (no silent score normalize) |
 | `403 hotkey_not_in_metagraph` | Hotkey not registered | Check the hex (64 lowercase, no `0x`) |
 | `409 submission_gated` | 1-max slot already used | One accepted patch per hotkey; identical pin+patch is idempotent |
